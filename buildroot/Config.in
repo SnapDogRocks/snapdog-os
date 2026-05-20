@@ -1,0 +1,17 @@
+comment "SnapDog OS"
+source "$BR2_EXTERNAL_SNAPDOG_PATH/package/snapdog-os-all/Config.in"
+
+comment "Base packages"
+source "$BR2_EXTERNAL_SNAPDOG_PATH/package/snapdog-base/Config.in"
+source "$BR2_EXTERNAL_SNAPDOG_PATH/package/snapdog-users/Config.in"
+source "$BR2_EXTERNAL_SNAPDOG_PATH/package/snapdog-tools/Config.in"
+source "$BR2_EXTERNAL_SNAPDOG_PATH/package/snapdog-updater/Config.in"
+source "$BR2_EXTERNAL_SNAPDOG_PATH/package/copy-overlays/Config.in"
+source "$BR2_EXTERNAL_SNAPDOG_PATH/package/configtxt/Config.in"
+source "$BR2_EXTERNAL_SNAPDOG_PATH/package/raspi-wifi/Config.in"
+
+comment "Audio"
+source "$BR2_EXTERNAL_SNAPDOG_PATH/package/snapdog-client/Config.in"
+
+comment "System"
+source "$BR2_EXTERNAL_SNAPDOG_PATH/package/snapdog-ctrl/Config.in"

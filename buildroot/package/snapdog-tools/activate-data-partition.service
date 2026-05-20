@@ -5,7 +5,6 @@ Before=mpd.service
 
 [Service]
 Type=oneshot
-ExecStartPre=/opt/snapdog/bin/bootmsg "Enabling /data"
 ExecStart=/opt/snapdog/bin/activate-data-partition
 StandardOutput=journal
 

@@ -5,7 +5,6 @@ Before=network.target
 
 [Service]
 Type=oneshot
-ExecStartPre=/opt/snapdog/bin/bootmsg "Resizing partitions"
 ExecStart=/opt/snapdog/bin/resize-partitions
 StandardOutput=journal
 

@@ -1,46 +1,144 @@
-# SnapDog OS
+<p align="center">
+  <img src="assets/snapdog-logo.svg" width="240" alt="SnapDog" />
+</p>
 
-Minimal Linux distribution for Raspberry Pi, purpose-built as a multiroom audio receiver.
+<h1 align="center">SnapDog OS</h1>
 
-Based on [Buildroot 2025.02 LTS](https://buildroot.org/), SnapDog OS provides a headless appliance that runs [snapdog-client](https://github.com/metaneutrons/snapdog) — a Snapcast-compatible audio receiver with mDNS discovery, hardware mixer support, and parametric EQ.
+<p align="center">
+  Buildroot-based minimal Linux <a href="https://github.com/metaneutrons/snapdog">SnapDog</a> multiroom audio system.
+</p>
+
+<p align="center">
+  <a href="https://github.com/metaneutrons/snapdog-os/actions"><img src="https://github.com/metaneutrons/snapdog-os/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/metaneutrons/snapdog-os/releases"><img src="https://img.shields.io/github/v/release/metaneutrons/snapdog-os" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/metaneutrons/snapdog-os" alt="License"></a>
+</p>
+
+---
+
+SnapDog OS turns a Raspberry Pi with an I2S DAC into a dedicated network audio receiver for the [**SnapDog**](https://github.com/metaneutrons/snapdog) multiroom audio system. It boots in seconds, connects to your SnapDog server automatically via mDNS, and is fully configurable through a web browser — no SSH, no command line, no manual setup required.
 
 ## Features
 
-- **Minimal footprint** — boots in seconds, ~512MB image, no desktop environment
-- **Snapcast client** — synchronized multiroom audio playback
-- **Generic I2S DAC/AMP support** — works with HiFiBerry, Allo, IQAudio, JustBoom, and other I2S boards
-- **WiFi setup** — temporary AP mode for initial configuration
-- **Web-based setup** — configure network, audio device, and server via [snapdog-ctrl](https://github.com/metaneutrons/snapdog-ctrl)
-- **OTA updates** — dual-partition A/B update mechanism via `update.snapdog.cc/os`
-- **Supported hardware** — Raspberry Pi 3, 4, and 5 (64-bit only)
-- **Kernel** — Raspberry Pi Linux 6.6 LTS
+- **Boots in seconds** — ~512MB image, no desktop, no bloat
+- **Synchronized audio** — Snapcast-compatible multiroom playback via [snapdog-client](https://github.com/metaneutrons/snapdog)
+- **Any I2S DAC** — HiFiBerry, Allo, IQAudio, JustBoom, MAX98357A, and more
+- **Zero-config setup** — captive portal WiFi configuration from your phone
+- **Web UI** — [SnapDog Control](#snapdog-ctrl) for network, audio, and system settings
+- **OTA updates** — dual-partition A/B with SHA256 verification and automatic rollback
+- **Secure by default** — SSH disabled, pubkey-only when enabled, no default network access
 
-## Building
+## Supported Hardware
 
-Requires a Linux host (or Docker container) with standard buildroot dependencies.
+| Board | Status |
+|-------|--------|
+| Raspberry Pi 5 | ✅ |
+| Raspberry Pi 4 | ✅ |
+| Raspberry Pi 3 | ✅ |
+
+All builds are 64-bit (aarch64). Kernel: Raspberry Pi Linux 6.6 LTS.
+
+## Installation
+
+### Raspberry Pi Imager (recommended)
+
+1. Download the latest image from [Releases](https://github.com/metaneutrons/snapdog-os/releases)
+2. Open [Raspberry Pi Imager](https://www.raspberrypi.com/software/)
+3. Choose **"Use custom"** and select the downloaded `.img.gz` file
+4. Select your SD card and write
+
+### Command line
 
 ```bash
-# 1. Get buildroot
-./get-buildroot
+# macOS
+gunzip -k snapdog-os-pi4-0.1.0.img.gz
+sudo dd if=snapdog-os-pi4-0.1.0.img of=/dev/rdiskN bs=4m status=progress
 
-# 2. Configure for your Pi version (3, 4, or 5)
-./build-config 4
-
-# 3. Compile
-./compile 4
+# Linux
+gunzip -k snapdog-os-pi4-0.1.0.img.gz
+sudo dd if=snapdog-os-pi4-0.1.0.img of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
-The SD card image will be at `../buildroot-2025.02/output-pi4/images/sdcard.img`.
+### First boot
 
-## DAC Configuration
+1. Insert SD card and power on the Pi
+2. If no Ethernet is connected, the device creates a WiFi access point: **SnapDog-Setup** (password: `snapdog123`)
+3. Connect to the AP — your phone/laptop will automatically open the setup UI
+4. Configure WiFi, select your SnapDog server, choose your DAC — done
 
-Set `BR2_PACKAGE_CONFIGTXT_DAC_OVERLAY` in buildroot menuconfig (`./config 4`), or leave empty for HAT EEPROM auto-detection.
+## Architecture
 
-Common overlays:
+```
+┌─────────────────────────────────────┐
+│  snapdog-ctrl (port 80)             │
+│  Device configuration web UI        │
+├─────────────────────────────────────┤
+│  snapdog-client                     │
+│  Snapcast audio receiver            │
+├─────────────────────────────────────┤
+│  ALSA → I2S DAC/AMP                 │
+│  Hardware audio output              │
+├─────────────────────────────────────┤
+│  Linux 6.6 LTS (aarch64) + systemd  │
+│  Raspberry Pi kernel                │
+├─────────────────────────────────────┤
+│  Buildroot 2025.02 LTS              │
+│  Minimal userspace (~21 packages)   │
+└─────────────────────────────────────┘
+```
+
+## snapdog-ctrl
+
+The device configuration service is a single Rust binary with an embedded web UI:
+
+| Feature | Implementation |
+|---------|---------------|
+| Web framework | axum 0.8 |
+| Frontend | Next.js 16, React 19, Tailwind v4, static export |
+| Embedded assets | rust-embed |
+| Network management | wpa_supplicant, hostapd, systemd-networkd |
+| mDNS discovery | mdns-sd crate |
+| Config parsing | Custom config.txt parser with backup |
+| Logging | tracing + journald (Linux) |
+| Accessibility | WCAG AAA, 5 languages (EN/DE/FR/ES/NL) |
+| Linting | clippy pedantic + nursery, zero exceptions |
+
+### Web UI tabs
+
+- **Dashboard** — hostname, version, network status, uptime
+- **Network** — WiFi (scan, connect, static IP), Ethernet (DHCP/static)
+- **Audio** — DAC overlay selection from detected boards
+- **Client** — server discovery (mDNS), soundcard, volume control, latency
+- **SSH** — enable/disable, pubkey management
+- **Update** — OTA check/install, channel (stable/beta), auto-update schedule
+- **System** — timezone, logs, reboot, factory reset
+
+### Local development
+
+```bash
+cd snapdog-ctrl
+SNAPDOG_SETUP_PORT=8080 cargo run
+# → http://localhost:8080 (mock mode, all APIs functional)
+```
+
+## OTA Updates
+
+| Feature | Detail |
+|---------|--------|
+| Mechanism | Dual-partition A/B |
+| Integrity | SHA256 checksum verification |
+| Rollback | Automatic after 3 failed boot attempts |
+| Channels | `stable` (tagged releases), `beta` (every push) |
+| Schedule | Configurable: daily/weekly/monthly at chosen time |
+| Server | `update.snapdog.cc/os` (Cloudflare R2) |
+
+## DAC Support
+
+Set via the web UI or `BR2_PACKAGE_CONFIGTXT_DAC_OVERLAY` at build time. Leave empty for HAT EEPROM auto-detection.
 
 | Board | Overlay |
 |-------|---------|
-| HiFiBerry DAC+ / DAC2 | `hifiberry-dacplus` |
+| HiFiBerry DAC+/DAC2 Pro | `hifiberry-dacplus` |
 | HiFiBerry Amp2/3 | `hifiberry-amp3` |
 | Allo Boss DAC | `allo-boss-dac-pcm512x-audio` |
 | IQAudio DAC+ | `iqaudio-dacplus` |
@@ -48,56 +146,34 @@ Common overlays:
 | Adafruit MAX98357A | `max98357a` |
 | Google AIY Voice HAT | `googlevoicehat-soundcard` |
 
-At runtime, the DAC overlay can be changed via the snapdog-ctrl web UI or by editing `/boot/config.txt`.
+## Building from source
 
-## Runtime Configuration
-
-Edit `/etc/default/snapdog-client`, then `systemctl restart snapdog-client`:
+Requires a Linux host with standard buildroot dependencies (`build-essential`, `git`, `wget`, `cpio`, `unzip`, `rsync`, `bc`).
 
 ```bash
-# Auto-discover server via mDNS (default)
-SNAPDOG_CLIENT_ARGS=""
-
-# Specify server explicitly
-SNAPDOG_CLIENT_ARGS="tcp://192.168.1.10:1704 --hostID kitchen --soundcard hw:0"
+make setup          # Download buildroot 2025.02
+make PI=pi4 config  # Configure for Raspberry Pi 4
+make PI=pi4 build   # Build SD card image
+make all            # Build for all Pi variants
 ```
 
-## OTA Updates
+Output: `../buildroot-pi4/images/sdcard.img`
 
-Updates are fetched from `https://update.snapdog.cc/os` and applied to the inactive partition. On reboot, the system switches to the updated partition.
+## Security
 
-```bash
-# Check for updates
-/opt/snapdog/bin/update --check
+| Aspect | Default |
+|--------|---------|
+| SSH | disabled by default |
+| SSH auth | pubkey only (password auth forbidden) |
+| Web UI | No authentication (local network only) |
+| OTA | SHA256 verified, auto-rollback on failure |
+| Watchdog | Hardware, 30s timeout via systemd |
 
-# Apply update and reboot
-/opt/snapdog/bin/update --reboot
-```
+## Related projects
 
-Release channel is configured in `/etc/snapdog-os.channel` (`stable` or `beta`).
-
-## Architecture
-
-```
-┌─────────────────────────────────────────┐
-│  snapdog-ctrl (port 80)                │  WiFi/network/DAC config web UI
-├─────────────────────────────────────────┤
-│  snapdog-client                         │  Snapcast audio receiver
-├─────────────────────────────────────────┤
-│  ALSA → I2S DAC/AMP                    │  Hardware audio output
-├─────────────────────────────────────────┤
-│  Linux 6.6 LTS (aarch64)               │  Raspberry Pi kernel
-├─────────────────────────────────────────┤
-│  Buildroot 2025.02 + systemd           │  Minimal userspace
-└─────────────────────────────────────────┘
-```
-
-## Default Credentials
-
-- **SSH**: disabled by default, enable via snapdog-ctrl web UI
-- **Root password**: `snapdog`
-- **Hostname**: defaults to snapdog-client's host ID (e.g. `kitchen`)
+- [**snapdog**](https://github.com/metaneutrons/snapdog) — SnapDog multiroom audio server and client
+- [**snapdog-os**](https://github.com/metaneutrons/snapdog-os) — This repository: minimal OS for SnapDog receiver hardware
 
 ## License
 
-MIT
+[GPL-3.0](LICENSE)

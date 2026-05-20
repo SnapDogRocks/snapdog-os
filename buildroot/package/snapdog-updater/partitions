@@ -1,11 +1,10 @@
-#!/bin/bash
+#!/bin/sh
 
-ACTIVE=`mount | grep " / " | awk '{print $1}'`
-if [ "$ACTIVE" == "/dev/mmcblk0p2" ]; then
+ACTIVE=$(mount | grep " / " | awk '{print $1}')
+if [ "$ACTIVE" = "/dev/mmcblk0p2" ]; then
   INACTIVE="/dev/mmcblk0p3"
 else
- INACTIVE="/dev/mmcblk0p2"
+  INACTIVE="/dev/mmcblk0p2"
 fi
 
 echo $ACTIVE $INACTIVE
-

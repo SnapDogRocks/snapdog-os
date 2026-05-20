@@ -165,14 +165,14 @@ Output: `../buildroot-pi4/images/sdcard.img`
 |--------|---------|
 | SSH | disabled by default |
 | SSH auth | pubkey only (password auth forbidden) |
+| Root password | `snapdog` (local console only) |
 | Web UI | No authentication (local network only) |
 | OTA | SHA256 verified, auto-rollback on failure |
 | Watchdog | Hardware, 30s timeout via systemd |
 
-## Related projects
+## Related
 
 - [**snapdog**](https://github.com/metaneutrons/snapdog) — SnapDog multiroom audio server and client
-- [**snapdog-os**](https://github.com/metaneutrons/snapdog-os) — This repository: minimal OS for SnapDog receiver hardware
 
 ## License
 

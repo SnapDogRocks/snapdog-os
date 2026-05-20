@@ -13,7 +13,6 @@ const BACKUP_PATH: &str = "/boot/config.txt.bak";
 
 /// Known DAC/AMP overlay prefixes that we manage.
 const AUDIO_OVERLAY_PREFIXES: &[&str] = &[
-    "hifiberry-",
     "allo-",
     "iqaudio-",
     "justboom-",
@@ -60,8 +59,14 @@ pub async fn set_audio_overlay(overlay: &str) -> Result<()> {
 fn find_audio_overlay(content: &str) -> Option<String> {
     content
         .lines()
-        .filter(|l| !l.trim_start().starts_with('#'))
-        .filter_map(|l| l.strip_prefix("dtoverlay="))
+        .filter_map(|line| {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with('#') {
+                None
+            } else {
+                trimmed.strip_prefix("dtoverlay=")
+            }
+        })
         .map(|v| v.split(',').next().unwrap_or("").trim().to_string())
         .find(|name| is_audio_overlay(name))
 }
@@ -153,8 +158,8 @@ dtparam=spi=on
 dtparam=audio=off
 dtoverlay=i2c-gpio,i2c_gpio_sda=0,i2c_gpio_scl=1
 dtoverlay=vc4-kms-v3d
-dtoverlay=hifiberry-dacplus
-# dtoverlay=allo-boss-dac-pcm512x-audio
+dtoverlay=allo-boss-dac-pcm512x-audio
+# dtoverlay=iqaudio-dacplus
 kernel=Image
 ";
 
@@ -162,13 +167,13 @@ kernel=Image
     fn finds_audio_overlay() {
         assert_eq!(
             find_audio_overlay(SAMPLE_CONFIG),
-            Some("hifiberry-dacplus".into())
+            Some("allo-boss-dac-pcm512x-audio".into())
         );
     }
 
     #[test]
     fn ignores_commented_overlay() {
-        let config = "# dtoverlay=hifiberry-dacplus\n";
+        let config = "# dtoverlay=allo-boss-dac-pcm512x-audio\n";
         assert_eq!(find_audio_overlay(config), None);
     }
 
@@ -176,7 +181,7 @@ kernel=Image
     fn replaces_audio_overlay() {
         let result = replace_audio_overlay(SAMPLE_CONFIG, "iqaudio-dacplus");
         assert!(result.contains("dtoverlay=iqaudio-dacplus"));
-        assert!(!result.contains("dtoverlay=hifiberry-dacplus"));
+        assert!(!result.contains("dtoverlay=allo-boss-dac-pcm512x-audio"));
         // Preserves non-audio overlays
         assert!(result.contains("dtoverlay=vc4-kms-v3d"));
         assert!(result.contains("dtoverlay=i2c-gpio"));
@@ -185,7 +190,7 @@ kernel=Image
     #[test]
     fn removes_audio_overlay() {
         let result = replace_audio_overlay(SAMPLE_CONFIG, "");
-        assert!(!result.contains("hifiberry-dacplus"));
+        assert!(!result.contains("allo-boss-dac-pcm512x-audio"));
         assert!(result.contains("dtoverlay=vc4-kms-v3d"));
     }
 

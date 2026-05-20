@@ -15,6 +15,7 @@ export interface SystemInfo {
   channel: string;
   uptime_seconds: number;
   pi_version: number;
+  components: { client: string; ctrl: string; kernel: string };
 }
 
 export interface WifiNetwork {

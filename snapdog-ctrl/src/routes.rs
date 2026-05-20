@@ -307,6 +307,14 @@ pub struct SystemInfo {
     pub channel: String,
     pub uptime_seconds: u64,
     pub pi_version: u8,
+    pub components: ComponentVersions,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ComponentVersions {
+    pub client: String,
+    pub ctrl: String,
+    pub kernel: String,
 }
 
 #[derive(Deserialize)]
@@ -489,11 +497,11 @@ pub struct WifiScanResult {
 }
 
 async fn get_network() -> Json<NetworkOverview> {
-    Json(system::get_network_overview())
+    Json(system::get_network_overview().await)
 }
 
 async fn get_ethernet() -> Json<EthernetInfo> {
-    Json(system::get_ethernet())
+    Json(system::get_ethernet().await)
 }
 
 async fn put_ethernet(Json(body): Json<EthernetConfig>) -> StatusCode {
@@ -505,7 +513,7 @@ async fn put_ethernet(Json(body): Json<EthernetConfig>) -> StatusCode {
 }
 
 async fn get_wifi() -> Json<WifiInfo> {
-    Json(system::get_wifi())
+    Json(system::get_wifi().await)
 }
 
 async fn put_wifi(Json(body): Json<WifiConfig>) -> StatusCode {

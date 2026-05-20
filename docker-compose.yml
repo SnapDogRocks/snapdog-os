@@ -1,0 +1,38 @@
+services:
+  build:
+    build: .
+    volumes:
+      - .:/build/snapdog-os
+      - buildroot:/build/buildroot
+      - output:/build/buildroot-pi4
+    working_dir: /build/snapdog-os
+    command: |
+      bash -c "
+        set -e
+        echo '── Setup buildroot ──'
+        if [ ! -d /build/buildroot/.git ]; then
+          git clone --depth 1 --branch 2025.02 https://github.com/buildroot/buildroot /build/buildroot
+        fi
+        if [ -f /build/buildroot/board/raspberrypi/genimage.cfg.in ]; then
+          sed -i 's/32M/256M/g' /build/buildroot/board/raspberrypi/genimage.cfg.in
+        fi
+
+        echo '── Configure pi4 ──'
+        mkdir -p /build/buildroot-pi4
+        cd /build/buildroot && make raspberrypi4_64_defconfig
+        mv /build/buildroot/.config /build/buildroot-pi4/.config
+        cat /build/snapdog-os/buildroot/configs/override.conf >> /build/buildroot-pi4/.config
+        echo 'BR2_PACKAGE_SNAPDOG_OS_ALL=y' >> /build/buildroot-pi4/.config
+
+        echo '── Build ──'
+        cd /build/buildroot
+        make O=/build/buildroot-pi4 BR2_EXTERNAL=/build/snapdog-os/buildroot olddefconfig
+        make O=/build/buildroot-pi4 BR2_EXTERNAL=/build/snapdog-os/buildroot -j$(nproc)
+
+        echo '── Done ──'
+        ls -lh /build/buildroot-pi4/images/sdcard.img
+      "
+
+volumes:
+  buildroot:
+  output:

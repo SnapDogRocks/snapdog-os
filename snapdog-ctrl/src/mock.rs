@@ -45,7 +45,7 @@ impl MockState {
                 },
                 wifi_ssid: "DevNetwork".into(),
                 wifi_connected: true,
-                overlay: "hifiberry-dacplus".into(),
+                overlay: "allo-boss-dac-pcm512x-audio".into(),
                 client: ClientConfig {
                     server_url: "tcp://192.168.1.10:1704".into(),
                     host_id: "kitchen".into(),
@@ -54,9 +54,7 @@ impl MockState {
                     latency: 0,
                     mdns_name: "_snapdog._tcp".into(),
                     running: true,
-                    available_soundcards: vec![
-                        "card 0: sndrpihifiberry [snd_rpi_hifiberry_dacplus]".into(),
-                    ],
+                    available_soundcards: vec!["card 0: sndrpiallo [snd_rpi_allo_boss]".into()],
                 },
                 ssh: SshConfig {
                     enabled: false,
@@ -74,6 +72,11 @@ impl MockState {
             channel: s.channel.clone(),
             uptime_seconds: 86400,
             pi_version: 4,
+            components: crate::routes::ComponentVersions {
+                client: "0.11.3".into(),
+                ctrl: env!("CARGO_PKG_VERSION").to_string(),
+                kernel: "6.6.78-v8+".into(),
+            },
         }
     }
 
@@ -200,7 +203,7 @@ impl MockState {
         let s = self.inner.lock().await;
         AudioInfo {
             overlay: s.overlay.clone(),
-            detected_card: "Mock DAC+ Pro".into(),
+            detected_card: "Mock Allo Boss DAC".into(),
             soundcard: "hw:0".into(),
             available_overlays: AVAILABLE_OVERLAYS
                 .iter()
@@ -234,8 +237,7 @@ impl MockState {
         s.client = config;
         s.client.mdns_name = "_snapdog._tcp".into();
         s.client.running = true;
-        s.client.available_soundcards =
-            vec!["card 0: sndrpihifiberry [snd_rpi_hifiberry_dacplus]".into()];
+        s.client.available_soundcards = vec!["card 0: sndrpiallo [snd_rpi_allo_boss]".into()];
         drop(s);
         Ok(())
     }
@@ -254,8 +256,6 @@ impl MockState {
 }
 
 const AVAILABLE_OVERLAYS: &[(&str, &str)] = &[
-    ("hifiberry-dacplus", "HiFiBerry DAC+/DAC2 Pro"),
-    ("hifiberry-amp3", "HiFiBerry Amp3"),
     ("allo-boss-dac-pcm512x-audio", "Allo Boss DAC"),
     ("iqaudio-dacplus", "IQAudio DAC+"),
     ("justboom-dac", "JustBoom DAC"),

@@ -1,0 +1,5 @@
+snapdog-ctrl/target/
+snapdog-ctrl/webui/node_modules/
+snapdog-ctrl/webui/.next/
+snapdog-ctrl/webui/out/
+.git/

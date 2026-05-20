@@ -16,7 +16,7 @@ setup: ## Download and prepare buildroot
 
 build: ## Build image for $(PI)
 	@mkdir -p $(BRDIR)/target/etc
-	@echo $(PI) > $(BRDIR)/target/etc/piversion
+	@echo $(subst pi,,$(PI)) > $(BRDIR)/target/etc/raspberrypi.version
 	@echo $(VERSION) > buildroot/VERSION
 	@cd $(BRSRC) && make O=$(abspath $(BRDIR)) BR2_EXTERNAL=$(abspath buildroot) olddefconfig
 	@cd $(BRSRC) && make O=$(abspath $(BRDIR)) BR2_EXTERNAL=$(abspath buildroot)

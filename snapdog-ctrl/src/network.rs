@@ -69,6 +69,11 @@ pub async fn connect_wifi(
     static_ip: Option<&StaticConfig>,
 ) -> Result<()> {
     tracing::info!("Connecting to WiFi: {ssid}");
+    if let Some(config) = static_ip {
+        validate_static_config(config)?;
+    }
+    let ssid = wpa_quoted_string("ssid", ssid)?;
+    let password = wpa_quoted_string("password", password)?;
 
     let wpa = format!(
         "ctrl_interface=/var/run/wpa_supplicant\nupdate_config=1\ncountry=DE\n\n\
@@ -156,6 +161,10 @@ pub async fn scan_networks() -> Result<Vec<ScannedNetwork>> {
 
 /// Configure ethernet (DHCP or static).
 pub async fn configure_ethernet(static_ip: Option<&StaticConfig>) -> Result<()> {
+    if let Some(config) = static_ip {
+        validate_static_config(config)?;
+    }
+
     let network = static_ip.map_or_else(
         || "[Match]\nName=eth0 end0\n\n[Network]\nDHCP=yes\n".to_string(),
         |s| {
@@ -205,6 +214,26 @@ async fn write_config(path: &str, content: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_static_config(config: &StaticConfig) -> Result<()> {
+    validate_single_line("ip", &config.ip)?;
+    validate_single_line("subnet", &config.subnet)?;
+    validate_single_line("gateway", &config.gateway)?;
+    validate_single_line("dns", &config.dns)
+}
+
+fn wpa_quoted_string(field: &str, value: &str) -> Result<String> {
+    validate_single_line(field, value)?;
+    Ok(value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn validate_single_line(field: &str, value: &str) -> Result<()> {
+    anyhow::ensure!(
+        !value.chars().any(|c| matches!(c, '\n' | '\r' | '\0')),
+        "{field} contains unsupported control characters"
+    );
+    Ok(())
+}
+
 async fn run(cmd: &str, args: &[&str]) -> Result<()> {
     let output = Command::new(cmd).args(args).output().await?;
     if !output.status.success() {
@@ -225,4 +254,22 @@ fn subnet_to_prefix(subnet: &str) -> u8 {
         .map(u8::count_ones)
         .sum();
     u8::try_from(bits).unwrap_or(32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wpa_quoted_string_escapes_quotes_and_backslashes() {
+        assert_eq!(
+            wpa_quoted_string("ssid", r#"Kitchen "DAC" \ 1"#).unwrap(),
+            r#"Kitchen \"DAC\" \\ 1"#
+        );
+    }
+
+    #[test]
+    fn wpa_quoted_string_rejects_newlines() {
+        assert!(wpa_quoted_string("ssid", "bad\nssid").is_err());
+    }
 }

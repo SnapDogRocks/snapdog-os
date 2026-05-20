@@ -1,7 +1,7 @@
 #!/bin/sh
-if [ "$1" == "" ]; then
+if [ "$1" = "" ]; then
  echo "backup file name missing"
  exit 1
 fi
 cd /
-tar --ignore-failed-read -cvz -f $1 -T /opt/snapdog/etc/config-files
+tar --ignore-failed-read -cvz -f "$1" -T /opt/snapdog/etc/config-files

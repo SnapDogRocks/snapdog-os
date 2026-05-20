@@ -1,17 +1,17 @@
-#!/bin/bash
-PART=`/opt/snapdog/bin/partitions | awk '{print $2}'`
+#!/bin/sh
+PART=$(/opt/snapdog/bin/partitions | awk '{print $2}')
 if [ ! -f /boot/Image.bak ]; then
  echo "No previous release found, aborting..."
  exit 1
 fi
-if [ "$PART" == "/dev/mmcblk0p3" ]; then
+if [ "$PART" = "/dev/mmcblk0p3" ]; then
  P=$PART
 fi
-if [ "$PART" == "/dev/mmcblk0p2" ]; then
+if [ "$PART" = "/dev/mmcblk0p2" ]; then
  P=$PART
 fi
 
-if [ "$P" == "" ]; then
+if [ "$P" = "" ]; then
  echo "Unknown backup partition $PART, aborting..."
  exit 1
 fi

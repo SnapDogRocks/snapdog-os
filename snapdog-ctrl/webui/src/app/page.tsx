@@ -85,7 +85,12 @@ function DashboardTab() {
         <dt className="text-muted-foreground">{t("hostname")}</dt>
         <dd className="font-medium">{info.hostname || "—"}</dd>
         <dt className="text-muted-foreground">{t("version")}</dt>
-        <dd className="font-mono text-xs">{info.version || "—"}</dd>
+        <dd className="font-mono text-xs">
+          <span>{info.version || "—"}</span>
+          <div className="mt-1 text-[10px] text-muted-foreground">
+            Client {info.components.client} · Ctrl {info.components.ctrl} · Kernel {info.components.kernel}
+          </div>
+        </dd>
         <dt className="text-muted-foreground">{t("network")}</dt>
         <dd className="space-y-1">
           {wifi && (

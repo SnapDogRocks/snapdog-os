@@ -3,10 +3,11 @@
 
 //! System operations — reads/writes config files, calls systemctl, etc.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use serde::Deserialize;
 
 use crate::routes::{
-    AudioInfo, AutoUpdateConfig, ClientConfig, DacOverlay, DiscoveredServer, EthernetConfig,
+    AudioInfo, AutoUpdateConfig, ClientConfig, ComponentVersions, DacOverlay, DiscoveredServer, EthernetConfig,
     EthernetInfo, LogsResponse, NetworkOverview, ScanServersResponse, SshConfig, SystemInfo,
     TimezoneInfo, UpdateCheckResponse, UpdateStatus, WifiInfo, WifiNetwork, WifiScanResult,
 };
@@ -23,6 +24,29 @@ pub async fn get_system_info() -> SystemInfo {
         .unwrap_or_else(|_| "stable".into());
     let uptime = get_uptime().await;
 
+    let kernel = tokio::process::Command::new("uname")
+        .arg("-r")
+        .output()
+        .await
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+
+    let client = tokio::process::Command::new("snapdog-client")
+        .arg("--version")
+        .output()
+        .await
+        .ok()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .trim()
+                .split_whitespace()
+                .last()
+                .unwrap_or("")
+                .to_string()
+        })
+        .unwrap_or_default();
+
     SystemInfo {
         hostname: hostname.trim().to_string(),
         version: version.trim().to_string(),
@@ -34,6 +58,11 @@ pub async fn get_system_info() -> SystemInfo {
             .trim()
             .parse()
             .unwrap_or(4),
+        components: ComponentVersions {
+            client,
+            ctrl: env!("CARGO_PKG_VERSION").to_string(),
+            kernel,
+        },
     }
 }
 
@@ -58,22 +87,29 @@ pub async fn trigger_update() -> Result<()> {
 
 // --- Network ---
 
-pub fn get_network_overview() -> NetworkOverview {
-    NetworkOverview {
-        ethernet: get_ethernet(),
-        wifi: get_wifi(),
-    }
+const ETHERNET_INTERFACES: &[&str] = &["eth0", "end0"];
+const WIFI_INTERFACE: &str = "wlan0";
+const ETH_NETWORK: &str = "/etc/systemd/network/10-ethernet.network";
+const WIFI_NETWORK: &str = "/etc/systemd/network/20-wifi.network";
+
+pub async fn get_network_overview() -> NetworkOverview {
+    let (ethernet, wifi) = tokio::join!(get_ethernet(), get_wifi());
+    NetworkOverview { ethernet, wifi }
 }
 
-pub fn get_ethernet() -> EthernetInfo {
-    // TODO: parse networkctl/ip addr for eth0
+pub async fn get_ethernet() -> EthernetInfo {
+    let iface = first_existing_interface(ETHERNET_INTERFACES)
+        .await
+        .unwrap_or_else(|| ETHERNET_INTERFACES[0].to_string());
+    let status = interface_status(&iface).await;
+
     EthernetInfo {
-        connected: false,
-        mode: "dhcp".into(),
-        ip: String::new(),
-        subnet: String::new(),
-        gateway: String::new(),
-        dns: String::new(),
+        connected: status.connected,
+        mode: read_network_mode(ETH_NETWORK).await,
+        ip: status.ip,
+        subnet: status.subnet,
+        gateway: status.gateway,
+        dns: status.dns,
     }
 }
 
@@ -91,17 +127,25 @@ pub async fn set_ethernet(config: EthernetConfig) -> Result<()> {
     crate::network::configure_ethernet(static_cfg.as_ref()).await
 }
 
-pub fn get_wifi() -> WifiInfo {
-    // TODO: parse wpa_cli status + ip addr
+pub async fn get_wifi() -> WifiInfo {
+    let status = interface_status(WIFI_INTERFACE).await;
+    let wpa = wpa_status(WIFI_INTERFACE).await;
+    let signal = wifi_signal(WIFI_INTERFACE).await.unwrap_or_default();
+    let connected = wpa.state == "COMPLETED" || status.connected;
+
     WifiInfo {
-        connected: false,
-        ssid: String::new(),
-        ip: String::new(),
-        subnet: String::new(),
-        gateway: String::new(),
-        dns: String::new(),
-        signal: 0,
-        mode: "dhcp".into(),
+        connected,
+        ssid: wpa.ssid,
+        ip: if status.ip.is_empty() {
+            wpa.ip
+        } else {
+            status.ip
+        },
+        subnet: status.subnet,
+        gateway: status.gateway,
+        dns: status.dns,
+        signal,
+        mode: read_network_mode(WIFI_NETWORK).await,
     }
 }
 
@@ -131,11 +175,212 @@ pub async fn wifi_scan() -> WifiScanResult {
     }
 }
 
+#[derive(Default)]
+struct InterfaceStatus {
+    connected: bool,
+    ip: String,
+    subnet: String,
+    gateway: String,
+    dns: String,
+}
+
+#[derive(Default)]
+struct WpaStatus {
+    state: String,
+    ssid: String,
+    ip: String,
+}
+
+async fn first_existing_interface(candidates: &[&str]) -> Option<String> {
+    for iface in candidates {
+        if tokio::fs::metadata(format!("/sys/class/net/{iface}"))
+            .await
+            .is_ok()
+        {
+            return Some((*iface).to_string());
+        }
+    }
+    None
+}
+
+async fn interface_status(iface: &str) -> InterfaceStatus {
+    let (ip, subnet) = ipv4_address(iface).await.unwrap_or_default();
+    let gateway = default_gateway(iface).await.unwrap_or_default();
+    let dns = dns_servers(iface).await.unwrap_or_default();
+    let connected = interface_is_up(iface).await || !ip.is_empty();
+
+    InterfaceStatus {
+        connected,
+        ip,
+        subnet,
+        gateway,
+        dns,
+    }
+}
+
+async fn interface_is_up(iface: &str) -> bool {
+    read_file(&format!("/sys/class/net/{iface}/operstate"))
+        .await
+        .is_ok_and(|state| state.trim() == "up")
+}
+
+async fn ipv4_address(iface: &str) -> Result<(String, String)> {
+    let output = command_stdout("ip", &["-o", "-4", "addr", "show", "dev", iface]).await?;
+    Ok(parse_ipv4_address(&output).unwrap_or_default())
+}
+
+fn parse_ipv4_address(output: &str) -> Option<(String, String)> {
+    output.lines().find_map(|line| {
+        let mut fields = line.split_whitespace();
+        while let Some(field) = fields.next() {
+            if field == "inet" {
+                let cidr = fields.next()?;
+                let (ip, prefix) = cidr.split_once('/')?;
+                let prefix = prefix.parse::<u8>().ok()?;
+                return Some((ip.to_string(), prefix_to_subnet(prefix)));
+            }
+        }
+        None
+    })
+}
+
+async fn default_gateway(iface: &str) -> Result<String> {
+    let output = command_stdout("ip", &["-4", "route", "show", "default", "dev", iface]).await?;
+    Ok(parse_default_gateway(&output).unwrap_or_default())
+}
+
+fn parse_default_gateway(output: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        let mut fields = line.split_whitespace();
+        while let Some(field) = fields.next() {
+            if field == "via" {
+                return fields.next().map(ToString::to_string);
+            }
+        }
+        None
+    })
+}
+
+async fn dns_servers(iface: &str) -> Result<String> {
+    if let Ok(output) = command_stdout("resolvectl", &["dns", iface]).await {
+        if let Some(servers) = parse_resolvectl_dns(&output) {
+            return Ok(servers);
+        }
+    }
+
+    let resolv_conf = read_file("/etc/resolv.conf").await.unwrap_or_default();
+    Ok(parse_resolv_conf_dns(&resolv_conf))
+}
+
+fn parse_resolvectl_dns(output: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        let (_label, servers) = line.split_once(':')?;
+        let servers = servers.trim();
+        if servers.is_empty() {
+            None
+        } else {
+            Some(servers.to_string())
+        }
+    })
+}
+
+fn parse_resolv_conf_dns(output: &str) -> String {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            if fields.next() == Some("nameserver") {
+                fields.next()
+            } else {
+                None
+            }
+        })
+        .filter(|server| !server.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+async fn read_network_mode(path: &str) -> String {
+    let content = read_file(path).await.unwrap_or_default();
+    parse_network_mode(&content).unwrap_or_else(|| "dhcp".into())
+}
+
+fn parse_network_mode(content: &str) -> Option<String> {
+    let mut has_static_address = false;
+
+    for line in content.lines().map(str::trim) {
+        if line.starts_with('#') {
+            continue;
+        }
+        if matches!(
+            line.split_once('='),
+            Some(("DHCP", "yes" | "true" | "ipv4" | "both"))
+        ) {
+            return Some("dhcp".into());
+        }
+        if line.starts_with("Address=") {
+            has_static_address = true;
+        }
+    }
+
+    has_static_address.then(|| "static".into())
+}
+
+async fn wpa_status(iface: &str) -> WpaStatus {
+    command_stdout("wpa_cli", &["-i", iface, "status"])
+        .await
+        .map(|output| parse_wpa_status(&output))
+        .unwrap_or_default()
+}
+
+fn parse_wpa_status(output: &str) -> WpaStatus {
+    let mut status = WpaStatus::default();
+    for line in output.lines() {
+        match line.split_once('=') {
+            Some(("wpa_state", value)) => status.state = value.to_string(),
+            Some(("ssid", value)) => status.ssid = value.to_string(),
+            Some(("ip_address", value)) => status.ip = value.to_string(),
+            _ => {}
+        }
+    }
+    status
+}
+
+async fn wifi_signal(iface: &str) -> Result<i32> {
+    let output = command_stdout("wpa_cli", &["-i", iface, "signal_poll"]).await?;
+    Ok(parse_wifi_signal(&output).unwrap_or_default())
+}
+
+fn parse_wifi_signal(output: &str) -> Option<i32> {
+    output.lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        if matches!(key, "RSSI" | "AVG_RSSI") {
+            value.parse().ok()
+        } else {
+            None
+        }
+    })
+}
+
+fn prefix_to_subnet(prefix: u8) -> String {
+    let prefix = prefix.min(32);
+    let mask = if prefix == 0 {
+        0
+    } else {
+        u32::MAX << (32 - u32::from(prefix))
+    };
+    format!(
+        "{}.{}.{}.{}",
+        (mask >> 24) & 0xff,
+        (mask >> 16) & 0xff,
+        (mask >> 8) & 0xff,
+        mask & 0xff
+    )
+}
+
 // --- Audio ---
 
 const AVAILABLE_OVERLAYS: &[(&str, &str)] = &[
-    ("hifiberry-dacplus", "HiFiBerry DAC+/DAC2 Pro"),
-    ("hifiberry-amp3", "HiFiBerry Amp3"),
     ("allo-boss-dac-pcm512x-audio", "Allo Boss DAC"),
     ("iqaudio-dacplus", "IQAudio DAC+"),
     ("justboom-dac", "JustBoom DAC"),
@@ -199,15 +444,19 @@ pub async fn get_client() -> ClientConfig {
 pub async fn set_client(config: ClientConfig) -> Result<()> {
     let mut args = Vec::new();
     if !config.server_url.is_empty() {
+        validate_client_arg("server_url", &config.server_url)?;
         args.push(config.server_url);
     }
     if !config.host_id.is_empty() {
+        validate_client_arg("host_id", &config.host_id)?;
         args.push(format!("--hostID {}", config.host_id));
     }
     if config.soundcard != "default" && !config.soundcard.is_empty() {
+        validate_client_arg("soundcard", &config.soundcard)?;
         args.push(format!("--soundcard {}", config.soundcard));
     }
     if config.mixer != "software" && !config.mixer.is_empty() {
+        validate_client_arg("mixer", &config.mixer)?;
         args.push(format!("--mixer {}", config.mixer));
     }
     if config.latency != 0 {
@@ -326,7 +575,7 @@ pub async fn get_update_status() -> UpdateStatus {
         .and_then(|prev| {
             let current = std::fs::read_to_string("/etc/snapdog-os.version").unwrap_or_default();
             // If previous > current, we rolled back
-            if prev.trim() > current.trim() {
+            if semver_gt(prev.trim(), current.trim()) {
                 Some(true)
             } else {
                 None
@@ -348,6 +597,12 @@ pub async fn get_update_status() -> UpdateStatus {
 }
 
 async fn fetch_latest_version(url: &str) -> Result<String> {
+    #[derive(Deserialize)]
+    struct UpdateMetadata {
+        #[serde(default)]
+        version: String,
+    }
+
     let output = tokio::process::Command::new("curl")
         .args(["-sf", "-m", "10", url])
         .output()
@@ -357,16 +612,10 @@ async fn fetch_latest_version(url: &str) -> Result<String> {
         anyhow::bail!("failed to fetch update metadata");
     }
 
-    // Parse {"version":"20260519","url":"..."}
-    let body = String::from_utf8_lossy(&output.stdout);
-    let version = body
-        .split("\"version\"")
-        .nth(1)
-        .and_then(|s| s.split('"').nth(2))
-        .unwrap_or("")
-        .to_string();
+    let metadata: UpdateMetadata =
+        serde_json::from_slice(&output.stdout).context("failed to parse update metadata")?;
 
-    Ok(version)
+    Ok(metadata.version)
 }
 
 // --- Factory Reset ---
@@ -504,9 +753,9 @@ pub async fn set_auto_update(config: AutoUpdateConfig) -> Result<()> {
 
     // Generate systemd timer schedule
     let calendar = match config.interval.as_str() {
-        _ => format!("*-*-* {}:00", config.time),
         "weekly" => format!("Mon {}:00", config.time),
         "monthly" => format!("*-*-01 {}:00", config.time),
+        _ => format!("*-*-* {}:00", config.time),
     };
 
     if config.enabled {
@@ -551,10 +800,14 @@ pub async fn scan_servers() -> ScanServersResponse {
     };
 
     let service_type = "_snapdog._tcp.local.";
-    let receiver = mdns.browse(service_type).unwrap_or_else(|e| {
-        tracing::error!("mDNS browse failed: {e}");
-        mdns.browse("_invalid._tcp.local.").unwrap()
-    });
+    let receiver = match mdns.browse(service_type) {
+        Ok(receiver) => receiver,
+        Err(e) => {
+            tracing::error!("mDNS browse failed: {e}");
+            let _ = mdns.shutdown();
+            return ScanServersResponse { servers: vec![] };
+        }
+    };
 
     let mut servers = Vec::new();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
@@ -605,6 +858,22 @@ pub async fn scan_servers() -> ScanServersResponse {
 
 async fn read_file(path: &str) -> Result<String> {
     Ok(tokio::fs::read_to_string(path).await?)
+}
+
+async fn command_stdout(cmd: &str, args: &[&str]) -> Result<String> {
+    let output = tokio::process::Command::new(cmd)
+        .args(args)
+        .output()
+        .await?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "{} {} failed: {}",
+            cmd,
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 async fn run_cmd(cmd: &str, args: &[&str]) -> Result<()> {
@@ -689,4 +958,79 @@ fn parse_client_args(defaults_file: &str) -> ParsedClientArgs {
     }
 
     result
+}
+
+fn validate_client_arg(field: &str, value: &str) -> Result<()> {
+    anyhow::ensure!(
+        !value
+            .chars()
+            .any(|c| c.is_whitespace() || matches!(c, '"' | '\'' | '\\' | '\0')),
+        "{field} contains unsupported characters"
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_client_arg_rejects_environment_file_breakout() {
+        assert!(validate_client_arg("host_id", "living room").is_err());
+        assert!(validate_client_arg("host_id", "living\"room").is_err());
+        assert!(validate_client_arg("host_id", "living\nroom").is_err());
+    }
+
+    #[test]
+    fn validate_client_arg_accepts_common_values() {
+        assert!(validate_client_arg("server_url", "tcp://192.168.1.10:1704").is_ok());
+        assert!(validate_client_arg("host_id", "kitchen").is_ok());
+        assert!(validate_client_arg("soundcard", "hw:0").is_ok());
+    }
+
+    #[test]
+    fn parses_ipv4_address_and_prefix() {
+        let output = "2: eth0    inet 192.168.1.42/24 brd 192.168.1.255 scope global eth0";
+        assert_eq!(
+            parse_ipv4_address(output),
+            Some(("192.168.1.42".into(), "255.255.255.0".into()))
+        );
+    }
+
+    #[test]
+    fn parses_network_mode() {
+        assert_eq!(
+            parse_network_mode("[Network]\nDHCP=yes\n"),
+            Some("dhcp".into())
+        );
+        assert_eq!(
+            parse_network_mode("[Network]\nAddress=10.0.0.2/24\n"),
+            Some("static".into())
+        );
+    }
+
+    #[test]
+    fn parses_wifi_status_and_signal() {
+        let status = parse_wpa_status("wpa_state=COMPLETED\nssid=Studio\nip_address=10.0.0.3\n");
+        assert_eq!(status.state, "COMPLETED");
+        assert_eq!(status.ssid, "Studio");
+        assert_eq!(status.ip, "10.0.0.3");
+        assert_eq!(parse_wifi_signal("RSSI=-51\nLINKSPEED=72\n"), Some(-51));
+    }
+
+    #[test]
+    fn parses_dns_and_gateway() {
+        assert_eq!(
+            parse_default_gateway("default via 192.168.1.1 dev eth0 proto dhcp"),
+            Some("192.168.1.1".into())
+        );
+        assert_eq!(
+            parse_resolvectl_dns("Link 2 (eth0): 1.1.1.1 8.8.8.8"),
+            Some("1.1.1.1 8.8.8.8".into())
+        );
+        assert_eq!(
+            parse_resolv_conf_dns("nameserver 9.9.9.9\nnameserver 149.112.112.112\n"),
+            "9.9.9.9 149.112.112.112"
+        );
+    }
 }

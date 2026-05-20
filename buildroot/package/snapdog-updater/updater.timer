@@ -6,4 +6,4 @@ OnCalendar=03:00
 Unit=updater.service
 
 [Install]
-WantedBy=timers.target  
+WantedBy=timers.target

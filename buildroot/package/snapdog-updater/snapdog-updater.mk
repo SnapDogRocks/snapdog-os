@@ -30,6 +30,8 @@ define SNAPDOG_UPDATER_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/etc/snapdog-os.version
 	$(INSTALL) -D -m 0444 $(BR2_EXTERNAL_SNAPDOG_PATH)/package/snapdog-updater/config-files \
 		$(TARGET_DIR)/opt/snapdog/etc/config-files
+	$(INSTALL) -D -m 0444 $(BR2_EXTERNAL_SNAPDOG_PATH)/package/snapdog-updater/services \
+		$(TARGET_DIR)/opt/snapdog/etc/services
 
 	# Systemd units
 	$(INSTALL) -D -m 0644 $(BR2_EXTERNAL_SNAPDOG_PATH)/package/snapdog-updater/updater.service \
@@ -38,6 +40,12 @@ define SNAPDOG_UPDATER_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/usr/lib/systemd/system/updater.timer
 	$(INSTALL) -D -m 0644 $(BR2_EXTERNAL_SNAPDOG_PATH)/package/snapdog-updater/boot-guard.service \
 		$(TARGET_DIR)/usr/lib/systemd/system/boot-guard.service
+	mkdir -p $(TARGET_DIR)/etc/systemd/system/multi-user.target.wants
+	ln -sf /usr/lib/systemd/system/boot-guard.service \
+		$(TARGET_DIR)/etc/systemd/system/multi-user.target.wants/boot-guard.service
+	mkdir -p $(TARGET_DIR)/etc/systemd/system/timers.target.wants
+	ln -sf /usr/lib/systemd/system/updater.timer \
+		$(TARGET_DIR)/etc/systemd/system/timers.target.wants/updater.timer
 
 	# Kernel image for OTA
 	$(INSTALL) -D -m 0644 $(BUILD_DIR)/linux-custom/arch/arm64/boot/Image \

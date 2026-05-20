@@ -1,0 +1,21 @@
+# Build
+buildroot/PIVERSION
+buildroot/VERSION
+.piversion
+images/
+
+# Rust
+snapdog-ctrl/target/
+
+# WebUI
+snapdog-ctrl/webui/node_modules/
+snapdog-ctrl/webui/.next/
+snapdog-ctrl/webui/out/
+snapdog-ctrl/webui/next-env.d.ts
+snapdog-ctrl/webui/tsconfig.tsbuildinfo
+
+# OS/Editor
+.DS_Store
+*.swp
+.vscode/
+.idea/

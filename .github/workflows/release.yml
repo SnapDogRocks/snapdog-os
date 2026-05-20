@@ -1,0 +1,140 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Release channel"
+        required: true
+        default: "beta"
+        type: choice
+        options:
+          - beta
+          - stable
+
+env:
+  R2_BUCKET: snapdog-updates
+  UPDATE_BASE_URL: https://update.snapdog.cc/os
+
+jobs:
+  build:
+    name: Build SD images
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        pi: [pi3, pi4, pi5]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git wget cpio unzip rsync bc \
+            gcc-aarch64-linux-gnu file
+
+      - name: Build snapdog-ctrl (aarch64)
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          cd snapdog-ctrl/webui && npm ci && npm run build && cd ../..
+          cd snapdog-ctrl && cargo build --release --target aarch64-unknown-linux-gnu
+
+      - name: Get buildroot
+        run: ./get-buildroot
+
+      - name: Configure for Pi ${{ matrix.pi }}
+        run: ./build-config ${{ matrix.pi }}
+
+      - name: Build image
+        run: ./compile ${{ matrix.pi }}
+
+      - name: Package image
+        run: |
+          VERSION=$(cat VERSION)
+          BRDIR=$(./brdir ${{ matrix.pi }})
+          cp ../$BRDIR/images/sdcard.img snapdog-os-${{ matrix.pi }}-${VERSION}.img
+          gzip snapdog-os-${{ matrix.pi }}-${VERSION}.img
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "IMAGE=snapdog-os-${{ matrix.pi }}-${VERSION}.img.gz" >> $GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-${{ matrix.pi }}
+          path: ${{ env.IMAGE }}
+
+    outputs:
+      version: ${{ env.VERSION }}
+
+  release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Determine channel
+        id: channel
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "channel=stable" >> $GITHUB_OUTPUT
+          else
+            echo "channel=${{ inputs.channel || 'beta' }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload to Cloudflare R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+        run: |
+          VERSION=${{ needs.build.outputs.version }}
+          CHANNEL=${{ steps.channel.outputs.channel }}
+
+          # Upload images
+          for pi in pi3 pi4 pi5; do
+            IMAGE="artifacts/image-${pi}/snapdog-os-${pi}-${VERSION}.img.gz"
+            if [ -f "$IMAGE" ]; then
+              aws s3 cp "$IMAGE" "s3://${R2_BUCKET}/os/images/" --endpoint-url "$AWS_ENDPOINT_URL"
+            fi
+          done
+
+          # Update metadata for each Pi version
+          for pi in pi3 pi4 pi5; do
+            SHA=$(sha256sum "artifacts/image-${pi}/snapdog-os-${pi}-${VERSION}.img.gz" | awk '{print $1}')
+              METADATA="{\"version\":\"${VERSION}\",\"url\":\"${UPDATE_BASE_URL}/images/snapdog-os-${pi}-${VERSION}.img.gz\",\"sha256\":\"${SHA}\"}"
+            echo "$METADATA" | aws s3 cp - "s3://${R2_BUCKET}/os/metadata/${CHANNEL}/${pi}.json" \
+              --content-type "application/json" --endpoint-url "$AWS_ENDPOINT_URL"
+          done
+
+          # If stable, also update beta
+          if [ "$CHANNEL" = "stable" ]; then
+            for pi in pi3 pi4 pi5; do
+              SHA=$(sha256sum "artifacts/image-${pi}/snapdog-os-${pi}-${VERSION}.img.gz" | awk '{print $1}')
+              METADATA="{\"version\":\"${VERSION}\",\"url\":\"${UPDATE_BASE_URL}/images/snapdog-os-${pi}-${VERSION}.img.gz\",\"sha256\":\"${SHA}\"}"
+              echo "$METADATA" | aws s3 cp - "s3://${R2_BUCKET}/os/metadata/beta/${pi}.json" \
+                --content-type "application/json" --endpoint-url "$AWS_ENDPOINT_URL"
+            done
+          fi
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*.img.gz
+          generate_release_notes: true

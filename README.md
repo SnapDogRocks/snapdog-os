@@ -174,6 +174,22 @@ Output: `../buildroot-pi4/images/sdcard.img`
 
 - [**snapdog**](https://github.com/metaneutrons/snapdog) — SnapDog multiroom audio server and client
 
+## Repository Setup
+
+Branch protection on `main`:
+- Required status checks: Lint & Test, Cross-compile, Security Audit
+- No force pushes, no deletions
+- All changes via PR (CI must pass before merge)
+
+Actions permissions:
+- Workflow permissions: Read and write
+- Allow GitHub Actions to create and approve PRs (required for release-please)
+
+Required secrets for releases:
+- `R2_ACCESS_KEY_ID` — Cloudflare R2 access key
+- `R2_SECRET_ACCESS_KEY` — Cloudflare R2 secret
+- `R2_ENDPOINT_URL` — Cloudflare R2 endpoint
+
 ## License
 
 [GPL-3.0](LICENSE)

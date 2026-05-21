@@ -145,14 +145,19 @@ jobs:
           IMG="../buildroot-${{ matrix.pi }}/images/sdcard.img"
           OUT="snapdog-os-${{ matrix.pi }}-${VERSION}.img.gz"
           gzip -c "$IMG" > "$OUT"
-          SHA=$(sha256sum "$OUT" | awk '{print $1}')
+          
+          UPDATE_ARC="snapdog-os-${{ matrix.pi }}-${VERSION}-update.tar.gz"
+          tar -czf "$UPDATE_ARC" -C "../buildroot-${{ matrix.pi }}/images" rootfs.ext4
+          
           echo "image=${OUT}" >> $GITHUB_OUTPUT
-          echo "sha256=${SHA}" >> $GITHUB_OUTPUT
+          echo "update_archive=${UPDATE_ARC}" >> $GITHUB_OUTPUT
 
       - uses: actions/upload-artifact@v4
         with:
           name: image-${{ matrix.pi }}
-          path: ${{ steps.package.outputs.image }}
+          path: |
+            ${{ steps.package.outputs.image }}
+            ${{ steps.package.outputs.update_archive }}
 
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -186,15 +191,20 @@ jobs:
 
           for pi in pi3 pi4 pi5; do
             IMAGE="artifacts/image-${pi}/snapdog-os-${pi}-${VERSION}.img.gz"
+            UPDATE_ARC="artifacts/image-${pi}/snapdog-os-${pi}-${VERSION}-update.tar.gz"
             [ -f "$IMAGE" ] || continue
+            [ -f "$UPDATE_ARC" ] || continue
 
             aws s3 cp "$IMAGE" "s3://${R2_BUCKET}/os/images/" \
               --endpoint-url "$AWS_ENDPOINT_URL"
 
-            SHA=$(sha256sum "$IMAGE" | awk '{print $1}')
+            aws s3 cp "$UPDATE_ARC" "s3://${R2_BUCKET}/os/updates/" \
+              --endpoint-url "$AWS_ENDPOINT_URL"
+
+            SHA=$(sha256sum "$UPDATE_ARC" | awk '{print $1}')
             METADATA=$(jq -n \
               --arg v "$VERSION" \
-              --arg u "${UPDATE_BASE_URL}/images/snapdog-os-${pi}-${VERSION}.img.gz" \
+              --arg u "${UPDATE_BASE_URL}/updates/snapdog-os-${pi}-${VERSION}-update.tar.gz" \
               --arg s "$SHA" \
               '{version: $v, url: $u, sha256: $s}')
 
@@ -219,4 +229,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.release-please.outputs.tag_name }}
-          files: artifacts/**/*.img.gz
+          files: |
+            artifacts/**/*.img.gz
+            artifacts/**/*-update.tar.gz

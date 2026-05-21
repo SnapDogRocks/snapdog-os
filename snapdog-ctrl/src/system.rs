@@ -7,9 +7,10 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 
 use crate::routes::{
-    AudioInfo, AutoUpdateConfig, ClientConfig, ComponentVersions, DacOverlay, DiscoveredServer, EthernetConfig,
-    EthernetInfo, LogsResponse, NetworkOverview, ScanServersResponse, SshConfig, SystemInfo,
-    TimezoneInfo, UpdateCheckResponse, UpdateStatus, WifiInfo, WifiNetwork, WifiScanResult,
+    AudioInfo, AutoUpdateConfig, ClientConfig, ComponentVersions, DacOverlay, DiscoveredServer,
+    EthernetConfig, EthernetInfo, LogsResponse, NetworkOverview, ScanServersResponse, SshConfig,
+    SystemInfo, TimezoneInfo, UpdateCheckResponse, UpdateStatus, WifiInfo, WifiNetwork,
+    WifiScanResult,
 };
 
 // --- System ---
@@ -39,7 +40,6 @@ pub async fn get_system_info() -> SystemInfo {
         .ok()
         .map(|o| {
             String::from_utf8_lossy(&o.stdout)
-                .trim()
                 .split_whitespace()
                 .last()
                 .unwrap_or("")
@@ -71,7 +71,10 @@ pub async fn set_system(hostname: Option<String>, channel: Option<String>) -> Re
         run_cmd("hostnamectl", &["set-hostname", &h]).await?;
     }
     if let Some(c) = channel {
-        tokio::fs::write("/etc/snapdog-os.channel", &c).await?;
+        let _ = remount_root_rw().await;
+        let res = tokio::fs::write("/etc/snapdog-os.channel", &c).await;
+        let _ = remount_root_ro().await;
+        res.context("failed to write snapdog-os.channel")?;
     }
     Ok(())
 }
@@ -464,7 +467,11 @@ pub async fn set_client(config: ClientConfig) -> Result<()> {
     }
 
     let content = format!("SNAPDOG_CLIENT_ARGS=\"{}\"\n", args.join(" "));
-    tokio::fs::write("/etc/default/snapdog-client", content).await?;
+    let _ = remount_root_rw().await;
+    let write_res = tokio::fs::write("/etc/default/snapdog-client", content).await;
+    let _ = remount_root_ro().await;
+    write_res.context("failed to write snapdog-client configuration")?;
+
     run_cmd("systemctl", &["restart", "snapdog-client"]).await?;
 
     // Sync hostname with host_id
@@ -494,26 +501,33 @@ pub async fn get_ssh() -> SshConfig {
 }
 
 pub async fn set_ssh(config: SshConfig) -> Result<()> {
-    if config.enabled {
-        // Harden sshd: pubkey only, no password auth
-        let sshd_config = "\
+    let _ = remount_root_rw().await;
+
+    let op_res = async {
+        if config.enabled {
+            // Harden sshd: pubkey only, no password auth
+            let sshd_config = "\
 PasswordAuthentication no\n\
 KbdInteractiveAuthentication no\n\
 PermitRootLogin prohibit-password\n\
 ";
-        tokio::fs::create_dir_all("/etc/ssh/sshd_config.d").await?;
-        tokio::fs::write("/etc/ssh/sshd_config.d/snapdog.conf", sshd_config).await?;
-        run_cmd("systemctl", &["enable", "--now", "sshd"]).await?;
-    } else {
-        run_cmd("systemctl", &["disable", "--now", "sshd"]).await?;
+            tokio::fs::create_dir_all("/etc/ssh/sshd_config.d").await?;
+            tokio::fs::write("/etc/ssh/sshd_config.d/snapdog.conf", sshd_config).await?;
+            run_cmd("systemctl", &["enable", "--now", "sshd"]).await?;
+        } else {
+            run_cmd("systemctl", &["disable", "--now", "sshd"]).await?;
+        }
+
+        tokio::fs::create_dir_all("/root/.ssh").await?;
+        let keys = config.pubkeys.join("\n") + "\n";
+        tokio::fs::write("/root/.ssh/authorized_keys", keys).await?;
+        run_cmd("chmod", &["600", "/root/.ssh/authorized_keys"]).await?;
+        Ok::<(), anyhow::Error>(())
     }
+    .await;
 
-    tokio::fs::create_dir_all("/root/.ssh").await?;
-    let keys = config.pubkeys.join("\n") + "\n";
-    tokio::fs::write("/root/.ssh/authorized_keys", keys).await?;
-    run_cmd("chmod", &["600", "/root/.ssh/authorized_keys"]).await?;
-
-    Ok(())
+    let _ = remount_root_ro().await;
+    op_res
 }
 
 // --- OTA Update Check ---
@@ -622,20 +636,31 @@ async fn fetch_latest_version(url: &str) -> Result<String> {
 
 pub async fn factory_reset() -> Result<()> {
     tracing::warn!("Factory reset initiated");
-    // Remove WiFi config
-    let _ = tokio::fs::remove_file("/etc/wpa_supplicant/wpa_supplicant-wlan0.conf").await;
-    // Remove networkd configs
-    let _ = tokio::fs::remove_file("/etc/systemd/network/10-ethernet.network").await;
-    let _ = tokio::fs::remove_file("/etc/systemd/network/20-wifi.network").await;
-    // Reset client config
-    tokio::fs::write("/etc/default/snapdog-client", "SNAPDOG_CLIENT_ARGS=\"\"\n").await?;
-    // Reset hostname
-    run_cmd("hostnamectl", &["set-hostname", "snapdog"]).await?;
-    // Disable SSH
-    let _ = run_cmd("systemctl", &["disable", "--now", "sshd"]).await;
-    let _ = tokio::fs::remove_file("/root/.ssh/authorized_keys").await;
-    // Reset update channel
-    tokio::fs::write("/etc/snapdog-os.channel", "stable\n").await?;
+
+    let _ = remount_root_rw().await;
+
+    let op_res = async {
+        // Remove WiFi config
+        let _ = tokio::fs::remove_file("/etc/wpa_supplicant/wpa_supplicant-wlan0.conf").await;
+        // Remove networkd configs
+        let _ = tokio::fs::remove_file("/etc/systemd/network/10-ethernet.network").await;
+        let _ = tokio::fs::remove_file("/etc/systemd/network/20-wifi.network").await;
+        // Reset client config
+        tokio::fs::write("/etc/default/snapdog-client", "SNAPDOG_CLIENT_ARGS=\"\"\n").await?;
+        // Reset hostname
+        run_cmd("hostnamectl", &["set-hostname", "snapdog"]).await?;
+        // Disable SSH
+        let _ = run_cmd("systemctl", &["disable", "--now", "sshd"]).await;
+        let _ = tokio::fs::remove_file("/root/.ssh/authorized_keys").await;
+        // Reset update channel
+        tokio::fs::write("/etc/snapdog-os.channel", "stable\n").await?;
+        Ok::<(), anyhow::Error>(())
+    }
+    .await;
+
+    let _ = remount_root_ro().await;
+    op_res?;
+
     // Reboot
     tracing::info!("Factory reset complete, rebooting");
     run_cmd("systemctl", &["reboot"]).await?;
@@ -744,13 +769,6 @@ pub async fn get_auto_update() -> AutoUpdateConfig {
 }
 
 pub async fn set_auto_update(config: AutoUpdateConfig) -> Result<()> {
-    // Persist config
-    let content = format!(
-        "enabled={}\ninterval={}\ntime={}\n",
-        config.enabled, config.interval, config.time
-    );
-    tokio::fs::write(AUTO_UPDATE_CONF, content).await?;
-
     // Generate systemd timer schedule
     let calendar = match config.interval.as_str() {
         "weekly" => format!("Mon {}:00", config.time),
@@ -758,20 +776,34 @@ pub async fn set_auto_update(config: AutoUpdateConfig) -> Result<()> {
         _ => format!("*-*-* {}:00", config.time),
     };
 
-    if config.enabled {
-        // Write timer override
-        if let Some(parent) = std::path::Path::new(UPDATER_TIMER).parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-        let timer_conf = format!("[Timer]\nOnCalendar=\nOnCalendar={calendar}\n");
-        tokio::fs::write(UPDATER_TIMER, timer_conf).await?;
-        run_cmd("systemctl", &["daemon-reload"]).await?;
-        run_cmd("systemctl", &["enable", "--now", "updater.timer"]).await?;
-    } else {
-        run_cmd("systemctl", &["disable", "--now", "updater.timer"]).await?;
-    }
+    let _ = remount_root_rw().await;
 
-    Ok(())
+    let op_res = async {
+        // Persist config
+        let content = format!(
+            "enabled={}\ninterval={}\ntime={}\n",
+            config.enabled, config.interval, config.time
+        );
+        tokio::fs::write(AUTO_UPDATE_CONF, content).await?;
+
+        if config.enabled {
+            // Write timer override
+            if let Some(parent) = std::path::Path::new(UPDATER_TIMER).parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+            let timer_conf = format!("[Timer]\nOnCalendar=\nOnCalendar={calendar}\n");
+            tokio::fs::write(UPDATER_TIMER, timer_conf).await?;
+            run_cmd("systemctl", &["daemon-reload"]).await?;
+            run_cmd("systemctl", &["enable", "--now", "updater.timer"]).await?;
+        } else {
+            run_cmd("systemctl", &["disable", "--now", "updater.timer"]).await?;
+        }
+        Ok::<(), anyhow::Error>(())
+    }
+    .await;
+
+    let _ = remount_root_ro().await;
+    op_res
 }
 
 // --- Server Connectivity Test ---
@@ -962,11 +994,25 @@ fn parse_client_args(defaults_file: &str) -> ParsedClientArgs {
 
 fn validate_client_arg(field: &str, value: &str) -> Result<()> {
     anyhow::ensure!(
-        !value
+        value
             .chars()
-            .any(|c| c.is_whitespace() || matches!(c, '"' | '\'' | '\\' | '\0')),
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':' | '/')),
         "{field} contains unsupported characters"
     );
+    Ok(())
+}
+
+async fn remount_root_rw() -> Result<()> {
+    if cfg!(target_os = "linux") {
+        run_cmd("mount", &["-o", "remount,rw", "/"]).await?;
+    }
+    Ok(())
+}
+
+async fn remount_root_ro() -> Result<()> {
+    if cfg!(target_os = "linux") {
+        run_cmd("mount", &["-o", "remount,ro", "/"]).await?;
+    }
     Ok(())
 }
 

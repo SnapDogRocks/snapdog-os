@@ -207,11 +207,32 @@ pub struct ScannedNetwork {
 // ── Helpers ───────────────────────────────────────────────────
 
 async fn write_config(path: &str, content: &str) -> Result<()> {
-    if let Some(parent) = std::path::Path::new(path).parent() {
-        tokio::fs::create_dir_all(parent).await?;
+    #[cfg(target_os = "linux")]
+    {
+        let _ = Command::new("mount")
+            .args(["-o", "remount,rw", "/"])
+            .output()
+            .await;
     }
-    tokio::fs::write(path, content).await?;
-    Ok(())
+
+    let write_res = async {
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        tokio::fs::write(path, content).await?;
+        Ok::<(), anyhow::Error>(())
+    }
+    .await;
+
+    #[cfg(target_os = "linux")]
+    {
+        let _ = Command::new("mount")
+            .args(["-o", "remount,ro", "/"])
+            .output()
+            .await;
+    }
+
+    write_res.context("failed to write network configuration file")
 }
 
 fn validate_static_config(config: &StaticConfig) -> Result<()> {

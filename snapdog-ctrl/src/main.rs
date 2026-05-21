@@ -59,8 +59,20 @@ async fn main() -> anyhow::Result<()> {
     // Mark boot as successful (clears OTA rollback counter)
     #[cfg(target_os = "linux")]
     {
-        if tokio::fs::remove_file("/boot/boot-attempts").await.is_ok() {
-            tracing::info!("Boot marked successful (OTA rollback counter cleared)");
+        if tokio::fs::metadata("/boot/boot-attempts").await.is_ok() {
+            let _ = tokio::process::Command::new("mount")
+                .args(["-o", "remount,rw", "/boot"])
+                .output()
+                .await;
+
+            if tokio::fs::remove_file("/boot/boot-attempts").await.is_ok() {
+                tracing::info!("Boot marked successful (OTA rollback counter cleared)");
+            }
+
+            let _ = tokio::process::Command::new("mount")
+                .args(["-o", "remount,ro", "/boot"])
+                .output()
+                .await;
         }
     }
 

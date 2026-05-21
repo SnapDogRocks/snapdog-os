@@ -32,12 +32,33 @@ pub async fn read() -> Result<String> {
 
 /// Write config.txt with automatic backup.
 pub async fn write(content: &str) -> Result<()> {
-    // Backup current file
-    if tokio::fs::metadata(CONFIG_PATH).await.is_ok() {
-        tokio::fs::copy(CONFIG_PATH, BACKUP_PATH).await?;
+    #[cfg(target_os = "linux")]
+    {
+        let _ = tokio::process::Command::new("mount")
+            .args(["-o", "remount,rw", "/boot"])
+            .output()
+            .await;
     }
-    tokio::fs::write(CONFIG_PATH, content).await?;
-    Ok(())
+
+    let write_res = async {
+        // Backup current file
+        if tokio::fs::metadata(CONFIG_PATH).await.is_ok() {
+            tokio::fs::copy(CONFIG_PATH, BACKUP_PATH).await?;
+        }
+        tokio::fs::write(CONFIG_PATH, content).await?;
+        Ok::<(), anyhow::Error>(())
+    }
+    .await;
+
+    #[cfg(target_os = "linux")]
+    {
+        let _ = tokio::process::Command::new("mount")
+            .args(["-o", "remount,ro", "/boot"])
+            .output()
+            .await;
+    }
+
+    write_res
 }
 
 /// Get the current audio DAC overlay (if any).

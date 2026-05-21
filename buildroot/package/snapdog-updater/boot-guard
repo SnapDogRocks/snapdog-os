@@ -31,3 +31,4 @@ fi
 mount -o remount,rw /boot
 echo $((ATTEMPTS - 1)) > "$ATTEMPTS_FILE"
 sync
+mount -o remount,ro /boot

@@ -31,6 +31,7 @@ FSTYPE=${ROOTFS_ENTRY#rootfs.}
 mount -o remount,rw /boot
 if [ ! -f /boot/cmdline.txt ]; then
   echo "can't write to /boot/cmdline.txt, aborting"
+  mount -o remount,ro /boot
   exit 1
 fi
 
@@ -168,11 +169,13 @@ case "$FSTYPE" in
 esac
 if [ "$RES" != "0" ] && [ "$RES" != "1" ]; then
   echo "file system is corrupted, not switching to new version..."
+  mount -o remount,ro /boot
   exit 1
 fi
 
 if [ "$1" = "--simulate" ]; then
   echo "not switching to new version..."
+  mount -o remount,ro /boot
   exit 0
 fi
 
@@ -190,4 +193,6 @@ if [ "$1" = "--reboot" ]; then
   reboot
 else
   echo "Version $VERSION installed. You need to reboot to activate it"
+  sync
+  mount -o remount,ro /boot
 fi

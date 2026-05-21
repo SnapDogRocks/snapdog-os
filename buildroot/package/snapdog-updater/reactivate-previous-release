@@ -1,42 +1,63 @@
 #!/bin/sh
 PART=$(/opt/snapdog/bin/partitions | awk '{print $2}')
-if [ ! -f /boot/Image.bak ]; then
- echo "No previous release found, aborting..."
- exit 1
-fi
-if [ "$PART" = "/dev/mmcblk0p3" ]; then
- P=$PART
-fi
-if [ "$PART" = "/dev/mmcblk0p2" ]; then
- P=$PART
+
+# Dynamically check for kernel file type
+KERNELIMAGE=""
+if [ -f /boot/Image.bak ]; then
+  KERNELIMAGE="Image"
+elif [ -f /boot/zImage.bak ]; then
+  KERNELIMAGE="zImage"
 fi
 
-if [ "$P" = "" ]; then
- echo "Unknown backup partition $PART, aborting..."
- exit 1
+if [ -z "$KERNELIMAGE" ]; then
+  echo "No previous release found, aborting..."
+  exit 1
 fi
 
+if [ "$PART" = "/dev/mmcblk0p3" ] || [ "$PART" = "/dev/mmcblk0p2" ]; then
+  P=$PART
+else
+  echo "Unknown backup partition $PART, aborting..."
+  exit 1
+fi
+
+echo "Remounting /boot as read-write..."
 mount -o remount,rw /boot
+
 echo "activating $P"
-echo "root=$P rootwait console=tty5 systemd.show_status=0 quiet splash" > /boot/cmdline.txt
-mv /boot/Image.bak /boot/Image
+if [ -f /boot/cmdline.txt ]; then
+  CMDLINE=$(sed "s#root=[^ ]*#root=$P#" /boot/cmdline.txt)
+  echo "$CMDLINE" > /boot/cmdline.txt
+else
+  echo "Error: /boot/cmdline.txt not found!"
+  mount -o remount,ro /boot
+  exit 1
+fi
+
+echo "Restoring previous kernel..."
+mv "/boot/${KERNELIMAGE}.bak" "/boot/${KERNELIMAGE}"
+
 # This should not be mounted, but try it, just to make sure
 umount /newroot 2>/dev/null
 
 # mount the previous release
 if [ ! -d /oldroot ]; then
-  mkdir /oldroot
+  mkdir -p /oldroot
 fi
-mount $P /oldroot
+mount "$P" /oldroot
 
 # Copy old firmware
 echo "copying previous firmware"
-cp -rv /oldroot/usr/lib/firmware/rpi/* /boot
+if [ -d /oldroot/usr/lib/firmware/rpi ]; then
+  cp -rv /oldroot/usr/lib/firmware/rpi/* /boot
+fi
 
-# Disable automatic updates
-echo "disabling automatic updates"
+echo "unmounting previous release partition"
 umount /oldroot
 
 sync
+echo "Remounting /boot as read-only..."
+mount -o remount,ro /boot
+
 echo "rebooting"
 reboot

@@ -1,84 +1,68 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 Fabian Schmieder
+#
+# Safe first-boot resizing and formatting of partitions.
+# Online resizes the active root partition (1GB pre-allocated).
+# Safe expansion and formatting of the unmounted data partition (partition 4).
 
-# Detect the device used for the root file system
-DEVICEBASE=$(mount | grep " / " | awk '{print $1}' | sed 's/[0-9]$//')
+# Detect the active root partition device (e.g. /dev/mmcblk0p2 or /dev/mmcblk0p3)
+ACTIVE=$(mount | grep " / " | awk '{print $1}')
+if [ -z "$ACTIVE" ]; then
+  echo "Could not detect active root partition, aborting"
+  exit 1
+fi
+
+DEVICEBASE=$(echo "$ACTIVE" | sed 's/[0-9]$//')
 DEVICE=$(echo "$DEVICEBASE" | sed 's/p$//')
 
-if [ -f /resize-me.2 ]; then
-  echo "Resizing file system on ${DEVICEBASE}2"
-  resize2fs -p "${DEVICEBASE}2"
-  rm /resize-me.2
-fi
+echo "Active root filesystem: $ACTIVE"
+echo "Device base: $DEVICEBASE"
+echo "Physical disk: $DEVICE"
 
-if [ ! -f /resize-me ]; then
-  echo "/resize-me does not exist, aborting"
-  exit 0
-fi
+# 1. Expand the active root filesystem to fill its full pre-allocated 1GB partition.
+# This is safe, instantaneous, and fully supported online by ext4.
+echo "Resizing active root filesystem online..."
+e2fsck -f -y "$ACTIVE" 2>/dev/null || true
+resize2fs "$ACTIVE"
 
-# Delete partitions 2-4
-for N in 2 3 4; do
-  if [ -b "${DEVICEBASE}${N}" ]; then
+# 2. Grow the data partition (partition 4) to fill the remaining space on the SD card.
+if [ -f /resize-me ]; then
+  echo "Growing persistent data partition (${DEVICEBASE}4) to fill SD card..."
+
+  # Find the starting sector of partition 4
+  P4_START=$(fdisk -l "$DEVICE" | grep "${DEVICEBASE}4" | awk '{print $2}')
+  
+  if [ -n "$P4_START" ]; then
+    echo "Recreating partition 4 starting at sector $P4_START to fill remaining sectors..."
     fdisk "$DEVICE" <<EOT
 d
-$N
+4
+n
+p
+4
+$P4_START
+
 w
 EOT
-    partprobe
+    partprobe "$DEVICE" 2>/dev/null || true
+    sleep 2
+  else
+    echo "Could not find starting sector of partition 4, skipping partition table resizing"
   fi
-done
 
-# Find the last sector of partition 1
-P0=$(fdisk -l "$DEVICE" | grep "${DEVICE}.*p1 " | awk '{print $4}')
-
-# Size of partition 2 and 3 depends on SD card size
-SIZE=$(lsblk -bno SIZE "$DEVICE" | head -1)
-P1=$((P0 + 1))
-P2=$((P0 + 3000000))
-P3=$((P0 + 3000001))
-P4=$((P0 + 6000000))
-if [ "$SIZE" -gt 15000000000 ]; then
-  P2=$((P0 + 8000000))
-  P3=$((P0 + 8000001))
-  P4=$((P0 + 16000000))
-fi
-if [ "$SIZE" -gt 30000000000 ]; then
-  P2=$((P0 + 16000000))
-  P3=$((P0 + 16000001))
-  P4=$((P0 + 32000000))
+  # Create ext4 file system on partition 4
+  if [ -b "${DEVICEBASE}4" ]; then
+    echo "Formatting persistent data partition (${DEVICEBASE}4) with label 'data'..."
+    mkfs.ext4 -F -L data "${DEVICEBASE}4"
+  fi
+  
+  rm -f /resize-me
+  echo "First boot partition preparation complete."
 fi
 
-echo "New partitions: p2=$P1..$P2  p3=$P3..$P4  p4=rest"
-sleep 4
-
-# Create partitions 2, 3, and 4
-fdisk "$DEVICE" <<EOT
-n
-p
-2
-$P1
-$P2
-n
-p
-3
-$P3
-$P4
-n
-p
-
-
-w
-EOT
-partprobe
-sleep 10
-
-e2fsck -f -p "${DEVICEBASE}2"
-
-rm /resize-me
-touch /resize-me.2
-
-# Create ext4 fs on data partition if needed
-if ! e2fsck -n "${DEVICEBASE}4" >/dev/null 2>&1; then
-  mkfs.ext4 -F "${DEVICEBASE}4"
+# Ensure data partition is mounted if not already
+if [ -b "${DEVICEBASE}4" ] && ! mount | grep -q "/data"; then
+  mkdir -p /data
+  mount "${DEVICEBASE}4" /data 2>/dev/null || true
 fi
-
-echo "Resized partitions" >> /tmp/reboot

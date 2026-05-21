@@ -28,8 +28,8 @@ config: ## Configure for $(PI)
 	elif [ "$(PI)" = "pi3" ]; then cd $(BRSRC) && make raspberrypi3_64_defconfig; \
 	else echo "Use PI=pi3|pi4|pi5"; exit 1; fi
 	@mv $(BRSRC)/.config $(BRDIR)/.config
-	@cat buildroot/configs/override.conf >> $(BRDIR)/.config
-	@echo "BR2_PACKAGE_SNAPDOG_OS_ALL=y" >> $(BRDIR)/.config
+	@buildroot/scripts/apply-config-overrides \
+		$(BRDIR)/.config buildroot/configs/override.conf BR2_PACKAGE_SNAPDOG_OS_ALL
 
 menuconfig: ## Open menuconfig for $(PI)
 	@cd $(BRSRC) && make O=$(abspath $(BRDIR)) BR2_EXTERNAL=$(abspath buildroot) menuconfig

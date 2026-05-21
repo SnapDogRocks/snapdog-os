@@ -21,8 +21,7 @@ services:
         mkdir -p /build/buildroot-pi4
         cd /build/buildroot && make raspberrypi4_64_defconfig
         mv /build/buildroot/.config /build/buildroot-pi4/.config
-        cat /build/snapdog-os/buildroot/configs/override.conf >> /build/buildroot-pi4/.config
-        echo 'BR2_PACKAGE_SNAPDOG_OS_ALL=y' >> /build/buildroot-pi4/.config
+        /build/snapdog-os/buildroot/scripts/apply-config-overrides /build/buildroot-pi4/.config /build/snapdog-os/buildroot/configs/override.conf BR2_PACKAGE_SNAPDOG_OS_ALL
 
         echo '── Build ──'
         cd /build/buildroot

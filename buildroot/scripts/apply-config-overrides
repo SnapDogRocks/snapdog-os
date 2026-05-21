@@ -1,0 +1,59 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -lt 2 ]; then
+  echo "usage: $0 <.config> <override.conf> [SYMBOL ...]" >&2
+  exit 1
+fi
+
+CONFIG=$1
+OVERRIDES=$2
+shift 2
+
+SYMBOLS=$(mktemp)
+CLEAN_CONFIG=$(mktemp)
+trap 'rm -f "$SYMBOLS" "$CLEAN_CONFIG"' EXIT
+
+awk '
+  /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+  /^[A-Za-z0-9_]+[[:space:]]*=/ {
+    split($0, parts, "=")
+    gsub(/[[:space:]]/, "", parts[1])
+    print parts[1]
+  }
+' "$OVERRIDES" > "$SYMBOLS"
+
+for symbol in "$@"; do
+  printf '%s\n' "$symbol" >> "$SYMBOLS"
+done
+
+awk -v symbols="$SYMBOLS" '
+  BEGIN {
+    while ((getline symbol < symbols) > 0) {
+      overridden[symbol] = 1
+    }
+  }
+  /^[A-Za-z0-9_]+[[:space:]]*=/ {
+    split($0, parts, "=")
+    gsub(/[[:space:]]/, "", parts[1])
+    if (parts[1] in overridden) {
+      next
+    }
+  }
+  /^# [A-Za-z0-9_]+ is not set$/ {
+    symbol = $0
+    sub(/^# /, "", symbol)
+    sub(/ is not set$/, "", symbol)
+    if (symbol in overridden) {
+      next
+    }
+  }
+  { print }
+' "$CONFIG" > "$CLEAN_CONFIG"
+
+cat "$CLEAN_CONFIG" > "$CONFIG"
+cat "$OVERRIDES" >> "$CONFIG"
+
+for symbol in "$@"; do
+  printf '%s=y\n' "$symbol" >> "$CONFIG"
+done

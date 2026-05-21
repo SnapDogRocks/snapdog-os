@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
-    branches: [master]
+    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
@@ -16,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # git describe needs history
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -31,7 +33,7 @@ jobs:
           cache: npm
           cache-dependency-path: snapdog-ctrl/webui/package-lock.json
 
-      # WebUI checks
+      # WebUI
       - name: Install webui deps
         run: cd snapdog-ctrl/webui && npm ci
 
@@ -44,8 +46,8 @@ jobs:
       - name: Build webui
         run: cd snapdog-ctrl/webui && npm run build
 
-      # Rust checks
-      - name: Format check
+      # Rust
+      - name: Format
         run: cd snapdog-ctrl && cargo fmt --check
 
       - name: Clippy
@@ -54,15 +56,23 @@ jobs:
       - name: Test
         run: cd snapdog-ctrl && cargo test
 
-      - name: Audit
-        run: cargo install cargo-audit --locked && cd snapdog-ctrl && cargo audit
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          working-directory: snapdog-ctrl
 
-  build-aarch64:
-    name: Build (aarch64)
+  cross-compile:
+    name: Cross-compile (aarch64)
     runs-on: ubuntu-latest
     needs: check
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -73,7 +83,7 @@ jobs:
           workspaces: snapdog-ctrl
           key: aarch64
 
-      - name: Install cross-compilation tools
+      - name: Install linker
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - uses: actions/setup-node@v4
@@ -82,21 +92,12 @@ jobs:
           cache: npm
           cache-dependency-path: snapdog-ctrl/webui/package-lock.json
 
-      - name: Build webui
-        run: cd snapdog-ctrl/webui && npm ci && npm run build
-
-      - name: Build release binary
+      - name: Build
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-        run: cd snapdog-ctrl && cargo build --release --target aarch64-unknown-linux-gnu
-
-      - name: Package
         run: |
-          mkdir -p dist
-          cp snapdog-ctrl/target/aarch64-unknown-linux-gnu/release/snapdog-ctrl dist/
-          tar -czf snapdog-ctrl-aarch64-unknown-linux-gnu.tar.gz -C dist snapdog-ctrl
+          cd snapdog-ctrl/webui && npm ci && npm run build && cd ../..
+          cd snapdog-ctrl && cargo build --release --target aarch64-unknown-linux-gnu
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: snapdog-ctrl-aarch64
-          path: snapdog-ctrl-aarch64-unknown-linux-gnu.tar.gz
+      - name: Verify binary
+        run: file snapdog-ctrl/target/aarch64-unknown-linux-gnu/release/snapdog-ctrl | grep -q "aarch64"

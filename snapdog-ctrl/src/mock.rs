@@ -74,7 +74,7 @@ impl MockState {
             pi_version: 4,
             components: crate::routes::ComponentVersions {
                 client: "0.11.3".into(),
-                ctrl: env!("CARGO_PKG_VERSION").to_string(),
+                ctrl: env!("SNAPDOG_CTRL_VERSION").to_string(),
                 kernel: "6.6.78-v8+".into(),
             },
         }

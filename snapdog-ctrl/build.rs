@@ -9,6 +9,17 @@ fn main() {
     println!("cargo:rerun-if-changed=webui/public");
     println!("cargo:rerun-if-changed=webui/package.json");
     println!("cargo:rerun-if-changed=webui/next.config.ts");
+    println!("cargo:rerun-if-changed=../.git/HEAD");
+
+    // Git version
+    let git_version = Command::new("git")
+        .args(["describe", "--tags", "--always", "--dirty"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+    println!("cargo:rustc-env=SNAPDOG_CTRL_VERSION={git_version}");
 
     let webui_dir = std::path::Path::new("webui");
 

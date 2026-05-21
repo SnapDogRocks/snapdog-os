@@ -60,7 +60,7 @@ pub async fn get_system_info() -> SystemInfo {
             .unwrap_or(4),
         components: ComponentVersions {
             client,
-            ctrl: env!("CARGO_PKG_VERSION").to_string(),
+            ctrl: env!("SNAPDOG_CTRL_VERSION").to_string(),
             kernel,
         },
     }

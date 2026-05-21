@@ -1,25 +1,34 @@
 PI ?= pi4
 VERSION := $(shell cat VERSION)
+SNAPDOG_CTRL_BINARY ?= snapdog-ctrl-binary
 BRDIR := ../buildroot-$(PI)
 BRSRC := ../buildroot
+OVERLAY_CTRL := buildroot/board/raspberrypi/overlay/usr/bin/snapdog-ctrl
 
-.PHONY: setup build config clean all
+.PHONY: setup prepare-ctrl build config clean all
 
 setup: ## Download and prepare buildroot
 	@echo "Fetching buildroot 2025.02..."
-	@cd .. && git clone https://github.com/buildroot/buildroot buildroot-src || true
-	@cd ../buildroot-src && git checkout 2025.02
-	@rm -f ../buildroot && ln -s buildroot-src ../buildroot
-	@if [ -f $(BRSRC)/board/raspberrypi/genimage.cfg.in ]; then \
-		sed -i 's/32M/256M/g' $(BRSRC)/board/raspberrypi/genimage.cfg.in; \
+	@if [ ! -d ../buildroot-src/.git ]; then \
+		cd .. && git clone --depth 1 --branch 2025.02 https://github.com/buildroot/buildroot buildroot-src; \
+	else \
+		cd ../buildroot-src && git fetch --depth 1 origin tag 2025.02 && git checkout 2025.02; \
 	fi
+	@rm -f ../buildroot && ln -s buildroot-src ../buildroot
 
-build: ## Build image for $(PI)
-	@mkdir -p $(BRDIR)/target/etc
-	@echo $(subst pi,,$(PI)) > $(BRDIR)/target/etc/raspberrypi.version
+prepare-ctrl:
+	@if [ ! -f "$(SNAPDOG_CTRL_BINARY)" ]; then \
+		echo "Missing $(SNAPDOG_CTRL_BINARY). Build snapdog-ctrl for aarch64 first or pass SNAPDOG_CTRL_BINARY=/path/to/snapdog-ctrl."; \
+		exit 1; \
+	fi
+	@mkdir -p $(dir $(OVERLAY_CTRL))
+	@cp "$(SNAPDOG_CTRL_BINARY)" "$(OVERLAY_CTRL)"
+	@chmod 755 "$(OVERLAY_CTRL)"
+
+build: prepare-ctrl ## Build image for $(PI)
 	@echo $(VERSION) > buildroot/VERSION
-	@cd $(BRSRC) && make O=$(abspath $(BRDIR)) BR2_EXTERNAL=$(abspath buildroot) olddefconfig
-	@cd $(BRSRC) && make O=$(abspath $(BRDIR)) BR2_EXTERNAL=$(abspath buildroot)
+	@cd $(BRSRC) && make O=$(abspath $(BRDIR)) BR2_EXTERNAL=$(abspath buildroot) SNAPDOG_PI_VERSION=$(subst pi,,$(PI)) olddefconfig
+	@cd $(BRSRC) && make O=$(abspath $(BRDIR)) BR2_EXTERNAL=$(abspath buildroot) SNAPDOG_PI_VERSION=$(subst pi,,$(PI))
 
 config: ## Configure for $(PI)
 	@mkdir -p $(BRDIR)

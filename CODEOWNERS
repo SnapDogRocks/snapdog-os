@@ -1,0 +1,7 @@
+* @metaneutrons
+
+/.github/ @metaneutrons
+/buildroot/ @metaneutrons
+/Dockerfile @metaneutrons
+/Makefile @metaneutrons
+/release-please-config.json @metaneutrons

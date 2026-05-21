@@ -54,7 +54,23 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(80);
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await?;
-    tracing::info!("snapdog-ctrl listening on port {port}");
+
+    // Log real interface addresses
+    if let Ok(addrs) = tokio::net::lookup_host(format!("0.0.0.0:{port}")).await {
+        let _ = addrs; // lookup_host on 0.0.0.0 doesn't help, use system interfaces
+    }
+    let interfaces: Vec<String> = std::net::UdpSocket::bind("0.0.0.0:0")
+        .ok()
+        .and_then(|s| s.connect("1.1.1.1:80").ok().map(|()| s))
+        .and_then(|s| s.local_addr().ok())
+        .map(|a| vec![format!("http://{}:{port}", a.ip())])
+        .unwrap_or_default();
+
+    if interfaces.is_empty() {
+        tracing::info!("snapdog-ctrl listening on port {port}");
+    } else {
+        tracing::info!("snapdog-ctrl listening on {}", interfaces.join(", "));
+    }
 
     // Mark boot as successful (clears OTA rollback counter)
     #[cfg(target_os = "linux")]

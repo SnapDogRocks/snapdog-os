@@ -11,11 +11,9 @@ import {
   api,
   type SystemInfo,
   type WifiNetwork,
-  type NetworkConfig,
   type AudioConfig,
   type ClientConfig,
   type SshConfig,
-  type DacOverlay,
 } from "@/lib/api";
 import { useI18n } from "@/i18n/provider";
 import { locales, type Locale } from "@/i18n/config";
@@ -138,7 +136,7 @@ function NetworkDetails({ ip, subnet, gateway, dns }: { ip: string; subnet: stri
 function NetworkTab() {
   const t = useTranslations("network");
   const [networks, setNetworks] = useState<WifiNetwork[]>([]);
-  const [scanning, setScanning] = useState(false);
+  const [scanning, setScanning] = useState(true);
   const [ssid, setSsid] = useState("");
   const [password, setPassword] = useState("");
   const [wifiMode, setWifiMode] = useState<"dhcp" | "static">("dhcp");
@@ -174,7 +172,7 @@ function NetworkTab() {
   }, []);
 
   useEffect(() => {
-    scan();
+    api.scanWifi().then((r) => setNetworks(r.networks)).catch(() => {}).finally(() => setScanning(false));
     api.getWifi().then((w) => {
       setWifiStatus(w);
       if (w.mode) setWifiMode(w.mode);
@@ -187,7 +185,7 @@ function NetworkTab() {
       if (e.gateway) setEthGateway(e.gateway);
       if (e.dns) setEthDns(e.dns);
     }).catch(() => {});
-  }, [scan]);
+  }, []);
 
   return (
     <div className="space-y-5">
@@ -347,7 +345,7 @@ function ClientTab() {
   const [config, setConfig] = useState<ClientConfig>({ server_url: "", host_id: "", soundcard: "default", mixer: "", latency: 0 });
   const [soundcards, setSoundcards] = useState<string[]>([]);
   const [servers, setServers] = useState<{ name: string; host: string; port: number }[]>([]);
-  const [scanning, setScanning] = useState(false);
+  const [scanning, setScanning] = useState(true);
   const [manualHost, setManualHost] = useState("");
   const [manualPort, setManualPort] = useState("1704");
   const [saving, setSaving] = useState(false);
@@ -357,6 +355,11 @@ function ClientTab() {
   const latencyId = useId();
   const cardId = useId();
 
+  const scanForServers = useCallback(() => {
+    setScanning(true);
+    api.scanServers().then((r) => setServers(r.servers)).catch(() => {}).finally(() => setScanning(false));
+  }, []);
+
   useEffect(() => {
     api.getClient().then((c) => {
       setConfig(c);
@@ -365,11 +368,6 @@ function ClientTab() {
       const match = c.server_url.match(/^tcp:\/\/(.+):(\d+)$/);
       if (match) { setManualHost(match[1]); setManualPort(match[2]); }
     }).catch(() => {});
-    scanForServers();
-  }, []);
-
-  const scanForServers = useCallback(() => {
-    setScanning(true);
     api.scanServers().then((r) => setServers(r.servers)).catch(() => {}).finally(() => setScanning(false));
   }, []);
 

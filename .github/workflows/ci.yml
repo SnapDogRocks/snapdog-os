@@ -6,98 +6,131 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
+  RUST_TOOLCHAIN: "1.85.0"
+  NODE_VERSION: "22.12.0"
 
 jobs:
   check:
     name: Lint & Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          fetch-depth: 0  # git describe needs history
+          fetch-depth: 0
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+          rustup default "$RUST_TOOLCHAIN"
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          workspaces: snapdog-ctrl
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: snapdog-ctrl/webui/package-lock.json
 
-      # WebUI
       - name: Install webui deps
         run: cd snapdog-ctrl/webui && npm ci
 
       - name: Lint webui
-        run: cd snapdog-ctrl/webui && npx eslint .
+        run: cd snapdog-ctrl/webui && npm run lint
 
       - name: Typecheck webui
-        run: cd snapdog-ctrl/webui && npx tsc --noEmit
+        run: cd snapdog-ctrl/webui && npm run typecheck
 
       - name: Build webui
         run: cd snapdog-ctrl/webui && npm run build
 
-      # Rust
       - name: Format
         run: cd snapdog-ctrl && cargo fmt --check
 
       - name: Clippy
-        run: cd snapdog-ctrl && cargo clippy --all-targets
+        run: cd snapdog-ctrl && cargo clippy --locked --all-targets
 
       - name: Test
-        run: cd snapdog-ctrl && cargo test
+        run: cd snapdog-ctrl && cargo test --locked
 
-  audit:
+  security-audit:
     name: Security Audit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
         with:
           working-directory: snapdog-ctrl
 
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: snapdog-ctrl/webui/package-lock.json
+
+      - name: Audit webui runtime deps
+        run: cd snapdog-ctrl/webui && npm audit --omit=dev --audit-level=high
+
   cross-compile:
     name: Cross-compile (aarch64)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: check
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-unknown-linux-gnu
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target aarch64-unknown-linux-gnu
+          rustup default "$RUST_TOOLCHAIN"
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          workspaces: snapdog-ctrl
-          key: aarch64
-
-      - name: Install linker
-        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: snapdog-ctrl/webui/package-lock.json
+
+      - name: Install linker
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
 
       - name: Build
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
         run: |
           cd snapdog-ctrl/webui && npm ci && npm run build && cd ../..
-          cd snapdog-ctrl && cargo build --release --target aarch64-unknown-linux-gnu
+          cd snapdog-ctrl && cargo build --locked --release --target aarch64-unknown-linux-gnu
 
       - name: Verify binary
         run: file snapdog-ctrl/target/aarch64-unknown-linux-gnu/release/snapdog-ctrl | grep -q "aarch64"
+
+  release-sanity:
+    name: Release Sanity
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Validate release config
+        run: |
+          ruby -e 'require "json"; JSON.parse(File.read("release-please-config.json")); JSON.parse(File.read(".release-please-manifest.json"))'
+          test -x buildroot/package/snapdog-updater/update
+          test -x buildroot/package/snapdog-updater/extract-update
+          test -x buildroot/board/raspberrypi/post-image-ab.sh
+          grep -q 'BR2_ROOTFS_POST_IMAGE_SCRIPT="../snapdog-os/buildroot/board/raspberrypi/post-image-ab.sh"' buildroot/configs/override.conf
+          grep -q 'partition rootfsA' buildroot/board/raspberrypi/genimage-ab.cfg.in
+          grep -q 'partition rootfsB' buildroot/board/raspberrypi/genimage-ab.cfg.in
+          openssl pkey -pubin -in buildroot/keys/update-signing.pub.pem -noout
+
+      - name: Shell syntax
+        run: |
+          sh -n buildroot/package/snapdog-updater/update
+          sh -n buildroot/package/snapdog-updater/extract-update
+          bash -n buildroot/board/raspberrypi/post-image-ab.sh

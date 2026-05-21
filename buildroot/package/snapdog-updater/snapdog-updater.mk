@@ -5,6 +5,7 @@
 ################################################################################
 
 SNAPDOG_UPDATER_DEPENDENCIES = rpi-firmware systemd copy-overlays
+SNAPDOG_PI_VERSION ?= 4
 
 define SNAPDOG_UPDATER_INSTALL_TARGET_CMDS
 	# Update scripts
@@ -25,11 +26,14 @@ define SNAPDOG_UPDATER_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 $(BR2_EXTERNAL_SNAPDOG_PATH)/package/snapdog-updater/restore-config \
 		$(TARGET_DIR)/opt/snapdog/bin/restore-config
 
-	# Version and config
-	$(INSTALL) -D -m 0444 $(BR2_EXTERNAL_SNAPDOG_PATH)/VERSION \
-		$(TARGET_DIR)/etc/snapdog-os.version
-	$(INSTALL) -D -m 0444 $(BR2_EXTERNAL_SNAPDOG_PATH)/package/snapdog-updater/config-files \
-		$(TARGET_DIR)/opt/snapdog/etc/config-files
+		# Version and config
+		$(INSTALL) -D -m 0444 $(BR2_EXTERNAL_SNAPDOG_PATH)/VERSION \
+			$(TARGET_DIR)/etc/snapdog-os.version
+		printf '%s\n' "$(SNAPDOG_PI_VERSION)" > $(TARGET_DIR)/etc/raspberrypi.version
+		$(INSTALL) -D -m 0444 $(BR2_EXTERNAL_SNAPDOG_PATH)/keys/update-signing.pub.pem \
+			$(TARGET_DIR)/etc/snapdog-os-update.pub.pem
+		$(INSTALL) -D -m 0444 $(BR2_EXTERNAL_SNAPDOG_PATH)/package/snapdog-updater/config-files \
+			$(TARGET_DIR)/opt/snapdog/etc/config-files
 	$(INSTALL) -D -m 0444 $(BR2_EXTERNAL_SNAPDOG_PATH)/package/snapdog-updater/services \
 		$(TARGET_DIR)/opt/snapdog/etc/services
 

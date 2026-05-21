@@ -3,6 +3,8 @@
 
 //! System operations — reads/writes config files, calls systemctl, etc.
 
+use std::cmp::Ordering;
+
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
@@ -71,8 +73,12 @@ pub async fn set_system(hostname: Option<String>, channel: Option<String>) -> Re
         run_cmd("hostnamectl", &["set-hostname", &h]).await?;
     }
     if let Some(c) = channel {
+        anyhow::ensure!(
+            matches!(c.as_str(), "stable" | "beta"),
+            "invalid update channel"
+        );
         let _ = remount_root_rw().await;
-        let res = tokio::fs::write("/etc/snapdog-os.channel", &c).await;
+        let res = tokio::fs::write("/etc/snapdog-os.channel", format!("{c}\n")).await;
         let _ = remount_root_ro().await;
         res.context("failed to write snapdog-os.channel")?;
     }
@@ -569,14 +575,80 @@ pub async fn check_update() -> UpdateCheckResponse {
 }
 
 fn semver_gt(a: &str, b: &str) -> bool {
-    let parse = |s: &str| -> (u32, u32, u32) {
-        let mut parts = s.split('.');
-        let major = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
-        let minor = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
-        let patch = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
-        (major, minor, patch)
-    };
-    parse(a) > parse(b)
+    compare_versions(a, b) == Ordering::Greater
+}
+
+fn compare_versions(a: &str, b: &str) -> Ordering {
+    let a = ParsedVersion::parse(a);
+    let b = ParsedVersion::parse(b);
+
+    a.major
+        .cmp(&b.major)
+        .then(a.minor.cmp(&b.minor))
+        .then(a.patch.cmp(&b.patch))
+        .then_with(|| compare_prerelease(a.prerelease.as_deref(), b.prerelease.as_deref()))
+}
+
+#[derive(Debug)]
+struct ParsedVersion {
+    major: u64,
+    minor: u64,
+    patch: u64,
+    prerelease: Option<String>,
+}
+
+impl ParsedVersion {
+    fn parse(input: &str) -> Self {
+        let trimmed = input.trim().trim_start_matches('v');
+        let (core, prerelease) = trimmed
+            .split_once('-')
+            .map_or((trimmed, None), |(core, pre)| (core, Some(pre.to_string())));
+        let mut parts = core.split('.');
+
+        Self {
+            major: parts.next().and_then(|p| p.parse().ok()).unwrap_or(0),
+            minor: parts.next().and_then(|p| p.parse().ok()).unwrap_or(0),
+            patch: parts.next().and_then(|p| p.parse().ok()).unwrap_or(0),
+            prerelease,
+        }
+    }
+}
+
+fn compare_prerelease(a: Option<&str>, b: Option<&str>) -> Ordering {
+    match (a, b) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Greater,
+        (Some(_), None) => Ordering::Less,
+        (Some(a), Some(b)) => compare_prerelease_identifiers(a, b),
+    }
+}
+
+fn compare_prerelease_identifiers(a: &str, b: &str) -> Ordering {
+    let mut a_parts = a.split('.');
+    let mut b_parts = b.split('.');
+
+    loop {
+        match (a_parts.next(), b_parts.next()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(a), Some(b)) => {
+                let ordering = compare_prerelease_identifier(a, b);
+                if ordering != Ordering::Equal {
+                    return ordering;
+                }
+            }
+        }
+    }
+}
+
+fn compare_prerelease_identifier(a: &str, b: &str) -> Ordering {
+    match (a.parse::<u64>(), b.parse::<u64>()) {
+        (Ok(a), Ok(b)) => a.cmp(&b),
+        (Ok(_), Err(_)) => Ordering::Less,
+        (Err(_), Ok(_)) => Ordering::Greater,
+        (Err(_), Err(_)) => a.cmp(b),
+    }
 }
 
 pub async fn get_update_status() -> UpdateStatus {
@@ -617,8 +689,18 @@ async fn fetch_latest_version(url: &str) -> Result<String> {
         version: String,
     }
 
+    const PUBKEY: &str = "/etc/snapdog-os-update.pub.pem";
+
+    let temp_dir = std::env::temp_dir();
+    let pid = std::process::id();
+    let metadata_path = temp_dir.join(format!("snapdog-update-{pid}.json"));
+    let signature_path = temp_dir.join(format!("snapdog-update-{pid}.json.sig"));
+    let metadata_arg = metadata_path.to_string_lossy().to_string();
+    let signature_arg = signature_path.to_string_lossy().to_string();
+    let sig_url = format!("{url}.sig");
+
     let output = tokio::process::Command::new("curl")
-        .args(["-sf", "-m", "10", url])
+        .args(["-sf", "-m", "10", "-o", &metadata_arg, url])
         .output()
         .await?;
 
@@ -626,8 +708,41 @@ async fn fetch_latest_version(url: &str) -> Result<String> {
         anyhow::bail!("failed to fetch update metadata");
     }
 
+    let output = tokio::process::Command::new("curl")
+        .args(["-sf", "-m", "10", "-o", &signature_arg, &sig_url])
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        let _ = tokio::fs::remove_file(&metadata_path).await;
+        anyhow::bail!("failed to fetch update metadata signature");
+    }
+
+    let output = tokio::process::Command::new("openssl")
+        .args([
+            "dgst",
+            "-sha256",
+            "-verify",
+            PUBKEY,
+            "-signature",
+            &signature_arg,
+            &metadata_arg,
+        ])
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        let _ = tokio::fs::remove_file(&metadata_path).await;
+        let _ = tokio::fs::remove_file(&signature_path).await;
+        anyhow::bail!("failed to verify update metadata signature");
+    }
+
+    let metadata_bytes = tokio::fs::read(&metadata_path).await?;
+    let _ = tokio::fs::remove_file(&metadata_path).await;
+    let _ = tokio::fs::remove_file(&signature_path).await;
+
     let metadata: UpdateMetadata =
-        serde_json::from_slice(&output.stdout).context("failed to parse update metadata")?;
+        serde_json::from_slice(&metadata_bytes).context("failed to parse update metadata")?;
 
     Ok(metadata.version)
 }
@@ -1032,6 +1147,15 @@ mod tests {
         assert!(validate_client_arg("server_url", "tcp://192.168.1.10:1704").is_ok());
         assert!(validate_client_arg("host_id", "kitchen").is_ok());
         assert!(validate_client_arg("soundcard", "hw:0").is_ok());
+    }
+
+    #[test]
+    fn compares_stable_and_beta_versions() {
+        assert!(semver_gt("0.1.0-beta.13", "0.1.0-beta.12"));
+        assert!(semver_gt("0.1.0", "0.1.0-beta.12"));
+        assert!(semver_gt("0.2.0-beta.1", "0.1.9"));
+        assert!(!semver_gt("0.1.0-beta.12", "0.1.0"));
+        assert!(!semver_gt("0.1.0-beta.12", "0.1.0-beta.13"));
     }
 
     #[test]

@@ -14,10 +14,6 @@ services:
         if [ ! -d /build/buildroot/.git ]; then
           git clone --depth 1 --branch 2025.02 https://github.com/buildroot/buildroot /build/buildroot
         fi
-        if [ -f /build/buildroot/board/raspberrypi/genimage.cfg.in ]; then
-          sed -i 's/32M/256M/g' /build/buildroot/board/raspberrypi/genimage.cfg.in
-        fi
-
         echo '── Inject snapdog-ctrl binary ──'
         if [ -f /build/snapdog-os/snapdog-ctrl-binary ]; then
           mkdir -p /build/snapdog-os/buildroot/board/raspberrypi/overlay/usr/bin
@@ -26,7 +22,8 @@ services:
           chmod 755 /build/snapdog-os/buildroot/board/raspberrypi/overlay/usr/bin/snapdog-ctrl
           echo 'Using pre-built snapdog-ctrl binary'
         else
-          echo 'WARNING: No snapdog-ctrl binary found. Build without ctrl.'
+          echo 'ERROR: No snapdog-ctrl-binary found. Refusing to build an image without snapdog-ctrl.'
+          exit 1
         fi
 
         echo '── Configure pi4 ──'
@@ -40,8 +37,8 @@ services:
 
         echo '── Build ──'
         cd /build/buildroot
-        make O=/build/buildroot-pi4 BR2_EXTERNAL=/build/snapdog-os/buildroot olddefconfig
-        make O=/build/buildroot-pi4 BR2_EXTERNAL=/build/snapdog-os/buildroot -j\$(nproc)
+        make O=/build/buildroot-pi4 BR2_EXTERNAL=/build/snapdog-os/buildroot SNAPDOG_PI_VERSION=4 olddefconfig
+        make O=/build/buildroot-pi4 BR2_EXTERNAL=/build/snapdog-os/buildroot SNAPDOG_PI_VERSION=4 -j\$(nproc)
 
         echo '── Done ──'
         ls -lh /build/buildroot-pi4/images/sdcard.img

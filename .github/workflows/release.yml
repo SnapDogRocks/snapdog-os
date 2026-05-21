@@ -4,15 +4,24 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   R2_BUCKET: snapdog-updates
   UPDATE_BASE_URL: https://update.snapdog.cc/os
   BUILDROOT_VERSION: "2025.02"
+  RUST_TOOLCHAIN: "1.85.0"
+  NODE_VERSION: "22.12.0"
 
 jobs:
   release-please:
     name: Release Please
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       pull-requests: write
@@ -21,7 +30,7 @@ jobs:
       tag_name: ${{ steps.rp.outputs.tag_name }}
       version: ${{ steps.rp.outputs.version }}
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@8b8fd2cc23b2e18957157a9d923d75aa0c6f6ad5 # v4
         id: rp
         with:
           config-file: release-please-config.json
@@ -29,56 +38,54 @@ jobs:
 
   build-ctrl:
     name: Build snapdog-ctrl
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: release-please
-    # Always build (beta or stable)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-unknown-linux-gnu
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target aarch64-unknown-linux-gnu
+          rustup default "$RUST_TOOLCHAIN"
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          workspaces: snapdog-ctrl
-          key: aarch64-release
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: snapdog-ctrl/webui/package-lock.json
 
       - name: Install aarch64 linker
-        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
 
       - name: Build
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
         run: |
           cd snapdog-ctrl/webui && npm ci && npm run build && cd ../..
-          cd snapdog-ctrl && cargo build --release --target aarch64-unknown-linux-gnu
+          cd snapdog-ctrl && cargo build --locked --release --target aarch64-unknown-linux-gnu
           cp target/aarch64-unknown-linux-gnu/release/snapdog-ctrl ../snapdog-ctrl-binary
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: snapdog-ctrl-binary
           path: snapdog-ctrl-binary
+          if-no-files-found: error
+          retention-days: 7
 
   build-image:
     name: Build image (${{ matrix.pi }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [release-please, build-ctrl]
     strategy:
+      fail-fast: false
       matrix:
         pi: [pi3, pi4, pi5]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: snapdog-ctrl-binary
 
@@ -86,58 +93,50 @@ jobs:
         id: version
         run: |
           if [ "${{ needs.release-please.outputs.release_created }}" = "true" ]; then
-            echo "version=${{ needs.release-please.outputs.version }}" >> $GITHUB_OUTPUT
-            echo "channel=stable" >> $GITHUB_OUTPUT
+            echo "version=${{ needs.release-please.outputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "channel=stable" >> "$GITHUB_OUTPUT"
           else
             BASE=$(cat VERSION)
-            echo "version=${BASE}-beta.${{ github.run_number }}" >> $GITHUB_OUTPUT
-            echo "channel=beta" >> $GITHUB_OUTPUT
+            echo "version=${BASE}-beta.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+            echo "channel=beta" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential git wget cpio unzip rsync bc \
-            python3 file libncurses-dev libssl-dev \
-            dosfstools mtools e2fsprogs
+          sudo apt-get install -y --no-install-recommends build-essential git wget cpio unzip rsync bc \
+            python3 file libncurses-dev libssl-dev dosfstools mtools e2fsprogs fdisk jq
+
+      - name: Validate update public key
+        run: openssl pkey -pubin -in buildroot/keys/update-signing.pub.pem -noout
 
       - name: Cache buildroot
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ../buildroot-src
             ../buildroot-${{ matrix.pi }}/build/toolchain-*
             ../buildroot-${{ matrix.pi }}/host
-          key: buildroot-${{ env.BUILDROOT_VERSION }}-${{ matrix.pi }}-${{ hashFiles('buildroot/configs/override.conf') }}
+          key: buildroot-${{ env.BUILDROOT_VERSION }}-${{ matrix.pi }}-${{ hashFiles('buildroot/configs/override.conf', 'buildroot/package/**/*.mk', 'buildroot/package/**/Config.in') }}
           restore-keys: |
             buildroot-${{ env.BUILDROOT_VERSION }}-${{ matrix.pi }}-
 
       - name: Setup buildroot
-        run: |
-          if [ ! -d ../buildroot-src ]; then
-            git clone --depth 1 --branch ${{ env.BUILDROOT_VERSION }} \
-              https://github.com/buildroot/buildroot ../buildroot-src
-          fi
-          rm -f ../buildroot && ln -s buildroot-src ../buildroot
-          if [ -f ../buildroot/board/raspberrypi/genimage.cfg.in ]; then
-            sed -i 's/32M/256M/g' ../buildroot/board/raspberrypi/genimage.cfg.in
-          fi
-
-      - name: Inject snapdog-ctrl
-        run: |
-          mkdir -p buildroot/board/raspberrypi/overlay/usr/bin
-          cp snapdog-ctrl-binary buildroot/board/raspberrypi/overlay/usr/bin/snapdog-ctrl
-          chmod 755 buildroot/board/raspberrypi/overlay/usr/bin/snapdog-ctrl
-
-      - name: Write version to image
-        run: |
-          mkdir -p buildroot/board/raspberrypi/overlay/etc
-          echo "${{ steps.version.outputs.version }}" > buildroot/board/raspberrypi/overlay/etc/snapdog-os.version
+        run: make setup
 
       - name: Build
         run: |
-          make PI=${{ matrix.pi }} config
-          make PI=${{ matrix.pi }} build
+          chmod 755 snapdog-ctrl-binary
+          make PI=${{ matrix.pi }} VERSION="${{ steps.version.outputs.version }}" config
+          make PI=${{ matrix.pi }} VERSION="${{ steps.version.outputs.version }}" build
+
+      - name: Generate Buildroot legal manifest
+        run: |
+          cd ../buildroot
+          make O="${{ github.workspace }}/../buildroot-${{ matrix.pi }}" \
+            BR2_EXTERNAL="${{ github.workspace }}/buildroot" \
+            SNAPDOG_PI_VERSION="${{ matrix.pi == 'pi3' && '3' || matrix.pi == 'pi4' && '4' || '5' }}" \
+            legal-info
 
       - name: Package
         id: package
@@ -145,40 +144,63 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           IMG="../buildroot-${{ matrix.pi }}/images/sdcard.img"
           OUT="snapdog-os-${{ matrix.pi }}-${VERSION}.img.gz"
-          gzip -c "$IMG" > "$OUT"
-          
           UPDATE_ARC="snapdog-os-${{ matrix.pi }}-${VERSION}-update.tar.gz"
-          tar -czf "$UPDATE_ARC" -C "../buildroot-${{ matrix.pi }}/images" rootfs.ext4
-          
-          echo "image=${OUT}" >> $GITHUB_OUTPUT
-          echo "update_archive=${UPDATE_ARC}" >> $GITHUB_OUTPUT
+          SBOM="snapdog-os-${{ matrix.pi }}-${VERSION}-sbom.csv"
+          CHECKSUMS="snapdog-os-${{ matrix.pi }}-${VERSION}.sha256"
 
-      - uses: actions/upload-artifact@v4
+          test -s "$IMG"
+          PARTITIONS=$(sfdisk -J "$IMG" | jq '.partitiontable.partitions | length')
+          test "$PARTITIONS" -eq 4
+
+          gzip -n -c "$IMG" > "$OUT"
+          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
+            -czf "$UPDATE_ARC" -C "../buildroot-${{ matrix.pi }}/images" rootfs.ext4
+          cp "../buildroot-${{ matrix.pi }}/legal-info/manifest.csv" "$SBOM"
+
+          sha256sum "$OUT" "$UPDATE_ARC" "$SBOM" > "$CHECKSUMS"
+
+          echo "image=${OUT}" >> "$GITHUB_OUTPUT"
+          echo "update_archive=${UPDATE_ARC}" >> "$GITHUB_OUTPUT"
+          echo "sbom=${SBOM}" >> "$GITHUB_OUTPUT"
+          echo "checksums=${CHECKSUMS}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: image-${{ matrix.pi }}
           path: |
             ${{ steps.package.outputs.image }}
             ${{ steps.package.outputs.update_archive }}
-
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      channel: ${{ steps.version.outputs.channel }}
+            ${{ steps.package.outputs.sbom }}
+            ${{ steps.package.outputs.checksums }}
+          if-no-files-found: error
+          retention-days: 14
 
   publish:
     name: Publish
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [release-please, build-image]
+    environment:
+      name: ${{ needs.release-please.outputs.release_created == 'true' && 'stable' || 'beta' }}
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: artifacts
 
-      - name: Install tools
-        run: sudo apt-get install -y awscli jq
+      - name: Attest artifacts
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        with:
+          subject-path: artifacts/**/*
+
+      - name: Install publish tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends awscli jq openssl
 
       - name: Upload to Cloudflare R2
         env:
@@ -186,7 +208,15 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
           AWS_DEFAULT_REGION: auto
+          SNAPDOG_UPDATE_SIGNING_KEY_PEM: ${{ secrets.SNAPDOG_UPDATE_SIGNING_KEY_PEM }}
         run: |
+          set -euo pipefail
+
+          test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "Missing R2_ACCESS_KEY_ID"; exit 1; }
+          test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "Missing R2_SECRET_ACCESS_KEY"; exit 1; }
+          test -n "${AWS_ENDPOINT_URL:-}" || { echo "Missing R2_ENDPOINT_URL"; exit 1; }
+          test -n "${SNAPDOG_UPDATE_SIGNING_KEY_PEM:-}" || { echo "Missing SNAPDOG_UPDATE_SIGNING_KEY_PEM"; exit 1; }
+
           if [ "${{ needs.release-please.outputs.release_created }}" = "true" ]; then
             VERSION="${{ needs.release-please.outputs.version }}"
             CHANNEL="stable"
@@ -195,46 +225,98 @@ jobs:
             CHANNEL="beta"
           fi
 
+          umask 077
+          printf '%s\n' "$SNAPDOG_UPDATE_SIGNING_KEY_PEM" > update-signing.private.pem
+          openssl pkey -in update-signing.private.pem -pubout -out derived-update-signing.pub.pem
+          diff -u buildroot/keys/update-signing.pub.pem derived-update-signing.pub.pem
+
+          mkdir -p metadata
           for pi in pi3 pi4 pi5; do
             IMAGE="artifacts/image-${pi}/snapdog-os-${pi}-${VERSION}.img.gz"
             UPDATE_ARC="artifacts/image-${pi}/snapdog-os-${pi}-${VERSION}-update.tar.gz"
-            [ -f "$IMAGE" ] || continue
-            [ -f "$UPDATE_ARC" ] || continue
+            SBOM="artifacts/image-${pi}/snapdog-os-${pi}-${VERSION}-sbom.csv"
+            CHECKSUMS="artifacts/image-${pi}/snapdog-os-${pi}-${VERSION}.sha256"
+
+            test -s "$IMAGE"
+            test -s "$UPDATE_ARC"
+            test -s "$SBOM"
+            test -s "$CHECKSUMS"
+            (cd "artifacts/image-${pi}" && sha256sum --check "snapdog-os-${pi}-${VERSION}.sha256")
 
             aws s3 cp "$IMAGE" "s3://${R2_BUCKET}/os/images/" \
+              --cache-control "public, max-age=31536000, immutable" \
               --endpoint-url "$AWS_ENDPOINT_URL"
-
             aws s3 cp "$UPDATE_ARC" "s3://${R2_BUCKET}/os/updates/" \
+              --cache-control "public, max-age=31536000, immutable" \
+              --endpoint-url "$AWS_ENDPOINT_URL"
+            aws s3 cp "$SBOM" "s3://${R2_BUCKET}/os/sbom/" \
+              --cache-control "public, max-age=31536000, immutable" \
+              --endpoint-url "$AWS_ENDPOINT_URL"
+            aws s3 cp "$CHECKSUMS" "s3://${R2_BUCKET}/os/checksums/" \
+              --cache-control "public, max-age=31536000, immutable" \
               --endpoint-url "$AWS_ENDPOINT_URL"
 
-            SHA=$(sha256sum "$UPDATE_ARC" | awk '{print $1}')
-            METADATA=$(jq -n \
+            IMAGE_SHA=$(sha256sum "$IMAGE" | awk '{print $1}')
+            UPDATE_SHA=$(sha256sum "$UPDATE_ARC" | awk '{print $1}')
+            SBOM_SHA=$(sha256sum "$SBOM" | awk '{print $1}')
+            CREATED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+            META="metadata/${pi}.json"
+            jq -cn \
               --arg v "$VERSION" \
-              --arg u "${UPDATE_BASE_URL}/updates/snapdog-os-${pi}-${VERSION}-update.tar.gz" \
-              --arg s "$SHA" \
-              '{version: $v, url: $u, sha256: $s}')
+              --arg channel "$CHANNEL" \
+              --arg board "$pi" \
+              --arg url "${UPDATE_BASE_URL}/updates/snapdog-os-${pi}-${VERSION}-update.tar.gz" \
+              --arg sha "$UPDATE_SHA" \
+              --arg image_url "${UPDATE_BASE_URL}/images/snapdog-os-${pi}-${VERSION}.img.gz" \
+              --arg image_sha "$IMAGE_SHA" \
+              --arg sbom_url "${UPDATE_BASE_URL}/sbom/snapdog-os-${pi}-${VERSION}-sbom.csv" \
+              --arg sbom_sha "$SBOM_SHA" \
+              --arg git_sha "${GITHUB_SHA}" \
+              --arg run_id "${GITHUB_RUN_ID}" \
+              --arg created_at "$CREATED_AT" \
+              '{version:$v, channel:$channel, board:$board, url:$url, sha256:$sha, image_url:$image_url, image_sha256:$image_sha, sbom_url:$sbom_url, sbom_sha256:$sbom_sha, git_sha:$git_sha, github_run_id:$run_id, created_at:$created_at}' \
+              > "$META"
 
-            echo "$METADATA" | aws s3 cp - \
-              "s3://${R2_BUCKET}/os/metadata/${CHANNEL}/${pi}.json" \
+            openssl dgst -sha256 -sign update-signing.private.pem -out "${META}.sig" "$META"
+            aws s3 cp "$META" "s3://${R2_BUCKET}/os/metadata/${CHANNEL}/${pi}.json" \
               --content-type "application/json" \
+              --cache-control "public, max-age=60, must-revalidate" \
+              --endpoint-url "$AWS_ENDPOINT_URL"
+            aws s3 cp "${META}.sig" "s3://${R2_BUCKET}/os/metadata/${CHANNEL}/${pi}.json.sig" \
+              --content-type "application/octet-stream" \
+              --cache-control "public, max-age=60, must-revalidate" \
               --endpoint-url "$AWS_ENDPOINT_URL"
           done
 
-          # Stable also updates beta
           if [ "$CHANNEL" = "stable" ]; then
             for pi in pi3 pi4 pi5; do
               aws s3 cp \
                 "s3://${R2_BUCKET}/os/metadata/stable/${pi}.json" \
                 "s3://${R2_BUCKET}/os/metadata/beta/${pi}.json" \
+                --cache-control "public, max-age=60, must-revalidate" \
+                --content-type "application/json" \
+                --endpoint-url "$AWS_ENDPOINT_URL"
+              aws s3 cp \
+                "s3://${R2_BUCKET}/os/metadata/stable/${pi}.json.sig" \
+                "s3://${R2_BUCKET}/os/metadata/beta/${pi}.json.sig" \
+                --cache-control "public, max-age=60, must-revalidate" \
+                --content-type "application/octet-stream" \
                 --endpoint-url "$AWS_ENDPOINT_URL"
             done
           fi
 
-      - name: Attach images to GitHub Release
+          rm -f update-signing.private.pem
+
+      - name: Attach artifacts to GitHub Release
         if: needs.release-please.outputs.release_created == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.release-please.outputs.tag_name }}
-          files: |
-            artifacts/**/*.img.gz
-            artifacts/**/*-update.tar.gz
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mapfile -t release_files < <(find artifacts -type f \( \
+            -name '*.img.gz' -o \
+            -name '*-update.tar.gz' -o \
+            -name '*-sbom.csv' -o \
+            -name '*.sha256' \
+          \) | sort)
+          test "${#release_files[@]}" -gt 0
+          gh release upload "${{ needs.release-please.outputs.tag_name }}" "${release_files[@]}" --clobber

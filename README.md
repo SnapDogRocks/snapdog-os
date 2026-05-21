@@ -25,7 +25,7 @@ SnapDog OS turns a Raspberry Pi with an I2S DAC into a dedicated network audio r
 - **Any I2S DAC** — HiFiBerry, Allo, IQAudio, JustBoom, MAX98357A, and more
 - **Zero-config setup** — captive portal WiFi configuration from your phone
 - **Web UI** — [SnapDog Control](#snapdog-ctrl) for network, audio, and system settings
-- **OTA updates** — dual-partition A/B with SHA256 verification and automatic rollback
+- **OTA updates** — dual-partition A/B with signed metadata, SHA256 verification, and automatic rollback
 - **Secure by default** — SSH disabled, pubkey-only when enabled, no default network access
 
 ## Supported Hardware
@@ -126,7 +126,7 @@ SNAPDOG_SETUP_PORT=8080 cargo run
 | Feature | Detail |
 |---------|--------|
 | Mechanism | Dual-partition A/B |
-| Integrity | SHA256 checksum verification |
+| Integrity | OpenSSL-signed metadata + SHA256 archive verification |
 | Rollback | Automatic after 3 failed boot attempts |
 | Channels | `stable` (tagged releases), `beta` (every push) |
 | Schedule | Configurable: daily/weekly/monthly at chosen time |
@@ -151,10 +151,11 @@ Set via the web UI or `BR2_PACKAGE_CONFIGTXT_DAC_OVERLAY` at build time. Leave e
 Requires a Linux host with standard buildroot dependencies (`build-essential`, `git`, `wget`, `cpio`, `unzip`, `rsync`, `bc`).
 
 ```bash
-make setup          # Download buildroot 2025.02
-make PI=pi4 config  # Configure for Raspberry Pi 4
-make PI=pi4 build   # Build SD card image
-make all            # Build for all Pi variants
+make setup                         # Download buildroot 2025.02
+# provide an aarch64 snapdog-ctrl binary at ./snapdog-ctrl-binary
+make PI=pi4 config                 # Configure for Raspberry Pi 4
+make PI=pi4 build                  # Build SD card image
+make all                           # Build for all Pi variants
 ```
 
 Output: `../buildroot-pi4/images/sdcard.img`
@@ -167,7 +168,7 @@ Output: `../buildroot-pi4/images/sdcard.img`
 | SSH auth | pubkey only (password auth forbidden) |
 | Root password | `snapdog` (local console only) |
 | Web UI | No authentication (local network only) |
-| OTA | SHA256 verified, auto-rollback on failure |
+| OTA | Signed metadata, SHA256 verified payloads, auto-rollback on failure |
 | Watchdog | Hardware, 30s timeout via systemd |
 
 ## Related
@@ -177,18 +178,31 @@ Output: `../buildroot-pi4/images/sdcard.img`
 ## Repository Setup
 
 Branch protection on `main`:
-- Required status checks: Lint & Test, Cross-compile, Security Audit
+- Required status checks: Lint & Test, Cross-compile, Security Audit, Release Sanity
+- Required pull request review and CODEOWNERS review
+- Require conversation resolution and signed commits
 - No force pushes, no deletions
 - All changes via PR (CI must pass before merge)
 
 Actions permissions:
-- Workflow permissions: Read and write
-- Allow GitHub Actions to create and approve PRs (required for release-please)
+- Default workflow permissions: read-only
+- Allowlist pinned actions/reusable workflows only where supported
+- Release workflow grants write permissions only to release-please/publish jobs
 
 Required secrets for releases:
 - `R2_ACCESS_KEY_ID` — Cloudflare R2 access key
 - `R2_SECRET_ACCESS_KEY` — Cloudflare R2 secret
 - `R2_ENDPOINT_URL` — Cloudflare R2 endpoint
+- `SNAPDOG_UPDATE_SIGNING_KEY_PEM` — private RSA update metadata signing key
+
+Signing key bootstrap:
+
+```bash
+scripts/generate-update-signing-key.sh
+gh secret set SNAPDOG_UPDATE_SIGNING_KEY_PEM < secrets/update-signing.private.pem
+```
+
+The public key is baked into the OS image at `/etc/snapdog-os-update.pub.pem`. The release workflow refuses to publish if the private signing key does not match the committed public key.
 
 ## License
 

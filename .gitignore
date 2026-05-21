@@ -3,6 +3,8 @@ buildroot/PIVERSION
 buildroot/VERSION
 .piversion
 images/
+secrets/
+*.private.pem
 
 # Rust
 snapdog-ctrl/target/

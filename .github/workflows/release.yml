@@ -15,7 +15,7 @@ env:
   R2_BUCKET: snapdog-updates
   UPDATE_BASE_URL: https://update.snapdog.cc/os
   BUILDROOT_VERSION: "2025.02"
-  RUST_TOOLCHAIN: "1.85.0"
+  RUST_TOOLCHAIN: "stable"
   NODE_VERSION: "22.13.0"
 
 jobs:

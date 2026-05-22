@@ -11,8 +11,10 @@ mod network;
 mod network;
 #[cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
 mod routes;
+mod server_config;
 #[cfg_attr(debug_assertions, allow(dead_code))]
 mod system;
+mod ws;
 
 use axum::Router;
 use tower_http::{compression::CompressionLayer, trace::TraceLayer};
@@ -102,9 +104,13 @@ fn build_app() -> Router {
     let mock = mock::MockState::new();
     tracing::info!("🔶 Running in MOCK mode (debug build)");
 
+    let (tx, _rx) = tokio::sync::broadcast::channel::<String>(100);
+    let ws_sender = ws::WsSender(tx);
+
     Router::new()
         .nest("/api", routes::api_mock(mock))
         .fallback(routes::static_files)
+        .layer(axum::Extension(ws_sender))
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
 }
@@ -123,10 +129,14 @@ fn build_app() -> Router {
         let _ = network::configure_resolved().await;
     });
 
+    let (tx, _rx) = tokio::sync::broadcast::channel::<String>(100);
+    let ws_sender = ws::WsSender(tx);
+
     Router::new()
         .nest("/api", routes::api())
         .merge(routes::captive_portal_routes())
         .fallback(routes::static_files)
+        .layer(axum::Extension(ws_sender))
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
 }

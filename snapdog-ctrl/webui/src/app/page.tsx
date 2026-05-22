@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback, useId } from "react";
+import { useState, useEffect, useCallback, useId, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { AboutButton } from "@/components/AboutButton";
 import {
   api,
   type SystemInfo,
@@ -943,6 +944,13 @@ function UpdateTab() {
   const channelId = useId();
   const cardId = useId();
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [showWarningGate, setShowWarningGate] = useState(false);
+  const [acceptedRisks, setAcceptedRisks] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
   useEffect(() => {
     api.checkUpdate().then(setUpdate).catch(() => {});
     api.getUpdateStatus().then((s) => { if (s.rolled_back) setRolledBack(true); }).catch(() => {});
@@ -976,6 +984,65 @@ function UpdateTab() {
     }, 10000);
   }, [t, update]);
 
+  const triggerFileSelect = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleFileSelected = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedFile(file);
+      setShowWarningGate(true);
+      setAcceptedRisks(false);
+      setUploadError(null);
+    }
+  }, []);
+
+  const handleFileDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      setSelectedFile(file);
+      setShowWarningGate(true);
+      setAcceptedRisks(false);
+      setUploadError(null);
+    }
+  }, []);
+
+  const startManualFlash = useCallback(() => {
+    if (!selectedFile) return;
+    setUploadProgress(true);
+    setUploadError(null);
+    api.uploadUpdate(selectedFile)
+      .then(() => {
+        setPhase("installing");
+        setShowWarningGate(false);
+        setSelectedFile(null);
+        setAcceptedRisks(false);
+        return api.installUpdate();
+      })
+      .then(() => {
+        setTimeout(() => {
+          setPhase("rebooting");
+          const startTime = Date.now();
+          const poll = setInterval(async () => {
+            if (Date.now() - startTime > 120000) { clearInterval(poll); setPhase("failed"); return; }
+            try {
+              setPhase("reconnecting");
+              await api.getSystem();
+              clearInterval(poll);
+              setPhase("done");
+            } catch { /* still rebooting */ }
+          }, 3000);
+        }, 10000);
+      })
+      .catch((err) => {
+        console.error(err);
+        setUploadError(t("uploadError"));
+        setUploadProgress(false);
+      });
+  }, [selectedFile, t]);
+
   return (
     <Card title={t("title")} id={cardId}>
       <div className="space-y-4">
@@ -1003,25 +1070,40 @@ function UpdateTab() {
         {phase === "idle" && (
           <>
             {update?.available ? (
-              <div className="flex items-center justify-between rounded-lg bg-primary/10 p-4">
-                <div>
-                  <p className="text-sm font-medium">{t("updateAvailable")}</p>
-                  <p className="text-xs text-muted-foreground">{update.current_version} → {update.latest_version}</p>
+              <div className="flex flex-col gap-3 rounded-lg bg-primary/10 p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium">{t("updateAvailable")}</p>
+                    <p className="text-xs text-muted-foreground">{update.current_version} → {update.latest_version}</p>
+                  </div>
+                  <Button size="sm" onClick={performUpdate}>{t("installUpdate")}</Button>
                 </div>
-                <Button size="sm" onClick={performUpdate}>{t("installUpdate")}</Button>
+                <div className="text-xs font-semibold flex items-center gap-1 border-t border-primary/20 pt-2 text-green-600 dark:text-green-400">
+                  {update.signature_verified ? t("signatureVerified") : t("signatureUnverified")}
+                </div>
               </div>
             ) : update?.is_downgrade ? (
-              <div className="flex items-center justify-between rounded-lg bg-muted p-4">
-                <div>
-                  <p className="text-sm font-medium">{t("downgradeAvailable")}</p>
-                  <p className="text-xs text-muted-foreground">{update.current_version} → {update.latest_version}</p>
+              <div className="flex flex-col gap-3 rounded-lg bg-muted p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium">{t("downgradeAvailable")}</p>
+                    <p className="text-xs text-muted-foreground">{update.current_version} → {update.latest_version}</p>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={performUpdate}>{t("installVersion")}</Button>
                 </div>
-                <Button variant="outline" size="sm" onClick={performUpdate}>{t("installVersion")}</Button>
+                <div className="text-xs font-semibold flex items-center gap-1 border-t border-border pt-2 text-green-600 dark:text-green-400">
+                  {update.signature_verified ? t("signatureVerified") : t("signatureUnverified")}
+                </div>
               </div>
             ) : update ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <StatusDot connected label={t("upToDate")} />
-                <span>{t("upToDate")}</span>
+              <div className="flex flex-col gap-2 rounded-lg bg-muted/20 p-4">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <StatusDot connected label={t("upToDate")} />
+                  <span>{t("upToDate")}</span>
+                </div>
+                <div className="text-xs font-semibold flex items-center gap-1 text-green-600 dark:text-green-400 border-t border-border/50 pt-2">
+                  {update.signature_verified ? t("signatureVerified") : t("signatureUnverified")}
+                </div>
               </div>
             ) : null}
             <Button variant="outline" size="sm" onClick={checkForUpdate} disabled={checking} aria-busy={checking}>
@@ -1037,7 +1119,101 @@ function UpdateTab() {
           </Select>
         </Field>
         <AutoUpdateSettings />
+
+        {phase === "idle" && (
+          <>
+            <hr className="border-border/50" />
+            <div className="space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold">{t("manualTitle")}</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">{t("manualDesc")}</p>
+              </div>
+              <div
+                className="border-2 border-dashed border-border/80 hover:border-primary/50 transition rounded-lg p-6 flex flex-col items-center justify-center cursor-pointer space-y-2 bg-muted/20"
+                onClick={triggerFileSelect}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={handleFileDrop}
+              >
+                <svg className="size-8 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+                <span className="text-xs font-semibold text-muted-foreground">{t("manualUploadButton")}</span>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  className="hidden"
+                  accept=".tar.gz,.zip"
+                  onChange={handleFileSelected}
+                />
+              </div>
+            </div>
+          </>
+        )}
       </div>
+
+      {showWarningGate && selectedFile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-lg rounded-xl border border-destructive/30 bg-background/95 shadow-2xl p-6 space-y-6 max-h-[90vh] overflow-y-auto transform scale-100 transition duration-200">
+            <div className="space-y-2">
+              <h2 className="text-base font-bold text-destructive flex items-center gap-2">
+                <span>{t("manualWarningTitle")}</span>
+              </h2>
+              <p className="text-xs text-foreground/90 leading-relaxed font-semibold">
+                {t("manualWarningDesc1")}
+              </p>
+              <p className="text-xs text-foreground/90 leading-relaxed font-semibold">
+                {t("manualWarningDesc2")}
+              </p>
+              <p className="text-xs text-muted-foreground font-mono bg-muted/60 p-2 rounded border border-border/50">
+                File: {selectedFile.name} ({(selectedFile.size / 1024 / 1024).toFixed(2)} MB)
+              </p>
+            </div>
+
+            <div className="flex items-start gap-3 rounded-lg border border-border/85 bg-muted/40 p-4">
+              <input
+                id="accept-risks-checkbox"
+                type="checkbox"
+                checked={acceptedRisks}
+                onChange={(e) => setAcceptedRisks(e.target.checked)}
+                className="mt-1 size-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
+              />
+              <label htmlFor="accept-risks-checkbox" className="text-xs font-bold text-foreground/80 cursor-pointer select-none leading-relaxed">
+                {t("manualConfirmCheckbox")}
+              </label>
+            </div>
+
+            {uploadError && (
+              <div className="rounded-lg bg-destructive/10 p-3 text-xs text-destructive font-semibold">
+                {uploadError}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 pt-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowWarningGate(false);
+                  setSelectedFile(null);
+                  setAcceptedRisks(false);
+                  setUploadError(null);
+                  if (fileInputRef.current) fileInputRef.current.value = "";
+                }}
+                disabled={uploadProgress}
+              >
+                {t("manualCancel")}
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={startManualFlash}
+                disabled={!acceptedRisks || uploadProgress}
+                className="font-bold"
+              >
+                {uploadProgress ? t("manualUploading") : t("manualProceed")}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </Card>
   );
 }
@@ -1387,7 +1563,7 @@ function ServerSourcesSubTab({ config, setConfig }: { config: ServerConfig; setC
   };
   const updateRadio = (i: number, key: string, value: string) => {
     const c = structuredClone(config);
-    (c.radio[i] as Record<string, string | null>)[key] = value;
+    (c.radio[i] as Record<string, string | null>)[key] = key === "cover" ? (value || null) : value;
     setConfig(c);
   };
 
@@ -1444,6 +1620,7 @@ function ServerSourcesSubTab({ config, setConfig }: { config: ServerConfig; setC
             <div className="flex-1 space-y-1">
               <Input placeholder={t("stationName")} value={r.name} onChange={(e) => updateRadio(i, "name", e.target.value)} aria-label={`${t("stationName")} ${i + 1}`} />
               <Input placeholder={t("stationUrl")} value={r.url} onChange={(e) => updateRadio(i, "url", e.target.value)} aria-label={`${t("stationUrl")} ${i + 1}`} />
+              <Input placeholder={t("stationCover")} value={r.cover ?? ""} onChange={(e) => updateRadio(i, "cover", e.target.value)} aria-label={`${t("stationCover")} ${i + 1}`} />
             </div>
             <Button variant="outline" size="icon-xs" onClick={() => removeRadio(i)} aria-label="Remove">×</Button>
           </div>
@@ -1645,6 +1822,7 @@ export default function SetupPage() {
         <header className="mb-6 flex items-center gap-3">
           <img src="/icon.svg" alt="" className="size-10" aria-hidden="true" />
           <h1 className="flex-1 text-xl font-bold">{t("heading")}</h1>
+          <AboutButton />
           <Select
             value={locale}
             onChange={(e) => setLocale(e.target.value as Locale)}

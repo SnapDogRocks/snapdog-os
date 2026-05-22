@@ -85,6 +85,7 @@ export interface UpdateCheck {
   latest_version: string;
   channel: string;
   is_downgrade: boolean;
+  signature_verified: boolean;
 }
 
 export interface UpdateStatus {
@@ -119,6 +120,17 @@ export const api = {
   triggerUpdate: () => request<void>("/api/system/update", { method: "POST" }),
   checkUpdate: () => request<UpdateCheck>("/api/system/update/check"),
   getUpdateStatus: () => request<import("./api").UpdateStatus>("/api/system/update/status"),
+  uploadUpdate: (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return fetch("/api/system/update/upload", {
+      method: "POST",
+      body: formData,
+    }).then(res => {
+      if (!res.ok) throw new Error(`Upload failed: ${res.status} ${res.statusText}`);
+    });
+  },
+  installUpdate: () => request<void>("/api/system/update/install", { method: "POST" }),
   factoryReset: () => request<void>("/api/system/factory-reset", { method: "POST" }),
 
   getEthernet: () => request<EthernetStatus>("/api/network/ethernet"),

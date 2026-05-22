@@ -151,7 +151,20 @@
     "updateTime": "Update time",
     "daily": "Daily",
     "weekly": "Weekly",
-    "monthly": "Monthly"
+    "monthly": "Monthly",
+    "signatureVerified": "✓ Cryptographically Signed & Verified (RSA-3072)",
+    "signatureUnverified": "⚠️ Unverified or Invalid Signature",
+    "manualTitle": "Manual Firmware Flash",
+    "manualDesc": "Upload and flash a local system image directly without online checks.",
+    "manualWarningTitle": "⚠️ CRITICAL SYSTEM WARNING: MANUAL FLASH",
+    "manualWarningDesc1": "Manual flashing bypasses automatic online signature and compatibility checks. Flashing an incorrect, corrupted, or unsupported system image WILL permanently damage or brick your device.",
+    "manualWarningDesc2": "Make sure you have a valid update package (.tar.gz) specifically compiled for your hardware revision. Proceed ONLY if you are absolutely sure of the image's source and integrity.",
+    "manualConfirmCheckbox": "I accept the risks of permanent device damage/data loss.",
+    "manualCancel": "Cancel",
+    "manualProceed": "Proceed & Upload Image",
+    "manualUploadButton": "Choose Update File...",
+    "manualUploading": "Uploading system image...",
+    "uploadError": "Upload failed. Please ensure the file is correct and not corrupted."
   },
   "server": {
     "title": "Server",
@@ -194,6 +207,7 @@
     "radio": "Radio Stations",
     "stationName": "Station Name",
     "stationUrl": "Stream URL",
+    "stationCover": "Coverart URL (Optional)",
     "addStation": "Add Station",
     "zones": "Zones",
     "zoneName": "Zone Name",
@@ -219,5 +233,20 @@
     "addGo": "Add GO",
     "save": "Save",
     "saved": "Saved!"
+  },
+  "about": {
+    "title": "About",
+    "dialogLabel": "About SnapDog",
+    "closeLabel": "Close dialog",
+    "description": "Multi-zone audio controller with AirPlay, Spotify, Subsonic, MQTT and KNX integration",
+    "modelLabel": "MODEL",
+    "modelValue": "SNAPDOG-CTRL",
+    "versionLabel": "VERSION",
+    "sourceLabel": "SOURCE",
+    "sourceValue": "metaneutrons/snapdog ↗",
+    "licenseLabel": "LICENSE",
+    "licenseValue": "GPL-3.0 ↗",
+    "done": "Done"
   }
 }
+

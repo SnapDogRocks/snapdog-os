@@ -73,6 +73,7 @@ impl MockState {
             uptime_seconds: 86400,
             pi_version: 4,
             components: crate::routes::ComponentVersions {
+                server: "0.11.3".into(),
                 client: "0.11.3".into(),
                 ctrl: env!("SNAPDOG_CTRL_VERSION").to_string(),
                 kernel: "6.6.78-v8+".into(),

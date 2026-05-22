@@ -61,6 +61,7 @@ pub async fn get_system_info() -> SystemInfo {
             .parse()
             .unwrap_or(4),
         components: ComponentVersions {
+            server: client.clone(),
             client,
             ctrl: env!("SNAPDOG_CTRL_VERSION").to_string(),
             kernel,
@@ -77,10 +78,9 @@ pub async fn set_system(hostname: Option<String>, channel: Option<String>) -> Re
             matches!(c.as_str(), "stable" | "beta"),
             "invalid update channel"
         );
-        let _ = remount_root_rw().await;
-        let res = tokio::fs::write("/etc/snapdog-os.channel", format!("{c}\n")).await;
-        let _ = remount_root_ro().await;
-        res.context("failed to write snapdog-os.channel")?;
+        tokio::fs::write("/etc/snapdog-os.channel", format!("{c}\n"))
+            .await
+            .context("failed to write snapdog-os.channel")?;
     }
     Ok(())
 }
@@ -91,6 +91,11 @@ pub async fn reboot() {
 
 pub async fn trigger_update() -> Result<()> {
     run_cmd("/opt/snapdog/bin/update", &["--reboot"]).await?;
+    Ok(())
+}
+
+pub async fn trigger_manual_install() -> Result<()> {
+    run_cmd("/opt/snapdog/bin/extract-update", &["--reboot"]).await?;
     Ok(())
 }
 
@@ -473,10 +478,9 @@ pub async fn set_client(config: ClientConfig) -> Result<()> {
     }
 
     let content = format!("SNAPDOG_CLIENT_ARGS=\"{}\"\n", args.join(" "));
-    let _ = remount_root_rw().await;
-    let write_res = tokio::fs::write("/etc/default/snapdog-client", content).await;
-    let _ = remount_root_ro().await;
-    write_res.context("failed to write snapdog-client configuration")?;
+    tokio::fs::write("/etc/default/snapdog-client", content)
+        .await
+        .context("failed to write snapdog-client configuration")?;
 
     run_cmd("systemctl", &["restart", "snapdog-client"]).await?;
 
@@ -507,33 +511,17 @@ pub async fn get_ssh() -> SshConfig {
 }
 
 pub async fn set_ssh(config: SshConfig) -> Result<()> {
-    let _ = remount_root_rw().await;
-
-    let op_res = async {
-        if config.enabled {
-            // Harden sshd: pubkey only, no password auth
-            let sshd_config = "\
-PasswordAuthentication no\n\
-KbdInteractiveAuthentication no\n\
-PermitRootLogin prohibit-password\n\
-";
-            tokio::fs::create_dir_all("/etc/ssh/sshd_config.d").await?;
-            tokio::fs::write("/etc/ssh/sshd_config.d/snapdog.conf", sshd_config).await?;
-            run_cmd("systemctl", &["enable", "--now", "sshd"]).await?;
-        } else {
-            run_cmd("systemctl", &["disable", "--now", "sshd"]).await?;
-        }
-
-        tokio::fs::create_dir_all("/root/.ssh").await?;
-        let keys = config.pubkeys.join("\n") + "\n";
-        tokio::fs::write("/root/.ssh/authorized_keys", keys).await?;
-        run_cmd("chmod", &["600", "/root/.ssh/authorized_keys"]).await?;
-        Ok::<(), anyhow::Error>(())
+    if config.enabled {
+        run_cmd("systemctl", &["enable", "--now", "sshd"]).await?;
+    } else {
+        run_cmd("systemctl", &["disable", "--now", "sshd"]).await?;
     }
-    .await;
 
-    let _ = remount_root_ro().await;
-    op_res
+    tokio::fs::create_dir_all("/root/.ssh").await?;
+    let keys = config.pubkeys.join("\n") + "\n";
+    tokio::fs::write("/root/.ssh/authorized_keys", keys).await?;
+    run_cmd("chmod", &["600", "/root/.ssh/authorized_keys"]).await?;
+    Ok(())
 }
 
 // --- OTA Update Check ---
@@ -559,7 +547,8 @@ pub async fn check_update() -> UpdateCheckResponse {
 
     let url = format!("{UPDATE_BASE_URL}/metadata/{channel}/pi{pi_version}.json");
 
-    let latest = fetch_latest_version(&url).await.unwrap_or_default();
+    let latest_res = fetch_latest_version(&url).await;
+    let latest = latest_res.unwrap_or_default();
     let available = !latest.is_empty() && semver_gt(&latest, &current);
     let is_downgrade = !latest.is_empty() && semver_gt(&current, &latest);
     let installable = !latest.is_empty() && latest != current;
@@ -752,29 +741,28 @@ async fn fetch_latest_version(url: &str) -> Result<String> {
 pub async fn factory_reset() -> Result<()> {
     tracing::warn!("Factory reset initiated");
 
-    let _ = remount_root_rw().await;
+    // Remove configurations directly from the writeable /data partition to preserve symbolic links
+    let _ = tokio::fs::remove_file("/data/wpa_supplicant/wpa_supplicant-wlan0.conf").await;
+    let _ = tokio::fs::remove_file("/data/systemd/network/10-ethernet.network").await;
+    let _ = tokio::fs::remove_file("/data/systemd/network/20-wifi.network").await;
+    let _ = tokio::fs::remove_file("/data/default/snapdog-client").await;
+    let _ = tokio::fs::remove_file("/data/hostname").await;
+    let _ = tokio::fs::remove_file("/data/snapdog-os.channel").await;
+    let _ = tokio::fs::remove_file("/data/snapdog-os.auto-update").await;
+    let _ = tokio::fs::remove_file("/data/snapdog/snapdog.toml").await;
 
-    let op_res = async {
-        // Remove WiFi config
-        let _ = tokio::fs::remove_file("/etc/wpa_supplicant/wpa_supplicant-wlan0.conf").await;
-        // Remove networkd configs
-        let _ = tokio::fs::remove_file("/etc/systemd/network/10-ethernet.network").await;
-        let _ = tokio::fs::remove_file("/etc/systemd/network/20-wifi.network").await;
-        // Reset client config
-        tokio::fs::write("/etc/default/snapdog-client", "SNAPDOG_CLIENT_ARGS=\"\"\n").await?;
-        // Reset hostname
-        run_cmd("hostnamectl", &["set-hostname", "snapdog"]).await?;
-        // Disable SSH
-        let _ = run_cmd("systemctl", &["disable", "--now", "sshd"]).await;
-        let _ = tokio::fs::remove_file("/root/.ssh/authorized_keys").await;
-        // Reset update channel
-        tokio::fs::write("/etc/snapdog-os.channel", "stable\n").await?;
-        Ok::<(), anyhow::Error>(())
+    // Disable SSH and remove authorized keys
+    let _ = run_cmd("systemctl", &["disable", "--now", "sshd"]).await;
+    let _ = tokio::fs::remove_file("/data/ssh/authorized_keys").await;
+
+    // Reset hostname immediately
+    let _ = run_cmd("hostnamectl", &["set-hostname", "snapdog"]).await;
+
+    // Run snapdog-data-init script if on Linux to re-populate standard defaults immediately
+    #[cfg(target_os = "linux")]
+    {
+        let _ = run_cmd("/usr/bin/snapdog-data-init", &[]).await;
     }
-    .await;
-
-    let _ = remount_root_ro().await;
-    op_res?;
 
     // Reboot
     tracing::info!("Factory reset complete, rebooting");
@@ -784,9 +772,34 @@ pub async fn factory_reset() -> Result<()> {
 
 // --- Logs ---
 
-pub async fn get_logs() -> LogsResponse {
+pub async fn get_logs(service: Option<String>) -> LogsResponse {
+    let mut args = vec!["--no-pager", "-n", "200", "--output", "short-iso"];
+
+    match service.as_deref() {
+        Some("server") => {
+            args.push("-u");
+            args.push("snapdog");
+        }
+        Some("client") => {
+            args.push("-u");
+            args.push("snapdog-client");
+        }
+        Some("controller") => {
+            args.push("-u");
+            args.push("snapdog-ctrl");
+        }
+        _ => {
+            args.push("-u");
+            args.push("snapdog");
+            args.push("-u");
+            args.push("snapdog-client");
+            args.push("-u");
+            args.push("snapdog-ctrl");
+        }
+    }
+
     let output = tokio::process::Command::new("journalctl")
-        .args(["--no-pager", "-n", "200", "--output", "short-iso"])
+        .args(&args)
         .output()
         .await
         .ok();
@@ -891,34 +904,26 @@ pub async fn set_auto_update(config: AutoUpdateConfig) -> Result<()> {
         _ => format!("*-*-* {}:00", config.time),
     };
 
-    let _ = remount_root_rw().await;
+    // Persist config
+    let content = format!(
+        "enabled={}\ninterval={}\ntime={}\n",
+        config.enabled, config.interval, config.time
+    );
+    tokio::fs::write(AUTO_UPDATE_CONF, content).await?;
 
-    let op_res = async {
-        // Persist config
-        let content = format!(
-            "enabled={}\ninterval={}\ntime={}\n",
-            config.enabled, config.interval, config.time
-        );
-        tokio::fs::write(AUTO_UPDATE_CONF, content).await?;
-
-        if config.enabled {
-            // Write timer override
-            if let Some(parent) = std::path::Path::new(UPDATER_TIMER).parent() {
-                tokio::fs::create_dir_all(parent).await?;
-            }
-            let timer_conf = format!("[Timer]\nOnCalendar=\nOnCalendar={calendar}\n");
-            tokio::fs::write(UPDATER_TIMER, timer_conf).await?;
-            run_cmd("systemctl", &["daemon-reload"]).await?;
-            run_cmd("systemctl", &["enable", "--now", "updater.timer"]).await?;
-        } else {
-            run_cmd("systemctl", &["disable", "--now", "updater.timer"]).await?;
+    if config.enabled {
+        // Write timer override
+        if let Some(parent) = std::path::Path::new(UPDATER_TIMER).parent() {
+            tokio::fs::create_dir_all(parent).await?;
         }
-        Ok::<(), anyhow::Error>(())
+        let timer_conf = format!("[Timer]\nOnCalendar=\nOnCalendar={calendar}\n");
+        tokio::fs::write(UPDATER_TIMER, timer_conf).await?;
+        run_cmd("systemctl", &["daemon-reload"]).await?;
+        run_cmd("systemctl", &["enable", "--now", "updater.timer"]).await?;
+    } else {
+        run_cmd("systemctl", &["disable", "--now", "updater.timer"]).await?;
     }
-    .await;
-
-    let _ = remount_root_ro().await;
-    op_res
+    Ok(())
 }
 
 // --- Server Connectivity Test ---
@@ -1114,20 +1119,6 @@ fn validate_client_arg(field: &str, value: &str) -> Result<()> {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':' | '/')),
         "{field} contains unsupported characters"
     );
-    Ok(())
-}
-
-async fn remount_root_rw() -> Result<()> {
-    if cfg!(target_os = "linux") {
-        run_cmd("mount", &["-o", "remount,rw", "/"]).await?;
-    }
-    Ok(())
-}
-
-async fn remount_root_ro() -> Result<()> {
-    if cfg!(target_os = "linux") {
-        run_cmd("mount", &["-o", "remount,ro", "/"]).await?;
-    }
     Ok(())
 }
 

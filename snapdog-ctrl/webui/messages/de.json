@@ -151,7 +151,20 @@
     "updateTime": "Update-Uhrzeit",
     "daily": "Täglich",
     "weekly": "Wöchentlich",
-    "monthly": "Monatlich"
+    "monthly": "Monatlich",
+    "signatureVerified": "✓ Kryptografisch signiert & verifiziert (RSA-3072)",
+    "signatureUnverified": "⚠️ Unverifizierte oder ungültige Signatur",
+    "manualTitle": "Manuelles Firmware-Update",
+    "manualDesc": "Laden Sie ein lokales System-Image direkt hoch und flashen Sie es ohne Online-Prüfungen.",
+    "manualWarningTitle": "⚠️ KRITISCHE SYSTEMWARNUNG: MANUELLES FLASHEN",
+    "manualWarningDesc1": "Das manuelle Flashen umgeht die automatische Online-Signatur und Kompatibilitätsprüfungen. Das Flashen eines fehlerhaften, beschädigten oder nicht unterstützten System-Images beschädigt Ihr Gerät dauerhaft (Brick).",
+    "manualWarningDesc2": "Stellen Sie sicher, dass Sie ein gültiges Update-Paket (.tar.gz) haben, das speziell für Ihre Hardware-Revision kompiliert wurde. Fahren Sie NUR fort, wenn Sie sich über die Quelle und Integrität des Images absolut sicher sind.",
+    "manualConfirmCheckbox": "Ich akzeptiere das Risiko von dauerhaften Hardwareschäden und Datenverlust.",
+    "manualCancel": "Abbrechen",
+    "manualProceed": "Fortfahren & Image hochladen",
+    "manualUploadButton": "Update-Datei auswählen...",
+    "manualUploading": "System-Image wird hochgeladen...",
+    "uploadError": "Upload failed. Bitte stellen Sie sicher, dass die Datei korrekt und nicht beschädigt ist."
   },
   "server": {
     "title": "Server",
@@ -194,6 +207,7 @@
     "radio": "Radiosender",
     "stationName": "Sendername",
     "stationUrl": "Stream-URL",
+    "stationCover": "Coverart-URL (Optional)",
     "addStation": "Sender hinzufügen",
     "zones": "Zonen",
     "zoneName": "Zonenname",
@@ -219,5 +233,20 @@
     "addGo": "GO hinzufügen",
     "save": "Speichern",
     "saved": "Gespeichert!"
+  },
+  "about": {
+    "title": "Über",
+    "dialogLabel": "Über SnapDog",
+    "closeLabel": "Dialog schließen",
+    "description": "Multi-Zonen-Audio-Controller mit AirPlay-, Spotify-, Subsonic-, MQTT- und KNX-Integration",
+    "modelLabel": "MODEL",
+    "modelValue": "SNAPDOG-CTRL",
+    "versionLabel": "VERSION",
+    "sourceLabel": "SOURCE",
+    "sourceValue": "metaneutrons/snapdog ↗",
+    "licenseLabel": "LICENSE",
+    "licenseValue": "GPL-3.0 ↗",
+    "done": "Fertig"
   }
 }
+

@@ -2,8 +2,8 @@
 // Copyright (C) 2026 Fabian Schmieder
 
 use axum::{
-    Json, Router,
-    extract::Request,
+    Extension, Json, Router,
+    extract::{Query, Request},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -11,6 +11,7 @@ use axum::{
 use rust_embed::Embed;
 use serde::{Deserialize, Serialize};
 
+use crate::server_config::{self, ServerConfig};
 use crate::system;
 
 // --- Static files ---
@@ -50,12 +51,15 @@ pub async fn static_files(req: Request) -> Response {
 
 pub fn api() -> Router {
     Router::new()
+        .route("/ws", get(crate::ws::ws_handler))
         // System
         .route("/system", get(get_system).put(put_system))
         .route("/system/reboot", post(post_reboot))
         .route("/system/update", post(post_update))
         .route("/system/update/check", get(get_update_check))
         .route("/system/update/status", get(get_update_status))
+        .route("/system/update/upload", post(post_update_upload))
+        .route("/system/update/install", post(post_update_install))
         .route(
             "/system/update/auto",
             get(get_auto_update).put(put_auto_update),
@@ -79,6 +83,11 @@ pub fn api() -> Router {
         .route("/client/test-server", post(post_test_server))
         // SSH
         .route("/ssh", get(get_ssh).put(put_ssh))
+        // Server
+        .route("/server", get(get_server).put(put_server))
+        .route("/server/status", get(get_server_status))
+        .route("/server/enable", post(post_server_enable))
+        .route("/server/disable", post(post_server_disable))
         // 404 for unknown API routes
         .fallback(api_not_found)
 }
@@ -113,7 +122,11 @@ pub fn captive_portal_routes() -> Router {
 
 #[cfg(debug_assertions)]
 mod mock_handlers {
-    use axum::{Json, extract::State, http::StatusCode};
+    use axum::{
+        Extension, Json,
+        extract::{Multipart, Query, State},
+        http::StatusCode,
+    };
 
     use super::{
         AudioConfig, AudioInfo, AutoUpdateConfig, ClientConfig, EthernetConfig, EthernetInfo,
@@ -151,6 +164,23 @@ mod mock_handlers {
             is_downgrade: false,
         })
     }
+    pub async fn update_upload(
+        State(_m): State<crate::mock::MockState>,
+        mut multipart: Multipart,
+    ) -> StatusCode {
+        tracing::info!("[mock] OTA manual upload started");
+        while let Ok(Some(mut field)) = multipart.next_field().await {
+            while let Ok(Some(chunk)) = field.chunk().await {
+                let _len = chunk.len();
+            }
+        }
+        tracing::info!("[mock] OTA manual upload completed");
+        StatusCode::OK
+    }
+    pub async fn update_install(State(_m): State<crate::mock::MockState>) -> StatusCode {
+        tracing::info!("[mock] OTA manual install triggered (extracting & rebooting)");
+        StatusCode::ACCEPTED
+    }
     pub fn m_get_auto_update() -> Json<AutoUpdateConfig> {
         Json(AutoUpdateConfig {
             enabled: true,
@@ -173,11 +203,12 @@ mod mock_handlers {
         tracing::info!("[mock] factory reset");
         StatusCode::ACCEPTED
     }
-    pub async fn get_logs() -> Json<LogsResponse> {
+    pub async fn get_logs(Query(query): Query<super::LogsQuery>) -> Json<LogsResponse> {
+        let svc = query.service.as_deref().unwrap_or("all");
         Json(LogsResponse {
             lines: vec![
-                "[mock] snapdog-ctrl started".into(),
-                "[mock] snapdog-client connected".into(),
+                format!("[mock] [{svc}] snapdog-ctrl started"),
+                format!("[mock] [{svc}] snapdog-client connected"),
             ],
         })
     }
@@ -235,22 +266,34 @@ mod mock_handlers {
     }
     pub async fn put_audio(
         State(m): State<crate::mock::MockState>,
+        Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
         Json(b): Json<AudioConfig>,
     ) -> StatusCode {
-        m.set_audio_overlay(&b.overlay)
+        let status = m
+            .set_audio_overlay(&b.overlay)
             .await
-            .map_or(StatusCode::INTERNAL_SERVER_ERROR, |()| StatusCode::OK)
+            .map_or(StatusCode::INTERNAL_SERVER_ERROR, |()| StatusCode::OK);
+        if status == StatusCode::OK {
+            let _ = tx.send("audio_changed".to_string());
+        }
+        status
     }
     pub async fn get_client(State(m): State<crate::mock::MockState>) -> Json<ClientConfig> {
         Json(m.get_client().await)
     }
     pub async fn put_client(
         State(m): State<crate::mock::MockState>,
+        Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
         Json(b): Json<ClientConfig>,
     ) -> StatusCode {
-        m.set_client(b)
+        let status = m
+            .set_client(b)
             .await
-            .map_or(StatusCode::INTERNAL_SERVER_ERROR, |()| StatusCode::OK)
+            .map_or(StatusCode::INTERNAL_SERVER_ERROR, |()| StatusCode::OK);
+        if status == StatusCode::OK {
+            let _ = tx.send("client_changed".to_string());
+        }
+        status
     }
     pub async fn get_ssh(State(m): State<crate::mock::MockState>) -> Json<SshConfig> {
         Json(m.get_ssh().await)
@@ -263,6 +306,61 @@ mod mock_handlers {
             .await
             .map_or(StatusCode::INTERNAL_SERVER_ERROR, |()| StatusCode::OK)
     }
+    pub async fn get_server() -> Json<crate::server_config::ServerConfig> {
+        use crate::server_config::{ClientEntry, RadioStation, ServerConfig, ZoneConfig};
+        Json(ServerConfig {
+            zones: vec![ZoneConfig {
+                name: "Living Room".into(),
+                icon: "🛋️".into(),
+                knx: None,
+            }],
+            clients: vec![ClientEntry {
+                name: "Kitchen".into(),
+                mac: "aa:bb:cc:dd:ee:ff".into(),
+                zone: "Living Room".into(),
+                knx: None,
+            }],
+            radio: vec![RadioStation {
+                name: "SWR3".into(),
+                url: "https://swr3.de/stream".into(),
+                cover: None,
+            }],
+            ..ServerConfig::default()
+        })
+    }
+    pub async fn put_server(
+        Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
+        Json(_body): Json<crate::server_config::ServerConfig>,
+    ) -> StatusCode {
+        tracing::info!("[mock] put_server");
+        let _ = tx.send("server_changed".to_string());
+        StatusCode::OK
+    }
+    static SERVER_ENABLED: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+    pub async fn get_server_status() -> Json<super::ServerStatus> {
+        let enabled = SERVER_ENABLED.load(std::sync::atomic::Ordering::Relaxed);
+        Json(super::ServerStatus {
+            enabled,
+            running: enabled,
+        })
+    }
+    pub async fn post_server_enable(
+        Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
+    ) -> StatusCode {
+        SERVER_ENABLED.store(true, std::sync::atomic::Ordering::Relaxed);
+        tracing::info!("[mock] server enabled");
+        let _ = tx.send("server_changed".to_string());
+        StatusCode::ACCEPTED
+    }
+    pub async fn post_server_disable(
+        Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
+    ) -> StatusCode {
+        SERVER_ENABLED.store(false, std::sync::atomic::Ordering::Relaxed);
+        tracing::info!("[mock] server disabled");
+        let _ = tx.send("server_changed".to_string());
+        StatusCode::ACCEPTED
+    }
 }
 
 #[cfg(debug_assertions)]
@@ -270,11 +368,14 @@ pub fn api_mock(state: crate::mock::MockState) -> Router {
     use mock_handlers as h;
 
     Router::new()
+        .route("/ws", get(crate::ws::ws_handler))
         .route("/system", get(h::get_system).put(h::put_system))
         .route("/system/reboot", post(h::reboot))
         .route("/system/update", post(h::update))
         .route("/system/update/check", get(h::get_update_check))
         .route("/system/update/status", get(h::get_update_status))
+        .route("/system/update/upload", post(h::update_upload))
+        .route("/system/update/install", post(h::update_install))
         .route("/system/factory-reset", post(h::factory_reset))
         .route("/system/logs", get(h::get_logs))
         .route(
@@ -294,6 +395,10 @@ pub fn api_mock(state: crate::mock::MockState) -> Router {
         .route("/audio", get(h::get_audio).put(h::put_audio))
         .route("/client", get(h::get_client).put(h::put_client))
         .route("/ssh", get(h::get_ssh).put(h::put_ssh))
+        .route("/server", get(h::get_server).put(h::put_server))
+        .route("/server/status", get(h::get_server_status))
+        .route("/server/enable", post(h::post_server_enable))
+        .route("/server/disable", post(h::post_server_disable))
         .with_state(state)
         .fallback(api_not_found)
 }
@@ -312,6 +417,7 @@ pub struct SystemInfo {
 
 #[derive(Serialize, Clone)]
 pub struct ComponentVersions {
+    pub server: String,
     pub client: String,
     pub ctrl: String,
     pub kernel: String,
@@ -326,6 +432,11 @@ pub struct SystemUpdate {
 #[derive(Serialize)]
 pub struct LogsResponse {
     pub lines: Vec<String>,
+}
+
+#[derive(Deserialize)]
+pub struct LogsQuery {
+    pub service: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -408,6 +519,44 @@ async fn post_update() -> StatusCode {
     StatusCode::ACCEPTED
 }
 
+async fn post_update_upload(
+    mut multipart: axum::extract::Multipart,
+) -> Result<StatusCode, StatusCode> {
+    let dest = "/data/updater.tar.gz";
+    if let Some(parent) = std::path::Path::new(dest).parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    let _ = tokio::fs::remove_file(dest).await;
+
+    let mut file = match tokio::fs::File::create(dest).await {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::error!("Failed to create destination update file: {e}");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    while let Ok(Some(mut field)) = multipart.next_field().await {
+        while let Ok(Some(chunk)) = field.chunk().await {
+            use tokio::io::AsyncWriteExt;
+            if let Err(e) = file.write_all(&chunk).await {
+                tracing::error!("Failed to write chunk: {e}");
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+        }
+    }
+
+    Ok(StatusCode::OK)
+}
+
+async fn post_update_install() -> StatusCode {
+    if let Err(e) = system::trigger_manual_install().await {
+        tracing::error!("post_update_install: {e}");
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+    StatusCode::ACCEPTED
+}
+
 async fn post_factory_reset() -> StatusCode {
     if let Err(e) = system::factory_reset().await {
         tracing::error!("post_factory_reset: {e}");
@@ -416,8 +565,8 @@ async fn post_factory_reset() -> StatusCode {
     StatusCode::ACCEPTED
 }
 
-async fn get_logs() -> Json<LogsResponse> {
-    Json(system::get_logs().await)
+async fn get_logs(Query(query): Query<LogsQuery>) -> Json<LogsResponse> {
+    Json(system::get_logs(query.service).await)
 }
 
 async fn get_timezone() -> Json<TimezoneInfo> {
@@ -571,11 +720,15 @@ async fn get_audio() -> Json<AudioInfo> {
     Json(system::get_audio().await)
 }
 
-async fn put_audio(Json(body): Json<AudioConfig>) -> StatusCode {
+async fn put_audio(
+    Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
+    Json(body): Json<AudioConfig>,
+) -> StatusCode {
     if let Err(e) = system::set_audio_overlay(&body.overlay).await {
         tracing::error!("put_audio: {e}");
         return StatusCode::INTERNAL_SERVER_ERROR;
     }
+    let _ = tx.send("audio_changed".to_string());
     StatusCode::OK
 }
 
@@ -600,11 +753,15 @@ async fn get_client() -> Json<ClientConfig> {
     Json(system::get_client().await)
 }
 
-async fn put_client(Json(body): Json<ClientConfig>) -> StatusCode {
+async fn put_client(
+    Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
+    Json(body): Json<ClientConfig>,
+) -> StatusCode {
     if let Err(e) = system::set_client(body).await {
         tracing::error!("put_client: {e}");
         return StatusCode::INTERNAL_SERVER_ERROR;
     }
+    let _ = tx.send("client_changed".to_string());
     StatusCode::OK
 }
 
@@ -658,4 +815,95 @@ async fn put_ssh(Json(body): Json<SshConfig>) -> StatusCode {
         return StatusCode::INTERNAL_SERVER_ERROR;
     }
     StatusCode::OK
+}
+
+// --- Server ---
+
+#[derive(Serialize)]
+pub struct ServerStatus {
+    pub enabled: bool,
+    pub running: bool,
+}
+
+async fn get_server() -> Result<Json<ServerConfig>, StatusCode> {
+    server_config::read_config().await.map(Json).map_err(|e| {
+        tracing::error!("get_server: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })
+}
+
+async fn put_server(
+    Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
+    Json(body): Json<ServerConfig>,
+) -> StatusCode {
+    if let Err(e) = server_config::validate(&body) {
+        tracing::error!("put_server validate: {e}");
+        return StatusCode::BAD_REQUEST;
+    }
+    if let Err(e) = server_config::write_config(&body).await {
+        tracing::error!("put_server write: {e}");
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+    if let Err(e) = run_systemctl(&["restart", "snapdog"]).await {
+        tracing::error!("put_server restart: {e}");
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+    let _ = tx.send("server_changed".to_string());
+    StatusCode::OK
+}
+
+async fn get_server_status() -> Json<ServerStatus> {
+    let enabled = run_systemctl(&["is-enabled", "snapdog"]).await.is_ok();
+    let running = run_systemctl(&["is-active", "snapdog"]).await.is_ok();
+    Json(ServerStatus { enabled, running })
+}
+
+async fn post_server_enable(
+    Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
+) -> StatusCode {
+    // Write default config if none exists
+    if tokio::fs::metadata("/etc/snapdog/snapdog.toml")
+        .await
+        .is_err()
+    {
+        let default = server_config::default_config_toml();
+        let _ = tokio::fs::create_dir_all("/etc/snapdog").await;
+        if let Err(e) = tokio::fs::write("/etc/snapdog/snapdog.toml", default).await {
+            tracing::error!("post_server_enable write default: {e}");
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
+    }
+    if let Err(e) = run_systemctl(&["enable", "--now", "snapdog"]).await {
+        tracing::error!("post_server_enable: {e}");
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+    let _ = tx.send("server_changed".to_string());
+    StatusCode::ACCEPTED
+}
+
+async fn post_server_disable(
+    Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
+) -> StatusCode {
+    if let Err(e) = run_systemctl(&["disable", "--now", "snapdog"]).await {
+        tracing::error!("post_server_disable: {e}");
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+    let _ = tx.send("server_changed".to_string());
+    StatusCode::ACCEPTED
+}
+
+async fn run_systemctl(args: &[&str]) -> anyhow::Result<()> {
+    let output = tokio::process::Command::new("systemctl")
+        .args(args)
+        .output()
+        .await?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "systemctl {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    }
 }

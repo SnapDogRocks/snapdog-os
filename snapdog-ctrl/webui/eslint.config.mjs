@@ -7,6 +7,12 @@ const eslintConfig = [
   {
     ignores: [".next/**", "out/**", "next-env.d.ts"],
   },
+  {
+    rules: {
+      // Static export doesn't support next/image optimization
+      "@next/next/no-img-element": "off",
+    },
+  },
 ];
 
 export default eslintConfig;

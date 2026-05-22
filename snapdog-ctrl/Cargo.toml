@@ -32,14 +32,14 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-journald = "0.3"
 
 # TOML editing (preserves comments)
-toml_edit = "0.22"
+toml_edit = "0.25"
 
 # Error handling
 thiserror = "2"
 anyhow = "1"
 
 # mDNS service discovery
-mdns-sd = "0.11"
+mdns-sd = "0.19"
 
 # Embedded static files
 rust-embed = { version = "8", features = ["axum"] }

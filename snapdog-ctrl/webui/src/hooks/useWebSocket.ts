@@ -1,11 +1,11 @@
 import { useEffect, useRef } from "react";
 
-type WsCallback = (data?: any) => void;
+type WsCallback = (data?: unknown) => void;
 
 class WebSocketManager {
   private socket: WebSocket | null = null;
   private listeners: Map<string, Set<WsCallback>> = new Map();
-  private reconnectTimeout: any = null;
+  private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelay = 1000;
   private maxReconnectDelay = 30000;
   private url: string = "";
@@ -23,35 +23,27 @@ class WebSocketManager {
     if (this.socket) {
       try {
         this.socket.close();
-      } catch (_) {}
+      } catch { /* ignore */ }
     }
 
-    console.log(`Connecting to WebSocket at ${this.url}`);
     this.socket = new WebSocket(this.url);
 
     this.socket.onopen = () => {
-      console.log("WebSocket connected successfully");
-      this.reconnectDelay = 1000; // Reset backoff delay
+      this.reconnectDelay = 1000;
     };
 
     this.socket.onmessage = (event) => {
       try {
-        const eventName = event.data;
-        console.log("Received WebSocket event:", eventName);
+        const eventName = event.data as string;
         this.emit(eventName);
-      } catch (e) {
-        console.error("Error parsing WebSocket event:", e);
-      }
+      } catch { /* ignore parse errors */ }
     };
 
     this.socket.onclose = () => {
-      console.warn("WebSocket connection closed. Reconnecting...");
       this.scheduleReconnect();
     };
 
-    this.socket.onerror = (error) => {
-      console.error("WebSocket error:", error);
-    };
+    this.socket.onerror = () => {};
   }
 
   private scheduleReconnect() {
@@ -70,7 +62,6 @@ class WebSocketManager {
     }
     this.listeners.get(event)!.add(callback);
 
-    // Return an unsubscribe function
     return () => {
       const set = this.listeners.get(event);
       if (set) {
@@ -82,21 +73,18 @@ class WebSocketManager {
     };
   }
 
-  private emit(event: string, data?: any) {
+  private emit(event: string, data?: unknown) {
     const set = this.listeners.get(event);
     if (set) {
       set.forEach((callback) => {
         try {
           callback(data);
-        } catch (e) {
-          console.error("Error invoking WebSocket callback:", e);
-        }
+        } catch { /* ignore callback errors */ }
       });
     }
   }
 }
 
-// Singleton instance
 let manager: WebSocketManager | null = null;
 const getManager = () => {
   if (!manager) {
@@ -114,7 +102,7 @@ export const useWebSocket = (event: string, callback: WsCallback) => {
 
   useEffect(() => {
     const wsManager = getManager();
-    const tick = (data?: any) => savedCallback.current(data);
+    const tick = (data?: unknown) => savedCallback.current(data);
     const unsubscribe = wsManager.subscribe(event, tick);
     return () => {
       unsubscribe();

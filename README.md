@@ -20,12 +20,13 @@ SnapDog OS turns a Raspberry Pi with an I2S DAC into a dedicated network audio r
 
 ## Features
 
-- **Boots in seconds** — ~512MB image, no desktop, no bloat
+- **Boots in seconds** — minimal embedded image, no desktop, no bloat
 - **Synchronized audio** — Snapcast-compatible multiroom playback via [snapdog-client](https://github.com/metaneutrons/snapdog)
 - **Any I2S DAC** — HiFiBerry, Allo, IQAudio, JustBoom, MAX98357A, and more
 - **Zero-config setup** — captive portal WiFi configuration from your phone
 - **Web UI** — [SnapDog Control](#snapdog-ctrl) for network, audio, and system settings
-- **OTA updates** — dual-partition A/B with signed metadata, SHA256 verification, and automatic rollback
+- **OTA updates** — dual-partition A/B (1GB per partition for future-proof updates) with signed metadata, SHA256 verification, and automatic rollback
+- **Zero Rootfs Wear & Persistence** — symbolic link mapping of all mutable files (WiFi setups, client configurations, update schedules, and SSH keys) to a dedicated writeable `/data` partition, ensuring robust flash memory protection and full configuration preservation across system upgrades
 - **Secure by default** — SSH disabled, pubkey-only when enabled, no default network access
 
 ## Supported Hardware
@@ -170,6 +171,7 @@ Output: `../buildroot-pi4/images/sdcard.img`
 | Web UI | No authentication (local network only) |
 | OTA | Signed metadata, SHA256 verified payloads, auto-rollback on failure |
 | Watchdog | Hardware, 30s timeout via systemd |
+| Filesystem | Completely read-only system partition; all mutable configurations are symlinked to a dedicated `/data` partition |
 
 ## Related
 

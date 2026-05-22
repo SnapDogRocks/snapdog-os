@@ -20,13 +20,7 @@ echo "Active root filesystem: $ACTIVE"
 echo "Device base: $DEVICEBASE"
 echo "Physical disk: $DEVICE"
 
-# 1. Expand the active root filesystem to fill its full pre-allocated 1GB partition.
-# This is safe, instantaneous, and fully supported online by ext4.
-echo "Resizing active root filesystem online..."
-e2fsck -f -y "$ACTIVE" 2>/dev/null || true
-resize2fs "$ACTIVE"
-
-# 2. Grow the data partition (partition 4) to fill the remaining space on the SD card.
+# 1. Grow the data partition (partition 4) to fill the remaining space on the SD card.
 if [ -f /resize-me ]; then
   echo "Growing persistent data partition (${DEVICEBASE}4) to fill SD card..."
 

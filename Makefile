@@ -8,6 +8,7 @@ OVERLAY_CTRL := buildroot/board/raspberrypi/overlay/usr/bin/snapdog-ctrl
 .PHONY: setup prepare-ctrl build config clean all
 
 setup: ## Download and prepare buildroot
+t@git config core.hooksPath .githooks
 	@echo "Fetching buildroot 2025.02..."
 	@if [ ! -d ../buildroot-src/.git ]; then \
 		cd .. && git clone --depth 1 --branch 2025.02 https://github.com/buildroot/buildroot buildroot-src; \

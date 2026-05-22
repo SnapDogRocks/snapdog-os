@@ -2,4 +2,10 @@ snapdog-ctrl/target/
 snapdog-ctrl/webui/node_modules/
 snapdog-ctrl/webui/.next/
 snapdog-ctrl/webui/out/
+snapdog-ctrl-binary
+buildroot/board/raspberrypi/overlay/usr/bin/snapdog-ctrl
+buildroot/VERSION
+images/
+secrets/
+*.private.pem
 .git/

@@ -1,0 +1,21 @@
+# SnapDog Server Configuration
+# Edit via SnapDog Control (http://snapdog) or manually.
+
+[system]
+log_level = "info"
+
+[audio]
+sample_rate = 48000
+bit_depth = 16
+channels = 2
+source_conflict = "last_wins"
+zone_switch_fade_ms = 300
+source_switch_fade_ms = 300
+
+[snapcast]
+streaming_port = 1704
+codec = "flac"
+group_volume_mode = "relative"
+unknown_clients = "accept"
+mdns_name = "SnapDog"
+managed = true

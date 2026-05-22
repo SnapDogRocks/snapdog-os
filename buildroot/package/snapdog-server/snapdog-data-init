@@ -1,0 +1,77 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 Fabian Schmieder
+#
+# Early boot initialization script for the writeable /data partition.
+# Ensures all persistent files and folders exist on the mount, and copies system default templates if missing.
+
+echo "Initializing snapdog persistent data partition..."
+
+# Create directory structures on /data
+mkdir -p /data/snapdog
+mkdir -p /data/wpa_supplicant
+mkdir -p /data/hostapd
+mkdir -p /data/dnsmasq.d
+mkdir -p /data/systemd/network
+mkdir -p /data/default
+mkdir -p /data/ssh
+mkdir -p /data/systemd/system/updater.timer.d
+mkdir -p /data/systemd/resolved.conf.d
+
+# Set secure permissions for ssh
+chmod 700 /data/ssh
+
+# Copy defaults/templates if missing
+if [ ! -f /data/snapdog/snapdog.toml ]; then
+    echo "Installing default snapdog.toml configuration template"
+    if [ -f /etc/snapdog/snapdog.toml.default ]; then
+        cp /etc/snapdog/snapdog.toml.default /data/snapdog/snapdog.toml
+    fi
+fi
+
+if [ ! -f /data/default/snapdog-client ]; then
+    echo "Installing default snapdog-client configuration template"
+    if [ -f /etc/default/snapdog-client.default ]; then
+        cp /etc/default/snapdog-client.default /data/default/snapdog-client
+    fi
+fi
+
+# Ensure wpa_supplicant config exists
+if [ ! -f /data/wpa_supplicant/wpa_supplicant-wlan0.conf ]; then
+    echo "Creating empty wpa_supplicant-wlan0.conf"
+    echo "ctrl_interface=/var/run/wpa_supplicant" > /data/wpa_supplicant/wpa_supplicant-wlan0.conf
+    echo "update_config=1" >> /data/wpa_supplicant/wpa_supplicant-wlan0.conf
+fi
+
+# Ensure default ethernet network config exists for dhcp out of the box
+if [ ! -f /data/systemd/network/10-ethernet.network ]; then
+    echo "Configuring default DHCP for ethernet"
+    printf "[Match]\nName=eth0 end0\n\n[Network]\nDHCP=yes\n" > /data/systemd/network/10-ethernet.network
+fi
+
+# Ensure hostname config exists
+if [ ! -f /data/hostname ]; then
+    echo "Setting default hostname"
+    echo "snapdog" > /data/hostname
+fi
+
+# Ensure channel config exists
+if [ ! -f /data/snapdog-os.channel ]; then
+    echo "Setting default update channel"
+    echo "stable" > /data/snapdog-os.channel
+fi
+
+# Ensure auto-update config exists
+if [ ! -f /data/snapdog-os.auto-update ]; then
+    echo "Setting default auto-update configuration"
+    printf "enabled=true\ninterval=daily\ntime=03:00\n" > /data/snapdog-os.auto-update
+fi
+
+# Set correct ownership/permissions
+chmod 600 /data/snapdog/snapdog.toml
+chmod 600 /data/wpa_supplicant/wpa_supplicant-wlan0.conf
+chmod 644 /data/hostname
+chmod 644 /data/snapdog-os.channel
+chmod 644 /data/snapdog-os.auto-update
+
+echo "Persistent data initialization complete."

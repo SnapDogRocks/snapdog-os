@@ -52,19 +52,7 @@ else
   unzip -p "$UPDATER" "$ROOTFS_ENTRY" | dd of="$INACTIVE" bs=1048576
 fi
 
-echo "resizing new root file system..."
-case "$FSTYPE" in
-  ext2|ext4)
-    resize2fs "$INACTIVE"
-    ;;
-  f2fs)
-    resize.f2fs "$INACTIVE"
-    ;;
-  *)
-    echo "Unsupported root filesystem: $FSTYPE"
-    exit 1
-    ;;
-esac
+# No resize needed since the system partition is mounted strictly read-only (ro) and runs perfectly at its exact flashed size.
 
 echo "mounting new root file system..."
 mkdir -p /newroot

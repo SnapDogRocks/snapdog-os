@@ -1,0 +1,9 @@
+config BR2_PACKAGE_SNAPDOG_SERVER
+	bool "snapdog-server"
+	help
+	  SnapDog multiroom audio server.
+	  https://github.com/metaneutrons/snapdog
+	depends on BR2_PACKAGE_ALSA_LIB
+	select BR2_PACKAGE_AVAHI
+	select BR2_PACKAGE_AVAHI_DAEMON
+	select BR2_PACKAGE_DBUS

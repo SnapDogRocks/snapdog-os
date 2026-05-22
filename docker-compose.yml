@@ -15,25 +15,25 @@ services:
           git clone --depth 1 --branch 2025.02 https://github.com/buildroot/buildroot /build/buildroot
         fi
         echo '── Inject snapdog-ctrl binary ──'
-        if [ -f /build/snapdog-os/snapdog-ctrl-binary ]; then
-          mkdir -p /build/snapdog-os/buildroot/board/raspberrypi/overlay/usr/bin
-          cp /build/snapdog-os/snapdog-ctrl-binary \
-            /build/snapdog-os/buildroot/board/raspberrypi/overlay/usr/bin/snapdog-ctrl
-          chmod 755 /build/snapdog-os/buildroot/board/raspberrypi/overlay/usr/bin/snapdog-ctrl
-          echo 'Using pre-built snapdog-ctrl binary'
-        else
-          echo 'ERROR: No snapdog-ctrl-binary found. Refusing to build an image without snapdog-ctrl.'
-          exit 1
+        if [ ! -f /build/snapdog-os/snapdog-ctrl-binary ]; then
+          echo 'No snapdog-ctrl-binary found; building it for aarch64...'
+          cd /build/snapdog-os/snapdog-ctrl/webui
+          npm ci
+          npm run build
+          cd /build/snapdog-os/snapdog-ctrl
+          cargo build --locked --release --target aarch64-unknown-linux-gnu
+          cp target/aarch64-unknown-linux-gnu/release/snapdog-ctrl /build/snapdog-os/snapdog-ctrl-binary
         fi
+        mkdir -p /build/snapdog-os/buildroot/board/raspberrypi/overlay/usr/bin
+        cp /build/snapdog-os/snapdog-ctrl-binary /build/snapdog-os/buildroot/board/raspberrypi/overlay/usr/bin/snapdog-ctrl
+        chmod 755 /build/snapdog-os/buildroot/board/raspberrypi/overlay/usr/bin/snapdog-ctrl
+        echo 'Using snapdog-ctrl binary'
 
         echo '── Configure pi4 ──'
         mkdir -p /build/buildroot-pi4
         cd /build/buildroot && make raspberrypi4_64_defconfig
         mv /build/buildroot/.config /build/buildroot-pi4/.config
-        /build/snapdog-os/buildroot/scripts/apply-config-overrides \
-          /build/buildroot-pi4/.config \
-          /build/snapdog-os/buildroot/configs/override.conf \
-          BR2_PACKAGE_SNAPDOG_OS_ALL
+        /build/snapdog-os/buildroot/scripts/apply-config-overrides /build/buildroot-pi4/.config /build/snapdog-os/buildroot/configs/override.conf BR2_PACKAGE_SNAPDOG_OS_ALL
 
         echo '── Build ──'
         cd /build/buildroot

@@ -1,0 +1,14 @@
+[Unit]
+Description=SnapDog Persistent Data Initialization
+DefaultDependencies=no
+After=local-fs.target
+Before=network-pre.target sysinit.target systemd-networkd.service snapdog-ctrl.service snapdog.service snapdog-client.service
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/snapdog-data-init
+
+[Install]
+WantedBy=sysinit.target

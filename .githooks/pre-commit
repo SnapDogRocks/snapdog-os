@@ -1,0 +1,2 @@
+#!/bin/sh
+cd snapdog-ctrl && cargo fmt --check

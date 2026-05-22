@@ -13,7 +13,7 @@ define SNAPDOG_CLIENT_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/snapdog-client \
 		$(TARGET_DIR)/usr/bin/snapdog-client
 	$(INSTALL) -D -m 0644 $(BR2_EXTERNAL_SNAPDOG_PATH)/package/snapdog-client/snapdog-client.default \
-		$(TARGET_DIR)/etc/default/snapdog-client
+		$(TARGET_DIR)/etc/default/snapdog-client.default
 endef
 
 define SNAPDOG_CLIENT_INSTALL_INIT_SYSTEMD

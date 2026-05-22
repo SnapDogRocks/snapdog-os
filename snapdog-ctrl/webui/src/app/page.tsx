@@ -14,11 +14,14 @@ import {
   type AudioConfig,
   type ClientConfig,
   type SshConfig,
+  type ServerConfig,
+  type ServerStatus,
 } from "@/lib/api";
 import { useI18n } from "@/i18n/provider";
 import { locales, type Locale } from "@/i18n/config";
+import { useWebSocket } from "@/hooks/useWebSocket";
 
-type Tab = "dashboard" | "network" | "audio" | "client" | "ssh" | "update" | "system";
+type Tab = "dashboard" | "network" | "audio" | "client" | "server" | "ssh" | "update" | "system";
 
 function StatusDot({ connected, label }: { connected: boolean; label: string }) {
   return (
@@ -57,6 +60,35 @@ function Field({ label, htmlFor, children }: { label: string; htmlFor?: string; 
   );
 }
 
+const DEFAULT_SERVER_CONFIG: ServerConfig = {
+  audio: {
+    sample_rate: 44100,
+    bit_depth: 16,
+    channels: 2,
+    source_conflict: "last_wins",
+    zone_switch_fade_ms: 0,
+    source_switch_fade_ms: 0,
+  },
+  snapcast: {
+    streaming_port: 1704,
+    codec: "flac",
+    encryption_psk: null,
+    group_volume_mode: "relative",
+    unknown_clients: "accept",
+    default_zone: "Default",
+    mdns_name: "SnapDog",
+  },
+  subsonic: null,
+  spotify: null,
+  airplay: null,
+  mqtt: null,
+  knx: null,
+  zones: [{ name: "Default", icon: "🔊" }],
+  clients: [],
+  radio: [],
+  system: { log_level: "info" },
+};
+
 // ── Dashboard Tab ─────────────────────────────────────────────
 
 function DashboardTab() {
@@ -86,7 +118,7 @@ function DashboardTab() {
         <dd className="font-mono text-xs">
           <span>{info.version || "—"}</span>
           <div className="mt-1 text-[10px] text-muted-foreground">
-            Client {info.components.client} · Ctrl {info.components.ctrl} · Kernel {info.components.kernel}
+            Client {info.components.client} · Server {info.components.server} · Ctrl {info.components.ctrl} · Kernel {info.components.kernel}
           </div>
         </dd>
         <dt className="text-muted-foreground">{t("network")}</dt>
@@ -311,6 +343,10 @@ function AudioTab() {
     api.getAudio().then(setConfig).catch(() => {});
   }, []);
 
+  useWebSocket("audio_changed", useCallback(() => {
+    api.getAudio().then(setConfig).catch(() => {});
+  }, []));
+
   if (!config) return <Skeleton className="h-32 w-full" aria-label={t("loading")} />;
 
   return (
@@ -349,11 +385,17 @@ function ClientTab() {
   const [manualHost, setManualHost] = useState("");
   const [manualPort, setManualPort] = useState("1704");
   const [saving, setSaving] = useState(false);
+  const [clientEnabled, setClientEnabled] = useState(true);
+  const [serverRunning, setServerRunning] = useState(false);
+  const [connectionMode, setConnectionMode] = useState<"auto" | "manual">("auto");
+  const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "failed">("idle");
+  
   const hostIdFieldId = useId();
   const soundcardId = useId();
   const mixerId = useId();
   const latencyId = useId();
   const cardId = useId();
+  const enableId = useId();
 
   const scanForServers = useCallback(() => {
     setScanning(true);
@@ -361,29 +403,91 @@ function ClientTab() {
   }, []);
 
   useEffect(() => {
-    api.getClient().then((c) => {
-      setConfig(c);
-      if (c.available_soundcards) setSoundcards(c.available_soundcards);
-      // Parse existing manual URL
-      const match = c.server_url.match(/^tcp:\/\/(.+):(\d+)$/);
-      if (match) { setManualHost(match[1]); setManualPort(match[2]); }
+    Promise.all([api.getClient(), api.scanServers()])
+      .then(([c, r]) => {
+        setConfig(c);
+        if (c.available_soundcards) setSoundcards(c.available_soundcards);
+        setServers(r.servers);
+        
+        // Smart mode detection
+        if (c.server_url && c.server_url !== "__disabled__") {
+          const match = c.server_url.match(/^tcp:\/\/(.+):(\d+)$/);
+          if (match) {
+            const host = match[1];
+            const port = match[2];
+            setManualHost(host);
+            setManualPort(port);
+            const isDiscovered = r.servers.some((s) => s.host === host && s.port === Number(port));
+            setConnectionMode(isDiscovered ? "auto" : "manual");
+          } else {
+            setConnectionMode("manual");
+          }
+        } else {
+          setConnectionMode("auto");
+        }
+      })
+      .catch(() => {
+        // Resilient fallback in case Promise.all fails
+        api.getClient().then((c) => {
+          setConfig(c);
+          if (c.available_soundcards) setSoundcards(c.available_soundcards);
+          setConnectionMode(c.server_url ? "manual" : "auto");
+          const match = c.server_url.match(/^tcp:\/\/(.+):(\d+)$/);
+          if (match) {
+            setManualHost(match[1]);
+            setManualPort(match[2]);
+          }
+        }).catch(() => {});
+      })
+      .finally(() => setScanning(false));
+
+    api.getServerStatus().then((s) => {
+      setServerRunning(s.running);
     }).catch(() => {});
-    api.scanServers().then((r) => setServers(r.servers)).catch(() => {}).finally(() => setScanning(false));
   }, []);
 
+  useWebSocket("client_changed", useCallback(() => {
+    api.getClient().then((c) => {
+      setConfig(c);
+      setClientEnabled(c.server_url !== "__disabled__");
+      if (c.available_soundcards) setSoundcards(c.available_soundcards);
+    }).catch(() => {});
+  }, []));
+
   const selectServer = (url: string) => {
-    setConfig({ ...config, server_url: url });
-    setManualHost("");
-    setManualPort("1704");
+    setConfig((prev) => ({ ...prev, server_url: url }));
   };
 
-  const selectedUrl = manualHost ? `tcp://${manualHost}:${manualPort}` : config.server_url;
+  const handleManualHostChange = (val: string) => {
+    setManualHost(val);
+    setTestStatus("idle");
+  };
+
+  const handleManualPortChange = (val: string) => {
+    setManualPort(val);
+    setTestStatus("idle");
+  };
+
+  const testManualConnection = async () => {
+    if (!manualHost) return;
+    setTestStatus("testing");
+    try {
+      const port = Number(manualPort) || 1704;
+      const res = await api.testServer(manualHost, port);
+      setTestStatus(res.reachable ? "success" : "failed");
+    } catch {
+      setTestStatus("failed");
+    }
+  };
 
   const saveConfig = useCallback(async () => {
-    const url = manualHost ? `tcp://${manualHost}:${manualPort}` : config.server_url;
+    const url = connectionMode === "manual"
+      ? (manualHost ? `tcp://${manualHost}:${manualPort}` : "")
+      : config.server_url;
+
     if (url) {
-      const host = manualHost || url.replace(/^tcp:\/\//, "").split(":")[0];
-      const port = Number(manualPort) || 1704;
+      const host = connectionMode === "manual" ? manualHost : url.replace(/^tcp:\/\//, "").split(":")[0];
+      const port = connectionMode === "manual" ? Number(manualPort) : (Number(url.replace(/^tcp:\/\//, "").split(":")[1]) || 1704);
       setSaving(true);
       try {
         const result = await api.testServer(host, port);
@@ -392,98 +496,307 @@ function ClientTab() {
         if (!window.confirm(t("serverTestFailed"))) { setSaving(false); return; }
       }
     }
-    await api.setClient({ ...config, server_url: manualHost ? `tcp://${manualHost}:${manualPort}` : config.server_url });
-    setSaving(false);
-  }, [config, manualHost, manualPort, t]);
+
+    setSaving(true);
+    try {
+      await api.setClient({ ...config, server_url: url });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSaving(false);
+    }
+  }, [config, connectionMode, manualHost, manualPort, t]);
 
   return (
     <Card title={t("title")} id={cardId}>
       <div className="space-y-4">
-        {/* Server selection — Apple-style list */}
-        <div>
-          <div className="mb-1.5 flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">{t("server")}</span>
-            <button type="button" onClick={scanForServers} disabled={scanning} className="text-xs text-primary hover:underline disabled:opacity-50">
-              {scanning ? t("scanning") : t("scanServers")}
-            </button>
-          </div>
-          <div className="overflow-hidden rounded-xl border border-border">
-            {/* Auto option */}
-            <button
-              type="button"
-              className={`flex w-full items-center justify-between border-b border-border px-3 py-2.5 text-left text-sm transition-colors ${!selectedUrl ? "bg-primary/10 font-medium" : "hover:bg-muted"}`}
-              onClick={() => selectServer("")}
-            >
-              <span>{t("autoDiscover")}</span>
-              {!selectedUrl && <span className="text-primary">✓</span>}
-            </button>
-            {/* Discovered servers */}
-            {servers.map((s) => {
-              const url = `tcp://${s.host}:${s.port}`;
-              const isSelected = selectedUrl === url;
-              return (
-                <button
-                  key={s.host}
-                  type="button"
-                  className={`flex w-full items-center justify-between border-b border-border px-3 py-2.5 text-left text-sm transition-colors ${isSelected ? "bg-primary/10 font-medium" : "hover:bg-muted"}`}
-                  onClick={() => selectServer(url)}
-                >
-                  <div>
-                    <span>{s.name}</span>
-                    <span className="ml-2 text-xs text-muted-foreground">{s.host}</span>
-                  </div>
-                  {isSelected && <span className="text-primary">✓</span>}
-                </button>
-              );
-            })}
-            {/* Manual entry — always visible at bottom */}
-            <div className="flex items-center gap-2 px-3 py-2.5">
-              <Input
-                value={manualHost}
-                onChange={(e) => { setManualHost(e.target.value); if (e.target.value) setConfig({ ...config, server_url: "" }); }}
-                placeholder={t("manualPlaceholder")}
-                className="h-7 flex-1 text-sm"
-                aria-label={t("serverAddress")}
-              />
-              <span className="text-xs text-muted-foreground">:</span>
-              <Input
-                value={manualPort}
-                onChange={(e) => setManualPort(e.target.value)}
-                className="h-7 w-16 text-sm"
-                aria-label={t("port")}
-              />
-            </div>
-          </div>
+        {/* Enable/disable client */}
+        <div className="flex items-center justify-between">
+          <label htmlFor={enableId} className="text-sm font-medium">{t("enableClient")}</label>
+          <Switch id={enableId} checked={clientEnabled} onCheckedChange={async (checked) => {
+            setClientEnabled(checked);
+            try {
+              if (checked) { await api.setClient(config); } else { await api.setClient({ ...config, server_url: "__disabled__" }); }
+            } catch { setClientEnabled(!checked); }
+          }} />
         </div>
 
-        <Field label={t("hostId")} htmlFor={hostIdFieldId}>
-          <Input id={hostIdFieldId} value={config.host_id} onChange={(e) => setConfig({ ...config, host_id: e.target.value })} placeholder="kitchen" />
-        </Field>
-        <Field label={t("soundcard")} htmlFor={soundcardId}>
-          {soundcards.length > 0 ? (
-            <Select id={soundcardId} value={config.soundcard} onChange={(e) => setConfig({ ...config, soundcard: e.target.value })}>
-              <option value="default">{t("defaultSoundcard")}</option>
-              {soundcards.map((sc, i) => (<option key={i} value={`hw:${i}`}>{sc}</option>))}
-            </Select>
-          ) : (
-            <Input id={soundcardId} value={config.soundcard} onChange={(e) => setConfig({ ...config, soundcard: e.target.value })} placeholder="default" />
-          )}
-        </Field>
-        <Field label={t("mixer")} htmlFor={mixerId}>
-          <Select id={mixerId} value={config.mixer} onChange={(e) => setConfig({ ...config, mixer: e.target.value })}>
-            <option value="software">{t("mixerSoftware")}</option>
-            <option value="hardware">{t("mixerHardware")}</option>
-            <option value="midi">{t("mixerMidi")}</option>
-            <option value="none">{t("mixerNone")}</option>
-          </Select>
-        </Field>
-        <Field label={t("latency")} htmlFor={latencyId}>
-          <Input id={latencyId} type="number" inputMode="numeric" min={0} value={config.latency} onChange={(e) => setConfig({ ...config, latency: Number(e.target.value) })} />
-          <p className="text-xs text-muted-foreground">{t("latencyHint")}</p>
-        </Field>
-        <Button size="sm" onClick={saveConfig} disabled={saving}>
-          {saving ? t("testing") : t("save")}
-        </Button>
+        {serverRunning && !config.server_url && clientEnabled && (
+          <div className="rounded-lg bg-primary/10 p-3 text-xs text-muted-foreground">
+            {t("localServerHint")}
+          </div>
+        )}
+
+        {clientEnabled && (
+          <>
+            {/* Connection Mode Segmented Toggle */}
+            <div className="mb-4">
+              <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">{t("connectionMode")}</label>
+              <div className="relative flex rounded-xl bg-muted p-1">
+                {/* Active Highlight Slider */}
+                <div
+                  className="absolute top-1 bottom-1 rounded-lg bg-card shadow-xs transition-all duration-300 ease-out"
+                  style={{
+                    left: connectionMode === "auto" ? "4px" : "50%",
+                    width: "calc(50% - 6px)",
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setConnectionMode("auto")}
+                  className={`relative z-10 flex flex-1 items-center justify-center gap-2 py-2 text-sm font-semibold transition-colors ${
+                    connectionMode === "auto" ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <svg className="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  <span>{t("connectionModeAuto")}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConnectionMode("manual")}
+                  className={`relative z-10 flex flex-1 items-center justify-center gap-2 py-2 text-sm font-semibold transition-colors ${
+                    connectionMode === "manual" ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <svg className="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066-1.543.94-3.31-.826-2.37-2.37 1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  <span>{t("connectionModeManual")}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Panel 1: Automatic Discovery */}
+            {connectionMode === "auto" && (
+              <div className="space-y-3 animate-in fade-in duration-200">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{t("server")}</span>
+                  <button
+                    type="button"
+                    onClick={scanForServers}
+                    disabled={scanning}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80 disabled:opacity-50"
+                  >
+                    {scanning ? (
+                      <>
+                        <svg className="size-3.5 animate-spin text-primary" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        <span>{t("scanning")}</span>
+                      </>
+                    ) : (
+                      <>
+                        <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H17" />
+                        </svg>
+                        <span>{t("scanServers")}</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                <div className="overflow-hidden rounded-xl border border-border bg-muted/10 shadow-xs">
+                  {/* Zero-Config Auto Option */}
+                  <button
+                    type="button"
+                    className={`relative flex w-full flex-col border-b border-border p-3.5 text-left transition-all ${
+                      !config.server_url
+                        ? "bg-primary/5 shadow-inner"
+                        : "hover:bg-muted/40"
+                    }`}
+                    onClick={() => selectServer("")}
+                  >
+                    <div className="flex w-full items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        {/* Animated Beacon/Radar Pulse Icon */}
+                        <div className="relative flex size-3">
+                          <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${!config.server_url ? "bg-primary" : "bg-muted-foreground/40"}`} />
+                          <span className={`relative inline-flex size-3 rounded-full ${!config.server_url ? "bg-primary" : "bg-muted-foreground/60"}`} />
+                        </div>
+                        <span className={`text-sm font-semibold transition-colors ${!config.server_url ? "text-primary" : "text-foreground"}`}>
+                          {t("autoConnectOption")}
+                        </span>
+                      </div>
+                      {!config.server_url && (
+                        <span className="flex size-5 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-bold animate-in zoom-in duration-200">✓</span>
+                      )}
+                    </div>
+                    <p className="mt-1 pl-5.5 text-xs text-muted-foreground">
+                      {t("autoConnectDesc")}
+                    </p>
+                  </button>
+
+                  {/* Discovered Servers List */}
+                  {servers.length > 0 ? (
+                    servers.map((s, idx) => {
+                      const url = `tcp://${s.host}:${s.port}`;
+                      const isSelected = config.server_url === url;
+                      return (
+                        <button
+                          key={s.host}
+                          type="button"
+                          className={`flex w-full items-center justify-between p-3.5 text-left transition-all ${
+                            idx !== servers.length - 1 ? "border-b border-border" : ""
+                          } ${isSelected ? "bg-primary/5 font-semibold shadow-inner" : "hover:bg-muted/40"}`}
+                          onClick={() => selectServer(url)}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className={`flex size-8 items-center justify-center rounded-lg ${isSelected ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
+                              <svg className="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
+                              </svg>
+                            </div>
+                            <div>
+                              <span className={`text-sm font-semibold transition-colors ${isSelected ? "text-primary" : "text-foreground"}`}>
+                                {s.name}
+                              </span>
+                              <span className="ml-2 font-mono text-xs text-muted-foreground">{s.host}:{s.port}</span>
+                            </div>
+                          </div>
+                          {isSelected && (
+                            <span className="flex size-5 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-bold animate-in zoom-in duration-200">✓</span>
+                          )}
+                        </button>
+                      );
+                    })
+                  ) : (
+                    !scanning && (
+                      <div className="flex flex-col items-center justify-center p-6 text-center text-muted-foreground animate-in fade-in duration-200">
+                        <svg className="mb-2 size-8 text-muted-foreground/40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                        <p className="text-xs">{t("noServersFound")}</p>
+                      </div>
+                    )
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Panel 2: Manual Configuration */}
+            {connectionMode === "manual" && (
+              <div className="space-y-3.5 animate-in fade-in duration-200">
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{t("manualSettings")}</span>
+                
+                <div className="rounded-xl border border-border bg-muted/5 p-4 shadow-xs space-y-4">
+                  <div className="flex gap-3">
+                    <div className="flex-1 space-y-1.5">
+                      <label className="text-xs font-medium text-muted-foreground" htmlFor="manual-host">{t("serverAddress")}</label>
+                      <Input
+                        id="manual-host"
+                        value={manualHost}
+                        onChange={(e) => handleManualHostChange(e.target.value)}
+                        placeholder={t("manualPlaceholder")}
+                        className="h-10 text-sm"
+                        aria-label={t("serverAddress")}
+                      />
+                    </div>
+                    
+                    <div className="w-24 space-y-1.5">
+                      <label className="text-xs font-medium text-muted-foreground" htmlFor="manual-port">{t("port")}</label>
+                      <Input
+                        id="manual-port"
+                        value={manualPort}
+                        onChange={(e) => handleManualPortChange(e.target.value)}
+                        className="h-10 text-sm font-mono text-center"
+                        aria-label={t("port")}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Computed Connection String and Test Button */}
+                  {manualHost && (
+                    <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between rounded-lg bg-muted/30 p-3 border border-border/50 animate-in slide-in-from-top-2 duration-200">
+                      <div className="space-y-0.5">
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Target URL</span>
+                        <div className="font-mono text-xs text-foreground bg-background px-2.5 py-1.5 rounded border border-border/70 shadow-xs">
+                          tcp://{manualHost}:{manualPort || "1704"}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 self-end sm:self-auto">
+                        {testStatus === "success" && (
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-500 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20 animate-in zoom-in duration-200">
+                            <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                            </svg>
+                            <span>{t("connectionSuccess")}</span>
+                          </span>
+                        )}
+                        {testStatus === "failed" && (
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-500 bg-rose-500/10 px-2.5 py-1 rounded-full border border-rose-500/20 animate-in zoom-in duration-200">
+                            <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                            <span>{t("connectionFailed")}</span>
+                          </span>
+                        )}
+                        
+                        <Button
+                          size="sm"
+                          type="button"
+                          variant="outline"
+                          onClick={testManualConnection}
+                          disabled={testStatus === "testing"}
+                          className="h-8 text-xs px-3 shadow-xs"
+                        >
+                          {testStatus === "testing" ? (
+                            <>
+                              <svg className="size-3 animate-spin mr-1.5 text-foreground" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                              </svg>
+                              <span>{t("testingConnection")}</span>
+                            </>
+                          ) : (
+                            t("testConnection")
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <Field label={t("hostId")} htmlFor={hostIdFieldId}>
+              <Input id={hostIdFieldId} value={config.host_id} onChange={(e) => setConfig({ ...config, host_id: e.target.value })} placeholder="kitchen" />
+            </Field>
+            
+            <Field label={t("soundcard")} htmlFor={soundcardId}>
+              {soundcards.length > 0 ? (
+                <Select id={soundcardId} value={config.soundcard} onChange={(e) => setConfig({ ...config, soundcard: e.target.value })}>
+                  <option value="default">{t("defaultSoundcard")}</option>
+                  {soundcards.map((sc, i) => (<option key={i} value={`hw:${i}`}>{sc}</option>))}
+                </Select>
+              ) : (
+                <Input id={soundcardId} value={config.soundcard} onChange={(e) => setConfig({ ...config, soundcard: e.target.value })} placeholder="default" />
+              )}
+            </Field>
+            
+            <Field label={t("mixer")} htmlFor={mixerId}>
+              <Select id={mixerId} value={config.mixer} onChange={(e) => setConfig({ ...config, mixer: e.target.value })}>
+                <option value="software">{t("mixerSoftware")}</option>
+                <option value="hardware">{t("mixerHardware")}</option>
+                <option value="midi">{t("mixerMidi")}</option>
+                <option value="none">{t("mixerNone")}</option>
+              </Select>
+            </Field>
+            
+            <Field label={t("latency")} htmlFor={latencyId}>
+              <Input id={latencyId} type="number" inputMode="numeric" min={0} value={config.latency} onChange={(e) => setConfig({ ...config, latency: Number(e.target.value) })} />
+              <p className="text-xs text-muted-foreground">{t("latencyHint")}</p>
+            </Field>
+            
+            <Button size="sm" onClick={saveConfig} disabled={saving}>
+              {saving ? t("testing") : t("save")}
+            </Button>
+          </>
+        )}
       </div>
     </Card>
   );
@@ -577,24 +890,37 @@ function LogsCard() {
   const t = useTranslations("system");
   const [logs, setLogs] = useState<string[]>([]);
   const [expanded, setExpanded] = useState(false);
+  const [filter, setFilter] = useState("all");
   const cardId = useId();
+  const filterId = useId();
 
   const fetchLogs = useCallback(() => {
-    fetch("/api/system/logs").then(r => r.json()).then((data) => {
+    const url = filter === "all" ? "/api/system/logs" : `/api/system/logs?service=${filter}`;
+    fetch(url).then(r => r.json()).then((data) => {
       setLogs(data.lines || []);
     }).catch(() => {});
-  }, []);
+  }, [filter]);
 
   useEffect(() => { fetchLogs(); }, [fetchLogs]);
 
   return (
     <Card title={t("logs")} id={cardId}>
       <div className="space-y-2">
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={fetchLogs}>{t("refreshLogs")}</Button>
-          <Button variant="outline" size="sm" onClick={() => setExpanded(!expanded)}>
-            {expanded ? t("collapseLogs") : t("expandLogs")}
-          </Button>
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={fetchLogs}>{t("refreshLogs")}</Button>
+            <Button variant="outline" size="sm" onClick={() => setExpanded(!expanded)}>
+              {expanded ? t("collapseLogs") : t("expandLogs")}
+            </Button>
+          </div>
+          <div className="flex-1 min-w-[200px]">
+            <Select id={filterId} value={filter} onChange={(e) => setFilter(e.target.value)}>
+              <option value="all">{t("logAll")}</option>
+              <option value="server">{t("logServer")}</option>
+              <option value="client">{t("logClient")}</option>
+              <option value="controller">{t("logController")}</option>
+            </Select>
+          </div>
         </div>
         <pre
           className={`overflow-x-auto rounded-lg bg-muted p-3 font-mono text-[10px] leading-tight text-muted-foreground ${expanded ? "max-h-96" : "max-h-32"} overflow-y-auto`}
@@ -802,14 +1128,513 @@ function SystemTab() {
 }
 
 
+// ── Server Tab ────────────────────────────────────────────────
+
+type ServerSubTab = "audio" | "sources" | "zones" | "integrations";
+
+function Stepper({ value, onChange, min, max, step, suffix }: { value: number; onChange: (v: number) => void; min: number; max: number; step: number; suffix?: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <Button variant="outline" size="icon-xs" onClick={() => onChange(Math.max(min, value - step))} disabled={value <= min}>−</Button>
+      <span className="w-16 text-center text-sm font-mono">{value}{suffix}</span>
+      <Button variant="outline" size="icon-xs" onClick={() => onChange(Math.min(max, value + step))} disabled={value >= max}>+</Button>
+    </div>
+  );
+}
+
+function ServerTab() {
+  const t = useTranslations("server");
+  const [status, setStatus] = useState<ServerStatus | null>(null);
+  const [config, setConfig] = useState<ServerConfig | null>(null);
+  const [subTab, setSubTab] = useState<ServerSubTab>("audio");
+  const [saved, setSaved] = useState(false);
+  const cardId = useId();
+
+  useEffect(() => {
+    api.getServerStatus().then(setStatus).catch(() => setStatus({ enabled: false, running: false }));
+    api.getServer().then(setConfig).catch(() => setConfig(DEFAULT_SERVER_CONFIG));
+  }, []);
+
+  useWebSocket("server_changed", useCallback(() => {
+    api.getServerStatus().then(setStatus).catch(() => {});
+    api.getServer().then(setConfig).catch(() => {});
+  }, []));
+
+  const toggle = async (enabled: boolean) => {
+    const prev = status;
+    setStatus((s) => s ? { ...s, enabled, running: enabled } : { enabled, running: enabled });
+    try {
+      if (enabled) { await api.enableServer(); } else { await api.disableServer(); }
+    } catch { setStatus(prev); }
+  };
+
+  const save = async () => {
+    if (!config) return;
+    await api.setServer(config);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  const SUB_TABS: { id: ServerSubTab; label: string }[] = [
+    { id: "audio", label: t("subtabAudio") },
+    { id: "sources", label: t("subtabSources") },
+    { id: "zones", label: t("subtabZones") },
+    { id: "integrations", label: t("subtabIntegrations") },
+  ];
+
+  if (!status || !config) return <Skeleton className="h-40 w-full" />;
+
+  return (
+    <Card title={t("title")} id={cardId}>
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <span className="text-sm">{t("enable")}</span>
+            <p className="text-xs text-muted-foreground">{t("enableDescription")}</p>
+          </div>
+          <Switch checked={status.enabled} onCheckedChange={toggle} aria-label={t("enable")} />
+        </div>
+
+        {status.enabled && (
+          <a
+            href={`http://${typeof window !== "undefined" ? window.location.hostname : "localhost"}:5555`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-xs text-primary underline-offset-4 hover:underline"
+          >
+            {t("openWebui")} ↗
+          </a>
+        )}
+
+
+        {status.enabled && (
+          <>
+            <div className="flex gap-1 rounded-lg bg-muted p-1">
+              {SUB_TABS.map((st) => (
+                <button
+                  key={st.id}
+                  type="button"
+                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${subTab === st.id ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                  onClick={() => setSubTab(st.id)}
+                >
+                  {st.label}
+                </button>
+              ))}
+            </div>
+
+            {subTab === "audio" && <ServerAudioSubTab config={config} setConfig={setConfig} />}
+            {subTab === "sources" && <ServerSourcesSubTab config={config} setConfig={setConfig} />}
+            {subTab === "zones" && <ServerZonesSubTab config={config} setConfig={setConfig} />}
+            {subTab === "integrations" && <ServerIntegrationsSubTab config={config} setConfig={setConfig} />}
+
+            <div className="flex items-center gap-3 border-t border-border pt-3">
+              <Button size="sm" onClick={save}>{t("save")}</Button>
+              {saved && <span className="text-xs text-green-600">{t("saved")}</span>}
+            </div>
+          </>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function ServerAudioSubTab({ config, setConfig }: { config: ServerConfig; setConfig: (c: ServerConfig) => void }) {
+  const t = useTranslations("server");
+  const nameId = useId();
+  const portId = useId();
+  const codecId = useId();
+  const pskId = useId();
+  const sampleRateId = useId();
+  const bitDepthId = useId();
+  const sourceConflictId = useId();
+  const groupVolumeId = useId();
+  const unknownClientsId = useId();
+  const defaultZoneId = useId();
+  const logLevelId = useId();
+
+  const update = (path: string, value: unknown) => {
+    const c = structuredClone(config);
+    const parts = path.split(".");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let obj: any = c;
+    for (let i = 0; i < parts.length - 1; i++) obj = obj[parts[i]];
+    obj[parts[parts.length - 1]] = value;
+    setConfig(c);
+  };
+
+  return (
+    <div className="space-y-3">
+      <Field label={t("name")} htmlFor={nameId}>
+        <Input id={nameId} value={config.snapcast.mdns_name} onChange={(e) => update("snapcast.mdns_name", e.target.value)} />
+      </Field>
+      <Field label={t("port")} htmlFor={portId}>
+        <Input id={portId} type="number" value={config.snapcast.streaming_port} onChange={(e) => update("snapcast.streaming_port", Number(e.target.value))} />
+      </Field>
+      <Field label={t("codec")} htmlFor={codecId}>
+        <Select id={codecId} value={config.snapcast.codec} onChange={(e) => update("snapcast.codec", e.target.value)}>
+          <option value="PCM">PCM</option>
+          <option value="FLAC">FLAC</option>
+          <option value="f32lz4">f32lz4</option>
+          <option value="f32lz4e">f32lz4e</option>
+        </Select>
+      </Field>
+      {config.snapcast.codec === "f32lz4e" && (
+        <Field label={t("psk")} htmlFor={pskId}>
+          <Input id={pskId} value={config.snapcast.encryption_psk ?? ""} onChange={(e) => update("snapcast.encryption_psk", e.target.value || null)} />
+        </Field>
+      )}
+      <Field label={t("sampleRate")} htmlFor={sampleRateId}>
+        <Select id={sampleRateId} value={String(config.audio.sample_rate)} onChange={(e) => update("audio.sample_rate", Number(e.target.value))}>
+          <option value="44100">44100</option>
+          <option value="48000">48000</option>
+          <option value="96000">96000</option>
+        </Select>
+      </Field>
+      <Field label={t("bitDepth")} htmlFor={bitDepthId}>
+        <Select id={bitDepthId} value={String(config.audio.bit_depth)} onChange={(e) => update("audio.bit_depth", Number(e.target.value))}>
+          <option value="16">16</option>
+          <option value="24">24</option>
+          <option value="32">32</option>
+        </Select>
+      </Field>
+      <Field label={t("sourceConflict")} htmlFor={sourceConflictId}>
+        <Select id={sourceConflictId} value={config.audio.source_conflict} onChange={(e) => update("audio.source_conflict", e.target.value)}>
+          <option value="last_wins">{t("lastWins")}</option>
+          <option value="receiver_wins">{t("receiverWins")}</option>
+        </Select>
+      </Field>
+      <Field label={t("zoneSwitchFade")}>
+        <Stepper value={config.audio.zone_switch_fade_ms} onChange={(v) => update("audio.zone_switch_fade_ms", v)} min={0} max={500} step={50} suffix="ms" />
+      </Field>
+      <Field label={t("sourceSwitchFade")}>
+        <Stepper value={config.audio.source_switch_fade_ms} onChange={(v) => update("audio.source_switch_fade_ms", v)} min={0} max={500} step={50} suffix="ms" />
+      </Field>
+      <Field label={t("groupVolume")} htmlFor={groupVolumeId}>
+        <Select id={groupVolumeId} value={config.snapcast.group_volume_mode} onChange={(e) => update("snapcast.group_volume_mode", e.target.value)}>
+          <option value="relative">{t("relative")}</option>
+          <option value="absolute">{t("absolute")}</option>
+        </Select>
+      </Field>
+      <Field label={t("unknownClients")} htmlFor={unknownClientsId}>
+        <Select id={unknownClientsId} value={config.snapcast.unknown_clients} onChange={(e) => update("snapcast.unknown_clients", e.target.value)}>
+          <option value="accept">{t("accept")}</option>
+          <option value="ignore">{t("ignore")}</option>
+          <option value="reject">{t("reject")}</option>
+        </Select>
+      </Field>
+      <Field label={t("defaultZone")} htmlFor={defaultZoneId}>
+        <Select id={defaultZoneId} value={config.snapcast.default_zone} onChange={(e) => update("snapcast.default_zone", e.target.value)}>
+          {config.zones.map((z) => <option key={z.name} value={z.name}>{z.name}</option>)}
+        </Select>
+      </Field>
+      <Field label={t("logLevel")} htmlFor={logLevelId}>
+        <Select id={logLevelId} value={config.system.log_level} onChange={(e) => update("system.log_level", e.target.value)}>
+          <option value="error">error</option>
+          <option value="warn">warn</option>
+          <option value="info">info</option>
+          <option value="debug">debug</option>
+        </Select>
+      </Field>
+    </div>
+  );
+}
+
+function ServerSourcesSubTab({ config, setConfig }: { config: ServerConfig; setConfig: (c: ServerConfig) => void }) {
+  const t = useTranslations("server");
+  const subUrlId = useId();
+  const subUserId = useId();
+  const subPassId = useId();
+  const spotNameId = useId();
+  const spotBitrateId = useId();
+  const airPassId = useId();
+
+  const toggleSubsonic = (on: boolean) => {
+    const c = structuredClone(config);
+    c.subsonic = on ? { url: "", username: "", password: "" } : null;
+    setConfig(c);
+  };
+  const toggleSpotify = (on: boolean) => {
+    const c = structuredClone(config);
+    c.spotify = on ? { name: "SnapDog", bitrate: 320 } : null;
+    setConfig(c);
+  };
+  const toggleAirplay = (on: boolean) => {
+    const c = structuredClone(config);
+    c.airplay = on ? { password: null } : null;
+    setConfig(c);
+  };
+
+  const updateSub = (key: string, value: string) => {
+    const c = structuredClone(config);
+    if (c.subsonic) (c.subsonic as Record<string, string>)[key] = value;
+    setConfig(c);
+  };
+  const updateSpot = (key: string, value: string | number) => {
+    const c = structuredClone(config);
+    if (c.spotify) (c.spotify as Record<string, string | number>)[key] = value;
+    setConfig(c);
+  };
+
+  const addRadio = () => {
+    const c = structuredClone(config);
+    c.radio.push({ name: "", url: "", cover: null });
+    setConfig(c);
+  };
+  const removeRadio = (i: number) => {
+    const c = structuredClone(config);
+    c.radio.splice(i, 1);
+    setConfig(c);
+  };
+  const updateRadio = (i: number, key: string, value: string) => {
+    const c = structuredClone(config);
+    (c.radio[i] as Record<string, string | null>)[key] = value;
+    setConfig(c);
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Subsonic */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium">{t("subsonic")}</span>
+          <Switch checked={config.subsonic !== null} onCheckedChange={toggleSubsonic} aria-label={t("subsonic")} />
+        </div>
+        {config.subsonic && (
+          <div className="space-y-2 pl-2 border-l-2 border-border">
+            <Field label={t("url")} htmlFor={subUrlId}><Input id={subUrlId} value={config.subsonic.url} onChange={(e) => updateSub("url", e.target.value)} /></Field>
+            <Field label={t("username")} htmlFor={subUserId}><Input id={subUserId} value={config.subsonic.username} onChange={(e) => updateSub("username", e.target.value)} /></Field>
+            <Field label={t("password")} htmlFor={subPassId}><Input id={subPassId} type="password" value={config.subsonic.password} onChange={(e) => updateSub("password", e.target.value)} /></Field>
+          </div>
+        )}
+      </div>
+      {/* Spotify */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium">{t("spotify")}</span>
+          <Switch checked={config.spotify !== null} onCheckedChange={toggleSpotify} aria-label={t("spotify")} />
+        </div>
+        {config.spotify && (
+          <div className="space-y-2 pl-2 border-l-2 border-border">
+            <Field label={t("name")} htmlFor={spotNameId}><Input id={spotNameId} value={config.spotify.name} onChange={(e) => updateSpot("name", e.target.value)} /></Field>
+            <Field label={t("bitrate")} htmlFor={spotBitrateId}>
+              <Select id={spotBitrateId} value={String(config.spotify.bitrate)} onChange={(e) => updateSpot("bitrate", Number(e.target.value))}>
+                <option value="96">96</option><option value="160">160</option><option value="320">320</option>
+              </Select>
+            </Field>
+          </div>
+        )}
+      </div>
+      {/* AirPlay */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium">{t("airplay")}</span>
+          <Switch checked={config.airplay !== null} onCheckedChange={toggleAirplay} aria-label={t("airplay")} />
+        </div>
+        {config.airplay && (
+          <div className="space-y-2 pl-2 border-l-2 border-border">
+            <Field label={t("password")} htmlFor={airPassId}><Input id={airPassId} value={config.airplay.password ?? ""} onChange={(e) => { const c = structuredClone(config); c.airplay = { password: e.target.value || null }; setConfig(c); }} /></Field>
+          </div>
+        )}
+      </div>
+      {/* Radio */}
+      <div className="space-y-2">
+        <span className="text-sm font-medium">{t("radio")}</span>
+        {config.radio.map((r, i) => (
+          <div key={i} className="flex items-end gap-2">
+            <div className="flex-1 space-y-1">
+              <Input placeholder={t("stationName")} value={r.name} onChange={(e) => updateRadio(i, "name", e.target.value)} aria-label={`${t("stationName")} ${i + 1}`} />
+              <Input placeholder={t("stationUrl")} value={r.url} onChange={(e) => updateRadio(i, "url", e.target.value)} aria-label={`${t("stationUrl")} ${i + 1}`} />
+            </div>
+            <Button variant="outline" size="icon-xs" onClick={() => removeRadio(i)} aria-label="Remove">×</Button>
+          </div>
+        ))}
+        <Button variant="outline" size="xs" onClick={addRadio}>{t("addStation")}</Button>
+      </div>
+    </div>
+  );
+}
+
+function ServerZonesSubTab({ config, setConfig }: { config: ServerConfig; setConfig: (c: ServerConfig) => void }) {
+  const t = useTranslations("server");
+
+  const addZone = () => { const c = structuredClone(config); c.zones.push({ name: "", icon: "🔊" }); setConfig(c); };
+  const removeZone = (i: number) => { const c = structuredClone(config); c.zones.splice(i, 1); setConfig(c); };
+  const updateZone = (i: number, key: string, value: string) => { const c = structuredClone(config); (c.zones[i] as Record<string, string>)[key] = value; setConfig(c); };
+
+  const addClient = () => { const c = structuredClone(config); c.clients.push({ name: "", mac: "", zone: config.zones[0]?.name ?? "" }); setConfig(c); };
+  const removeClient = (i: number) => { const c = structuredClone(config); c.clients.splice(i, 1); setConfig(c); };
+  const updateClient = (i: number, key: string, value: string) => { const c = structuredClone(config); (c.clients[i] as Record<string, string>)[key] = value; setConfig(c); };
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <span className="text-sm font-medium">{t("zones")}</span>
+        {config.zones.map((z, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <Input className="flex-1" placeholder={t("zoneName")} value={z.name} onChange={(e) => updateZone(i, "name", e.target.value)} aria-label={`${t("zoneName")} ${i + 1}`} />
+            <Input className="w-16" placeholder={t("icon")} value={z.icon} onChange={(e) => updateZone(i, "icon", e.target.value)} aria-label={`${t("icon")} ${i + 1}`} />
+            <Button variant="outline" size="icon-xs" onClick={() => removeZone(i)} aria-label="Remove">×</Button>
+          </div>
+        ))}
+        <Button variant="outline" size="xs" onClick={addZone}>{t("addZone")}</Button>
+      </div>
+      <div className="space-y-2">
+        <span className="text-sm font-medium">{t("clients")}</span>
+        {config.clients.map((cl, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <Input className="flex-1" placeholder={t("clientName")} value={cl.name} onChange={(e) => updateClient(i, "name", e.target.value)} aria-label={`${t("clientName")} ${i + 1}`} />
+            <Input className="w-32" placeholder={t("mac")} value={cl.mac} onChange={(e) => updateClient(i, "mac", e.target.value)} aria-label={`${t("mac")} ${i + 1}`} />
+            <Select className="w-28" value={cl.zone} onChange={(e) => updateClient(i, "zone", e.target.value)} aria-label={`${t("zone")} ${i + 1}`}>
+              {config.zones.map((z) => <option key={z.name} value={z.name}>{z.name}</option>)}
+            </Select>
+            <Button variant="outline" size="icon-xs" onClick={() => removeClient(i)} aria-label="Remove">×</Button>
+          </div>
+        ))}
+        <Button variant="outline" size="xs" onClick={addClient}>{t("addClient")}</Button>
+      </div>
+    </div>
+  );
+}
+
+function ServerIntegrationsSubTab({ config, setConfig }: { config: ServerConfig; setConfig: (c: ServerConfig) => void }) {
+  const t = useTranslations("server");
+  const mqttBrokerId = useId();
+  const mqttUserId = useId();
+  const mqttPassId = useId();
+  const mqttTopicId = useId();
+  const knxModeId = useId();
+  const knxUrlId = useId();
+
+  const toggleMqtt = (on: boolean) => {
+    const c = structuredClone(config);
+    c.mqtt = on ? { broker: "", username: null, password: null, base_topic: "snapdog" } : null;
+    setConfig(c);
+  };
+  const updateMqtt = (key: string, value: string | null) => {
+    const c = structuredClone(config);
+    if (c.mqtt) (c.mqtt as Record<string, string | null>)[key] = value;
+    setConfig(c);
+  };
+
+  const toggleKnx = (on: boolean) => {
+    const c = structuredClone(config);
+    c.knx = on ? { role: "client", url: null, gos: [] } : null;
+    setConfig(c);
+  };
+  const updateKnx = (key: string, value: string | null) => {
+    const c = structuredClone(config);
+    if (c.knx) (c.knx as Record<string, unknown>)[key] = value;
+    setConfig(c);
+  };
+
+  const addGo = () => {
+    const c = structuredClone(config);
+    if (c.knx) { if (!c.knx.gos) c.knx.gos = []; c.knx.gos.push({ target: "", function: "", ga: "" }); }
+    setConfig(c);
+  };
+  const removeGo = (i: number) => {
+    const c = structuredClone(config);
+    if (c.knx?.gos) c.knx.gos.splice(i, 1);
+    setConfig(c);
+  };
+  const updateGo = (i: number, key: string, value: string) => {
+    const c = structuredClone(config);
+    if (c.knx?.gos) (c.knx.gos[i] as Record<string, string>)[key] = value;
+    setConfig(c);
+  };
+
+  const knxFunctions = ["play", "pause", "next", "prev", "volume", "mute", "source"];
+  const targets = [...config.zones.map((z) => z.name), ...config.clients.map((cl) => cl.name)];
+
+  return (
+    <div className="space-y-4">
+      {/* MQTT */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium">{t("mqtt")}</span>
+          <Switch checked={config.mqtt !== null} onCheckedChange={toggleMqtt} aria-label={t("mqtt")} />
+        </div>
+        {config.mqtt && (
+          <div className="space-y-2 pl-2 border-l-2 border-border">
+            <Field label={t("broker")} htmlFor={mqttBrokerId}><Input id={mqttBrokerId} value={config.mqtt.broker} onChange={(e) => updateMqtt("broker", e.target.value)} /></Field>
+            <Field label={t("username")} htmlFor={mqttUserId}><Input id={mqttUserId} value={config.mqtt.username ?? ""} onChange={(e) => updateMqtt("username", e.target.value || null)} /></Field>
+            <Field label={t("password")} htmlFor={mqttPassId}><Input id={mqttPassId} type="password" value={config.mqtt.password ?? ""} onChange={(e) => updateMqtt("password", e.target.value || null)} /></Field>
+            <Field label={t("baseTopic")} htmlFor={mqttTopicId}><Input id={mqttTopicId} value={config.mqtt.base_topic} onChange={(e) => updateMqtt("base_topic", e.target.value)} /></Field>
+          </div>
+        )}
+      </div>
+      {/* KNX */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium">{t("knx")}</span>
+          <Switch checked={config.knx !== null} onCheckedChange={toggleKnx} aria-label={t("knx")} />
+        </div>
+        {config.knx && (
+          <div className="space-y-2 pl-2 border-l-2 border-border">
+            <Field label={t("knxMode")} htmlFor={knxModeId}>
+              <Select id={knxModeId} value={config.knx.role} onChange={(e) => updateKnx("role", e.target.value)}>
+                <option value="client">{t("knxClient")}</option>
+                <option value="device">{t("knxDevice")}</option>
+              </Select>
+            </Field>
+            {config.knx.role === "client" && (
+              <>
+                <Field label={t("gatewayUrl")} htmlFor={knxUrlId}><Input id={knxUrlId} value={config.knx.url ?? ""} onChange={(e) => updateKnx("url", e.target.value || null)} /></Field>
+                <div className="space-y-2">
+                  <span className="text-xs font-medium text-muted-foreground">{t("knxGos")}</span>
+                  {(config.knx.gos ?? []).map((go, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <Select className="w-28" value={go.target} onChange={(e) => updateGo(i, "target", e.target.value)} aria-label={`${t("target")} ${i + 1}`}>
+                        <option value="">—</option>
+                        {targets.map((tgt) => <option key={tgt} value={tgt}>{tgt}</option>)}
+                      </Select>
+                      <Select className="w-24" value={go.function} onChange={(e) => updateGo(i, "function", e.target.value)} aria-label={`${t("function")} ${i + 1}`}>
+                        <option value="">—</option>
+                        {knxFunctions.map((f) => <option key={f} value={f}>{f}</option>)}
+                      </Select>
+                      <Input className="w-20" placeholder="x/x/x" value={go.ga} onChange={(e) => updateGo(i, "ga", e.target.value)} aria-label={`${t("ga")} ${i + 1}`} />
+                      <Button variant="outline" size="icon-xs" onClick={() => removeGo(i)} aria-label="Remove">×</Button>
+                    </div>
+                  ))}
+                  <Button variant="outline" size="xs" onClick={addGo}>{t("addGo")}</Button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────
 
-const TABS: Tab[] = ["dashboard", "network", "audio", "client", "ssh", "update", "system"];
+const TABS: Tab[] = ["dashboard", "network", "audio", "client", "server", "ssh", "update", "system"];
 
 export default function SetupPage() {
   const t = useTranslations("tabs");
+  const systemT = useTranslations("system");
   const [tab, setTab] = useState<Tab>("dashboard");
   const { locale, setLocale } = useI18n();
+  const [isConnected, setIsConnected] = useState(true);
+
+  useEffect(() => {
+    const checkConnection = async () => {
+      try {
+        await api.getSystem();
+        setIsConnected(true);
+      } catch {
+        setIsConnected(false);
+      }
+    };
+
+    // Initial check
+    checkConnection();
+
+    // Poll every 5 seconds
+    const interval = setInterval(checkConnection, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <>
@@ -887,11 +1712,46 @@ export default function SetupPage() {
           {tab === "network" && <NetworkTab />}
           {tab === "audio" && <AudioTab />}
           {tab === "client" && <ClientTab />}
+          {tab === "server" && <ServerTab />}
           {tab === "ssh" && <SshTab />}
           {tab === "update" && <UpdateTab />}
           {tab === "system" && <SystemTab />}
         </div>
       </main>
+
+      {!isConnected && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-md transition-all duration-500 animate-in fade-in"
+          role="alert"
+          aria-live="assertive"
+        >
+          <div className="mx-4 w-full max-w-sm rounded-2xl border border-destructive/20 bg-background/75 p-6 shadow-2xl backdrop-blur-xl animate-in zoom-in-95 duration-300">
+            <div className="flex flex-col items-center text-center">
+              <div className="relative mb-4 flex size-16 items-center justify-center">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-destructive/20 opacity-75" />
+                <div className="relative flex size-12 items-center justify-center rounded-full bg-destructive/10 border border-destructive/30">
+                  <span className="size-3.5 rounded-full bg-destructive animate-pulse" />
+                </div>
+              </div>
+              
+              <h2 className="mb-2 text-lg font-bold text-foreground tracking-tight">
+                {systemT("connectionLost")}
+              </h2>
+              <p className="mb-6 text-sm text-muted-foreground leading-relaxed">
+                {systemT("connectionLostDetail")}
+              </p>
+              
+              <div className="flex items-center gap-2 text-xs font-medium text-destructive/80 bg-destructive/5 px-3 py-1.5 rounded-full border border-destructive/10">
+                <svg className="size-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                <span>{systemT("reconnecting")}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

@@ -15,7 +15,7 @@ export interface SystemInfo {
   channel: string;
   uptime_seconds: number;
   pi_version: number;
-  components: { client: string; ctrl: string; kernel: string };
+  components: { server: string; client: string; ctrl: string; kernel: string };
 }
 
 export interface WifiNetwork {
@@ -93,6 +93,22 @@ export interface UpdateStatus {
   rolled_back: boolean;
 }
 
+export interface ServerConfig {
+  audio: { sample_rate: number; bit_depth: number; channels: number; source_conflict: string; zone_switch_fade_ms: number; source_switch_fade_ms: number };
+  snapcast: { streaming_port: number; codec: string; encryption_psk: string | null; group_volume_mode: string; unknown_clients: string; default_zone: string; mdns_name: string };
+  subsonic: { url: string; username: string; password: string } | null;
+  spotify: { name: string; bitrate: number } | null;
+  airplay: { password: string | null } | null;
+  mqtt: { broker: string; username: string | null; password: string | null; base_topic: string } | null;
+  knx: { role: string; url: string | null; gos?: { target: string; function: string; ga: string }[] } | null;
+  zones: { name: string; icon: string }[];
+  clients: { name: string; mac: string; zone: string }[];
+  radio: { name: string; url: string; cover: string | null }[];
+  system: { log_level: string };
+}
+
+export interface ServerStatus { enabled: boolean; running: boolean }
+
 // ── API calls ─────────────────────────────────────────────────
 
 export const api = {
@@ -127,4 +143,10 @@ export const api = {
   getSsh: () => request<SshConfig>("/api/ssh"),
   setSsh: (config: SshConfig) =>
     request<void>("/api/ssh", { method: "PUT", body: JSON.stringify(config) }),
+
+  getServer: () => request<ServerConfig>("/api/server"),
+  setServer: (config: ServerConfig) => request<void>("/api/server", { method: "PUT", body: JSON.stringify(config) }),
+  getServerStatus: () => request<ServerStatus>("/api/server/status"),
+  enableServer: () => request<void>("/api/server/enable", { method: "POST" }),
+  disableServer: () => request<void>("/api/server/disable", { method: "POST" }),
 };

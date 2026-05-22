@@ -28,7 +28,13 @@ if [ "${#FILES[@]}" -eq 0 ]; then
 fi
 
 BOOT_FILES="$(printf '\t\t\t"%s",\n' "${FILES[@]}")"
-sed "s|#BOOT_FILES#|${BOOT_FILES}|" "${BOARD_DIR}/genimage-ab.cfg.in" > "${GENIMAGE_CFG}"
+awk -v boot_files="${BOOT_FILES}" '
+	/#BOOT_FILES#/ {
+		print boot_files
+		next
+	}
+	{ print }
+' "${BOARD_DIR}/genimage-ab.cfg.in" > "${GENIMAGE_CFG}"
 
 cp -f "${BINARIES_DIR}/rootfs.ext4" "${BINARIES_DIR}/rootfs-b.ext4"
 

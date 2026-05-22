@@ -16,7 +16,7 @@ env:
   UPDATE_BASE_URL: https://update.snapdog.cc/os
   BUILDROOT_VERSION: "2025.02"
   RUST_TOOLCHAIN: "1.85.0"
-  NODE_VERSION: "22.12.0"
+  NODE_VERSION: "22.13.0"
 
 jobs:
   release-please:

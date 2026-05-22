@@ -5,6 +5,8 @@ buildroot/VERSION
 images/
 secrets/
 *.private.pem
+snapdog-ctrl-binary
+buildroot/board/raspberrypi/overlay/usr/bin/snapdog-ctrl
 
 # Rust
 snapdog-ctrl/target/

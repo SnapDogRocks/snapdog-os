@@ -12,7 +12,7 @@ if [ -e "$PRIVATE_KEY" ]; then
 	exit 1
 fi
 
-openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$PRIVATE_KEY"
+openssl genpkey -algorithm ED25519 -out "$PRIVATE_KEY"
 openssl pkey -in "$PRIVATE_KEY" -pubout -out "$PUBLIC_KEY"
 
 echo "Wrote private key: $PRIVATE_KEY"

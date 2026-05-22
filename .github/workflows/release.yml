@@ -277,7 +277,7 @@ jobs:
               '{version:$v, channel:$channel, board:$board, url:$url, sha256:$sha, image_url:$image_url, image_sha256:$image_sha, sbom_url:$sbom_url, sbom_sha256:$sbom_sha, git_sha:$git_sha, github_run_id:$run_id, created_at:$created_at}' \
               > "$META"
 
-            openssl dgst -sha256 -sign update-signing.private.pem -out "${META}.sig" "$META"
+            openssl pkeyutl -sign -inkey update-signing.private.pem -rawin -in "${META}.sig" "$META"
             aws s3 cp "$META" "s3://${R2_BUCKET}/os/metadata/${CHANNEL}/${pi}.json" \
               --content-type "application/json" \
               --cache-control "public, max-age=60, must-revalidate" \

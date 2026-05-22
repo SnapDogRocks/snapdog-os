@@ -159,7 +159,7 @@ curl -f -s -m 10 "$METADATA_URL.sig" -o "$SIGNATURE_FILE" \
   || die "Couldn't fetch update metadata signature, aborting..."
 
 [ -s "$PUBKEY" ] || die "Missing update signing public key: $PUBKEY"
-openssl dgst -sha256 -verify "$PUBKEY" -signature "$SIGNATURE_FILE" "$METADATA_FILE" >/dev/null \
+openssl pkeyutl -verify -pubin -inkey "$PUBKEY" -rawin -in "$METADATA_FILE" -sigfile "$SIGNATURE_FILE" >/dev/null \
   || die "Update metadata signature verification failed"
 
 METADATA=$(tr -d '\n' < "$METADATA_FILE")

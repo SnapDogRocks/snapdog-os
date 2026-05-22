@@ -39,7 +39,7 @@ thiserror = "2"
 anyhow = "1"
 
 # mDNS service discovery
-mdns-sd = "0.11"
+mdns-sd = "0.19"
 
 # Embedded static files
 rust-embed = { version = "8", features = ["axum"] }

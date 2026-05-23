@@ -1,8 +1,8 @@
 services:
   build:
-    build: .
+    build: ..
     volumes:
-      - .:/build/snapdog-os
+      - ..:/build/snapdog-os
       - buildroot:/build/buildroot
       - output:/build/buildroot-pi4
     working_dir: /build/snapdog-os

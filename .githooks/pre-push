@@ -1,3 +1,12 @@
 #!/bin/sh
-# Only run clippy if Rust files exist in the push
-cd snapdog-ctrl && cargo clippy --all-targets
+set -e
+
+# Rust: clippy
+if git diff --name-only @{push}.. 2>/dev/null | grep -q '\.rs$\|Cargo'; then
+  cd snapdog-ctrl && cargo clippy --all-targets && cd ..
+fi
+
+# TypeScript: build check
+if git diff --name-only @{push}.. 2>/dev/null | grep -q 'snapdog-ctrl/webui/'; then
+  cd snapdog-ctrl/webui && npm run build && cd ../..
+fi

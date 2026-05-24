@@ -1,2 +1,5 @@
 #!/bin/sh
-cd snapdog-ctrl && cargo fmt --check
+# Only check formatting if Rust files are staged
+if git diff --cached --name-only | grep -q '\.rs$'; then
+  cd snapdog-ctrl && cargo fmt --check
+fi

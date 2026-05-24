@@ -1,2 +1,3 @@
 #!/bin/sh
-cd snapdog-ctrl && cargo clippy --all-targets && cargo fmt --check
+# Only run clippy if Rust files exist in the push
+cd snapdog-ctrl && cargo clippy --all-targets

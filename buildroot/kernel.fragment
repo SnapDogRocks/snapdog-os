@@ -1,0 +1,43 @@
+# SnapDog OS kernel config overrides
+# Disable unnecessary filesystems and protocols for an audio appliance
+
+# Keep modules uncompressed for faster loading
+CONFIG_MODULE_COMPRESS_NONE=y
+
+# Disable filesystems we don't use
+CONFIG_XFS_FS=n
+CONFIG_CIFS=n
+CONFIG_SMB_SERVER=n
+CONFIG_9P_FS=n
+CONFIG_NFS_FS=n
+CONFIG_NFSD=n
+CONFIG_BTRFS_FS=n
+CONFIG_GFS2_FS=n
+CONFIG_OCFS2_FS=n
+CONFIG_NILFS2_FS=n
+CONFIG_F2FS_FS=n
+CONFIG_JFS_FS=n
+CONFIG_REISERFS_FS=n
+
+# Disable protocols we don't use
+CONFIG_NET_9P=n
+CONFIG_CEPH_LIB=n
+CONFIG_SUNRPC=n
+
+# Disable hardware we don't have
+CONFIG_INFINIBAND=n
+CONFIG_ISDN=n
+CONFIG_ATM=n
+CONFIG_PCMCIA=n
+CONFIG_HAMRADIO=n
+CONFIG_CAN=n
+CONFIG_WIMAX=n
+
+# Disable features not needed for headless audio
+CONFIG_DRM=n
+CONFIG_FB=n
+CONFIG_VGA_CONSOLE=n
+CONFIG_FRAMEBUFFER_CONSOLE=n
+CONFIG_MEDIA_SUPPORT=n
+CONFIG_DVB_CORE=n
+CONFIG_VIDEO_DEV=n

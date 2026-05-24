@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Fabian Schmieder
 
 mod config_txt;
+mod mdns;
 #[cfg(debug_assertions)]
 mod mock;
 #[cfg(debug_assertions)]

@@ -12,6 +12,11 @@ description = "Web-based device setup for SnapDog OS"
 name = "snapdog-ctrl"
 path = "src/main.rs"
 
+[features]
+default = ["mdns-astro"]
+mdns-astro = ["dep:astro-dnssd"]
+mdns-sd = ["dep:mdns-sd"]
+
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -39,7 +44,8 @@ thiserror = "2"
 anyhow = "1"
 
 # mDNS service discovery
-mdns-sd = "0.19"
+astro-dnssd = { version = "0.3.6", optional = true }
+mdns-sd = { version = "0.19", optional = true }
 
 # Embedded static files
 rust-embed = { version = "8", features = ["axum"] }

@@ -101,11 +101,19 @@ jobs:
           cache-dependency-path: snapdog-ctrl/webui/package-lock.json
 
       - name: Install linker
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu libc6-dev-arm64-cross \
+            libavahi-compat-libdnssd-dev:arm64
 
       - name: Build
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          PKG_CONFIG_ALLOW_CROSS: "1"
+          PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
+          PKG_CONFIG_SYSROOT_DIR: /usr/aarch64-linux-gnu
         run: |
           cd snapdog-ctrl/webui && npm ci && npm run build && cd ../..
           cd snapdog-ctrl && cargo build --locked --release --target aarch64-unknown-linux-gnu

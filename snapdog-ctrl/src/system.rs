@@ -9,10 +9,9 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 
 use crate::routes::{
-    AudioInfo, AutoUpdateConfig, ClientConfig, ComponentVersions, DacOverlay, DiscoveredServer,
-    EthernetConfig, EthernetInfo, LogsResponse, NetworkOverview, ScanServersResponse, SshConfig,
-    SystemInfo, TimezoneInfo, UpdateCheckResponse, UpdateStatus, WifiInfo, WifiNetwork,
-    WifiScanResult,
+    AudioInfo, AutoUpdateConfig, ClientConfig, ComponentVersions, DacOverlay, EthernetConfig,
+    EthernetInfo, LogsResponse, NetworkOverview, ScanServersResponse, SshConfig, SystemInfo,
+    TimezoneInfo, UpdateCheckResponse, UpdateStatus, WifiInfo, WifiNetwork, WifiScanResult,
 };
 
 // --- System ---
@@ -941,69 +940,9 @@ pub async fn test_server(host: &str, port: u16) -> bool {
 // --- mDNS Server Discovery ---
 
 pub async fn scan_servers() -> ScanServersResponse {
-    use mdns_sd::{ServiceDaemon, ServiceEvent};
-
-    let mdns = match ServiceDaemon::new() {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::error!("mDNS daemon failed: {e}");
-            return ScanServersResponse { servers: vec![] };
-        }
-    };
-
-    let service_type = "_snapdog._tcp.local.";
-    let receiver = match mdns.browse(service_type) {
-        Ok(receiver) => receiver,
-        Err(e) => {
-            tracing::error!("mDNS browse failed: {e}");
-            let _ = mdns.shutdown();
-            return ScanServersResponse { servers: vec![] };
-        }
-    };
-
-    let mut servers = Vec::new();
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
-
-    loop {
-        let timeout = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if timeout.is_zero() {
-            break;
-        }
-
-        match tokio::time::timeout(
-            timeout,
-            tokio::task::spawn_blocking({
-                let receiver = receiver.clone();
-                move || receiver.recv_timeout(std::time::Duration::from_millis(500))
-            }),
-        )
-        .await
-        {
-            Ok(Ok(Ok(ServiceEvent::ServiceResolved(info)))) => {
-                let name = info
-                    .get_fullname()
-                    .split('.')
-                    .next()
-                    .unwrap_or("")
-                    .to_string();
-                let host = info
-                    .get_addresses()
-                    .iter()
-                    .next()
-                    .map(std::string::ToString::to_string)
-                    .unwrap_or_default();
-                let port = info.get_port();
-                if !host.is_empty() {
-                    servers.push(DiscoveredServer { name, host, port });
-                }
-            }
-            Ok(Ok(Ok(_))) => {}
-            _ => break,
-        }
+    ScanServersResponse {
+        servers: crate::mdns::browse_servers().await,
     }
-
-    let _ = mdns.shutdown();
-    ScanServersResponse { servers }
 }
 
 // --- Helpers ---

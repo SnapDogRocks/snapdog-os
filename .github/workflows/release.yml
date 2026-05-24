@@ -57,7 +57,7 @@ jobs:
           cache-dependency-path: snapdog-ctrl/webui/package-lock.json
 
       - name: Install aarch64 linker
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
 
       - name: Build
         env:

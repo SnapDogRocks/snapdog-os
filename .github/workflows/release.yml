@@ -100,14 +100,21 @@ jobs:
   build-image:
     name: Build image (${{ matrix.pi }})
     runs-on: [self-hosted, linux, x64, buildroot]
+    container:
+      image: ubuntu:24.04
+      options: --network=host
+      volumes:
+        - /srv/snapdog-buildroot/ccache:/ccache
+        - /srv/snapdog-buildroot/dl:/dl
+        - /srv/snapdog-buildroot/${{ matrix.pi }}:/output
     needs: [release-please, build-ctrl]
     strategy:
       fail-fast: false
       matrix:
         pi: [pi3, pi4, pi5]
     env:
-      BR2_DL_DIR: /srv/snapdog-buildroot/dl
-      BR2_CCACHE_DIR: /srv/snapdog-buildroot/ccache
+      BR2_DL_DIR: /dl
+      BR2_CCACHE_DIR: /ccache
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -129,12 +136,15 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          sudo pacman -S --noconfirm --needed base-devel git wget cpio unzip rsync bc python file \
-            ncurses openssl dosfstools mtools e2fsprogs jq squashfs-tools rauc 2>/dev/null || true
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            build-essential git wget cpio unzip rsync bc python3 file \
+            libncurses-dev libssl-dev dosfstools mtools e2fsprogs fdisk jq \
+            rauc squashfs-tools
 
       - name: Setup buildroot
         run: |
-          ln -sfn /srv/snapdog-buildroot/${{ matrix.pi }} ../buildroot-${{ matrix.pi }}
+          ln -sfn /output ../buildroot-${{ matrix.pi }}
           make setup
 
       - name: Build

@@ -17,6 +17,7 @@ endef
 define CONFIGTXT_BASE
 	sed -i '/kernel=/d' $(BINARIES_DIR)/rpi-firmware/config.txt
 	echo "kernel=Image" >> $(BINARIES_DIR)/rpi-firmware/config.txt
+	echo "dtoverlay=dwc2" >> $(BINARIES_DIR)/rpi-firmware/config.txt
 endef
 
 define CONFIGTXT_REMOVESTUFF

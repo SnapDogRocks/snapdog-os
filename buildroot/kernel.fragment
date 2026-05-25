@@ -33,14 +33,17 @@ CONFIG_HAMRADIO=n
 CONFIG_CAN=n
 CONFIG_WIMAX=n
 
-# Disable features not needed for headless audio
+# Disable features not needed for headless audio (keep framebuffer for boot console)
 CONFIG_DRM=n
-CONFIG_FB=n
-CONFIG_VGA_CONSOLE=n
-CONFIG_FRAMEBUFFER_CONSOLE=n
 CONFIG_MEDIA_SUPPORT=n
 CONFIG_DVB_CORE=n
 CONFIG_VIDEO_DEV=n
+
+# USB Gadget serial console over USB-C OTG
+CONFIG_USB_GADGET=y
+CONFIG_USB_CONFIGFS=m
+CONFIG_USB_F_ACM=m
+CONFIG_USB_G_SERIAL=m
 
 # Disable unnecessary subsystems
 CONFIG_IIO=n

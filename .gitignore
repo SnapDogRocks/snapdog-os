@@ -27,3 +27,4 @@ secrets/
 buildroot/board/raspberrypi/overlay/usr/bin/snapdog-ctrl
 dev/Image
 dev/rpi4.dtb
+snapdog-os-pi4-qemu.img

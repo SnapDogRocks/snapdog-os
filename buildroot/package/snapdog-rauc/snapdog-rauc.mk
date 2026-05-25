@@ -16,7 +16,7 @@ define SNAPDOG_RAUC_INSTALL_TARGET_CMDS
 		> $(TARGET_DIR)/etc/rauc/system.conf
 
 	# Keyring (CA certificate for bundle verification)
-	$(INSTALL) -D -m 0644 $(BR2_EXTERNAL_SNAPDOG_PATH)/../keys/rauc-ca.cert.pem \
+	$(INSTALL) -D -m 0644 $(BR2_EXTERNAL_SNAPDOG_PATH)/keys/rauc-ca.cert.pem \
 		$(TARGET_DIR)/etc/rauc/ca.cert.pem
 
 	# Custom bootloader backend

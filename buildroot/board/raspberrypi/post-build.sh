@@ -59,3 +59,8 @@ ln -sf /data/ssh "$TARGET_DIR/root/.ssh"
 
 # First-boot marker: triggers partition resize + format
 touch "$TARGET_DIR/resize-me"
+
+# Enable serial console on USB gadget
+mkdir -p "$TARGET_DIR/etc/systemd/system/getty.target.wants"
+ln -sf /usr/lib/systemd/system/serial-getty@.service \
+  "$TARGET_DIR/etc/systemd/system/getty.target.wants/serial-getty@ttyGS0.service"

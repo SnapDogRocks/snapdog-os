@@ -1,22 +1,27 @@
 #!/bin/sh
-DEVICE=$(mount | grep " / " | awk '{print $1}' | sed 's/[0-9]$//')
+# Mount the data partition (LABEL=data) after resize-data-partition has formatted it.
+set -eu
 
-if [ ! -d /data ]; then
-  mkdir /data
+mkdir -p /data
+
+# Try mounting by label first (set by resize-data-partition)
+if mount -L data /data 2>/dev/null; then
+  echo "Mounted data partition by label"
+  exit 0
 fi
 
-# Create ext4 on partition 4 if needed
-if ! e2fsck -n "${DEVICE}4" >/dev/null 2>&1; then
-  mkfs.ext4 -F "${DEVICE}4"
-fi
+# Fallback: detect device and try partition 4
+DEVICE=$(mount | grep " / " | awk '{print $1}' | sed 's/p\?[0-9]$//')
+P4="${DEVICE}$(echo "$DEVICE" | grep -q "mmcblk" && echo "p")4"
 
-# Mount data partition
-if ! mount | grep -q "/data"; then
-  mount "${DEVICE}4" /data
-  # Add to fstab if not present
-  if ! grep -q "${DEVICE}4" /etc/fstab; then
-    echo "${DEVICE}4    /data    ext4    defaults,nofail    0    2" >> /etc/fstab
+if [ -b "$P4" ]; then
+  # Format if no filesystem
+  if ! blkid "$P4" | grep -q "TYPE="; then
+    mkfs.ext4 -F -L data "$P4"
   fi
+  mount "$P4" /data
+  echo "Mounted $P4 on /data"
+else
+  echo "No data partition found"
+  exit 1
 fi
-
-systemctl disable activate-data-partition.service

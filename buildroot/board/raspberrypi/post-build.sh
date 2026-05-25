@@ -6,6 +6,10 @@ set -eu
 
 TARGET_DIR=$1
 
+# Ensure mountpoints exist
+mkdir -p "$TARGET_DIR/data"
+mkdir -p "$TARGET_DIR/boot"
+
 # Ensure parent directories exist
 mkdir -p "$TARGET_DIR/etc/default"
 mkdir -p "$TARGET_DIR/etc/snapdog"
@@ -52,3 +56,6 @@ ln -sf /data/hostname "$TARGET_DIR/etc/hostname"
 
 rm -rf "$TARGET_DIR/root/.ssh"
 ln -sf /data/ssh "$TARGET_DIR/root/.ssh"
+
+# First-boot marker: triggers partition resize + format
+touch "$TARGET_DIR/resize-me"

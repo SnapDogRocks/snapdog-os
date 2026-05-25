@@ -5,6 +5,7 @@ services:
       - ..:/build/snapdog-os
       - buildroot:/build/buildroot
       - output:/build/buildroot-pi4
+      - ccache:/build/ccache
     working_dir: /build/snapdog-os
     command: |
       bash -c "
@@ -35,6 +36,7 @@ services:
         cd /build/buildroot && make raspberrypi4_64_defconfig
         mv /build/buildroot/.config /build/buildroot-pi4/.config
         /build/snapdog-os/buildroot/scripts/apply-config-overrides /build/buildroot-pi4/.config /build/snapdog-os/buildroot/configs/override.conf BR2_PACKAGE_SNAPDOG_OS_ALL
+        cat /build/snapdog-os/dev/ccache.conf >> /build/buildroot-pi4/.config
 
         echo '── Build ──'
         cd /build/buildroot
@@ -48,3 +50,4 @@ services:
 volumes:
   buildroot:
   output:
+  ccache:

@@ -109,6 +109,7 @@ pub async fn rauc_install(source: &str) -> Result<()> {
 }
 
 /// Get RAUC installation progress.
+#[allow(dead_code)]
 pub async fn rauc_progress() -> Result<crate::rauc::InstallProgress> {
     crate::rauc::Rauc::connect().await?.progress().await
 }
@@ -119,6 +120,7 @@ pub async fn rauc_operation() -> Result<String> {
 }
 
 /// Get RAUC slot status.
+#[allow(dead_code)]
 pub async fn rauc_slot_status() -> Result<Vec<crate::rauc::SlotStatus>> {
     crate::rauc::Rauc::connect().await?.slot_status().await
 }

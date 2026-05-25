@@ -100,6 +100,12 @@ jobs:
   build-image:
     name: Build image (${{ matrix.pi }})
     runs-on: [self-hosted, linux, x64, buildroot]
+    container:
+      image: ubuntu:24.04
+      volumes:
+        - /srv/snapdog-buildroot/ccache:/ccache
+        - /srv/snapdog-buildroot/dl:/dl
+        - /srv/snapdog-buildroot/${{ matrix.pi }}:/output
     needs: [release-please, build-ctrl]
     strategy:
       fail-fast: false
@@ -124,10 +130,28 @@ jobs:
             echo "channel=beta" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Install build dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            build-essential git wget cpio unzip rsync bc python3 file \
+            libncurses-dev libssl-dev dosfstools mtools e2fsprogs fdisk jq \
+            rauc squashfs-tools
+
       - name: Setup buildroot
-        run: make setup
+        run: |
+          # Link persistent output dir
+          ln -sfn /output ../buildroot-${{ matrix.pi }}
+          # Setup with persistent DL and ccache
+          make setup
+        env:
+          BR2_DL_DIR: /dl
+          BR2_CCACHE_DIR: /ccache
 
       - name: Build
+        env:
+          BR2_DL_DIR: /dl
+          BR2_CCACHE_DIR: /ccache
         run: |
           chmod 755 snapdog-ctrl-binary
           make PI=${{ matrix.pi }} VERSION="${{ steps.version.outputs.version }}" config

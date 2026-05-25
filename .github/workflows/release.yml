@@ -99,7 +99,7 @@ jobs:
 
   build-image:
     name: Build image (${{ matrix.pi }})
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, buildroot]
     needs: [release-please, build-ctrl]
     strategy:
       fail-fast: false
@@ -123,23 +123,6 @@ jobs:
             echo "version=${BASE}-beta.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
             echo "channel=beta" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential git wget cpio unzip rsync bc \
-            python3 file libncurses-dev libssl-dev dosfstools mtools e2fsprogs fdisk jq
-
-      - name: Cache buildroot
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: |
-            ../buildroot-src
-            ../buildroot-${{ matrix.pi }}/build/toolchain-*
-            ../buildroot-${{ matrix.pi }}/host
-          key: buildroot-${{ env.BUILDROOT_VERSION }}-${{ matrix.pi }}-${{ hashFiles('buildroot/configs/override.conf', 'buildroot/package/**/*.mk', 'buildroot/package/**/Config.in') }}
-          restore-keys: |
-            buildroot-${{ env.BUILDROOT_VERSION }}-${{ matrix.pi }}-
 
       - name: Setup buildroot
         run: make setup

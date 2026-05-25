@@ -100,13 +100,6 @@ jobs:
   build-image:
     name: Build image (${{ matrix.pi }})
     runs-on: [self-hosted, linux, x64, buildroot]
-    container:
-      image: ubuntu:24.04
-      options: --network=host
-      volumes:
-        - /srv/snapdog-buildroot/ccache:/ccache
-        - /srv/snapdog-buildroot/dl:/dl
-        - /srv/snapdog-buildroot/${{ matrix.pi }}:/output
     needs: [release-please, build-ctrl]
     strategy:
       fail-fast: false
@@ -134,17 +127,9 @@ jobs:
             echo "channel=beta" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Install build dependencies
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq --no-install-recommends \
-            build-essential git wget cpio unzip rsync bc python3 file \
-            libncurses-dev libssl-dev dosfstools mtools e2fsprogs fdisk jq \
-            rauc squashfs-tools
-
       - name: Setup buildroot
         run: |
-          ln -sfn /output ../buildroot-${{ matrix.pi }}
+          ln -sfn /srv/${{ matrix.pi }} ../buildroot-${{ matrix.pi }}
           make setup
 
       - name: Build

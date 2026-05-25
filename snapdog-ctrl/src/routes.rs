@@ -299,8 +299,8 @@ mod mock_handlers {
     pub fn m_get_auto_update() -> Json<AutoUpdateConfig> {
         Json(AutoUpdateConfig {
             enabled: true,
-            interval: "daily".into(),
-            time: "03:00".into(),
+            channel: "stable".into(),
+            time: "04:00".into(),
         })
     }
     pub fn m_put_auto_update(Json(_body): Json<AutoUpdateConfig>) -> StatusCode {
@@ -610,7 +610,7 @@ async fn get_update_status() -> Json<UpdateStatus> {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct AutoUpdateConfig {
     pub enabled: bool,
-    pub interval: String,
+    pub channel: String,
     pub time: String,
 }
 

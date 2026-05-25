@@ -21,7 +21,6 @@ concurrency:
 
 env:
   R2_BUCKET: snapdog-updates
-  UPDATE_BASE_URL: https://update.snapdog.cc/os
   BUILDROOT_VERSION: "2025.02"
   RUST_TOOLCHAIN: "stable"
   NODE_VERSION: "22.13.0"
@@ -131,9 +130,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends build-essential git wget cpio unzip rsync bc \
             python3 file libncurses-dev libssl-dev dosfstools mtools e2fsprogs fdisk jq
 
-      - name: Validate update public key
-        run: openssl pkey -pubin -in buildroot/keys/update-signing.pub.pem -noout
-
       - name: Cache buildroot
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
@@ -242,29 +238,21 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
           AWS_DEFAULT_REGION: auto
-          SNAPDOG_UPDATE_SIGNING_KEY_PEM: ${{ secrets.SNAPDOG_UPDATE_SIGNING_KEY_PEM }}
         run: |
           set -euo pipefail
 
           test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "Missing R2_ACCESS_KEY_ID"; exit 1; }
           test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "Missing R2_SECRET_ACCESS_KEY"; exit 1; }
           test -n "${AWS_ENDPOINT_URL:-}" || { echo "Missing R2_ENDPOINT_URL"; exit 1; }
-          test -n "${SNAPDOG_UPDATE_SIGNING_KEY_PEM:-}" || { echo "Missing SNAPDOG_UPDATE_SIGNING_KEY_PEM"; exit 1; }
 
           if [ "${{ needs.release-please.outputs.release_created }}" = "true" ]; then
             VERSION="${{ needs.release-please.outputs.version }}"
-            CHANNEL="stable"
+            SUFFIX=""
           else
             VERSION="$(cat VERSION)-beta.${{ github.run_number }}"
-            CHANNEL="beta"
+            SUFFIX="-beta"
           fi
 
-          umask 077
-          printf '%s\n' "$SNAPDOG_UPDATE_SIGNING_KEY_PEM" > update-signing.private.pem
-          openssl pkey -in update-signing.private.pem -pubout -out derived-update-signing.pub.pem
-          diff -u buildroot/keys/update-signing.pub.pem derived-update-signing.pub.pem
-
-          mkdir -p metadata
           for pi in pi3 pi4 pi5; do
             IMAGE="artifacts/image-${pi}/snapdog-os-${pi}-${VERSION}.img.gz"
             BUNDLE="artifacts/image-${pi}/snapdog-os-${pi}-${VERSION}.raucb"
@@ -277,6 +265,7 @@ jobs:
             test -s "$CHECKSUMS"
             (cd "artifacts/image-${pi}" && sha256sum --check "snapdog-os-${pi}-${VERSION}.sha256")
 
+            # Versioned archives (immutable)
             aws s3 cp "$IMAGE" "s3://${R2_BUCKET}/os/images/" \
               --cache-control "public, max-age=31536000, immutable" \
               --endpoint-url "$AWS_ENDPOINT_URL"
@@ -286,60 +275,19 @@ jobs:
             aws s3 cp "$SBOM" "s3://${R2_BUCKET}/os/sbom/" \
               --cache-control "public, max-age=31536000, immutable" \
               --endpoint-url "$AWS_ENDPOINT_URL"
-            aws s3 cp "$CHECKSUMS" "s3://${R2_BUCKET}/os/checksums/" \
-              --cache-control "public, max-age=31536000, immutable" \
+
+            # Flat "latest" bundle (overwritten each release, short cache)
+            aws s3 cp "$BUNDLE" "s3://${R2_BUCKET}/os/bundles/${pi}${SUFFIX}.raucb" \
+              --cache-control "public, max-age=300" \
               --endpoint-url "$AWS_ENDPOINT_URL"
 
-            IMAGE_SHA=$(sha256sum "$IMAGE" | awk '{print $1}')
-            BUNDLE_SHA=$(sha256sum "$BUNDLE" | awk '{print $1}')
-            SBOM_SHA=$(sha256sum "$SBOM" | awk '{print $1}')
-            CREATED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-            META="metadata/${pi}.json"
-            jq -cn \
-              --arg v "$VERSION" \
-              --arg channel "$CHANNEL" \
-              --arg board "$pi" \
-              --arg bundle_url "${UPDATE_BASE_URL}/bundles/snapdog-os-${pi}-${VERSION}.raucb" \
-              --arg bundle_sha "$BUNDLE_SHA" \
-              --arg image_url "${UPDATE_BASE_URL}/images/snapdog-os-${pi}-${VERSION}.img.gz" \
-              --arg image_sha "$IMAGE_SHA" \
-              --arg sbom_url "${UPDATE_BASE_URL}/sbom/snapdog-os-${pi}-${VERSION}-sbom.csv" \
-              --arg sbom_sha "$SBOM_SHA" \
-              --arg git_sha "${GITHUB_SHA}" \
-              --arg run_id "${GITHUB_RUN_ID}" \
-              --arg created_at "$CREATED_AT" \
-              '{version:$v, channel:$channel, board:$board, bundle_url:$bundle_url, bundle_sha256:$bundle_sha, image_url:$image_url, image_sha256:$image_sha, sbom_url:$sbom_url, sbom_sha256:$sbom_sha, git_sha:$git_sha, github_run_id:$run_id, created_at:$created_at}' \
-              > "$META"
-
-            openssl pkeyutl -sign -inkey update-signing.private.pem -rawin -in "$META" -out "${META}.sig"
-            aws s3 cp "$META" "s3://${R2_BUCKET}/os/metadata/${CHANNEL}/${pi}.json" \
-              --content-type "application/json" \
-              --cache-control "public, max-age=60, must-revalidate" \
-              --endpoint-url "$AWS_ENDPOINT_URL"
-            aws s3 cp "${META}.sig" "s3://${R2_BUCKET}/os/metadata/${CHANNEL}/${pi}.json.sig" \
-              --content-type "application/octet-stream" \
-              --cache-control "public, max-age=60, must-revalidate" \
-              --endpoint-url "$AWS_ENDPOINT_URL"
+            # Stable release also overwrites the beta pointer
+            if [ -z "$SUFFIX" ]; then
+              aws s3 cp "$BUNDLE" "s3://${R2_BUCKET}/os/bundles/${pi}-beta.raucb" \
+                --cache-control "public, max-age=300" \
+                --endpoint-url "$AWS_ENDPOINT_URL"
+            fi
           done
-
-          if [ "$CHANNEL" = "stable" ]; then
-            for pi in pi3 pi4 pi5; do
-              aws s3 cp \
-                "s3://${R2_BUCKET}/os/metadata/stable/${pi}.json" \
-                "s3://${R2_BUCKET}/os/metadata/beta/${pi}.json" \
-                --cache-control "public, max-age=60, must-revalidate" \
-                --content-type "application/json" \
-                --endpoint-url "$AWS_ENDPOINT_URL"
-              aws s3 cp \
-                "s3://${R2_BUCKET}/os/metadata/stable/${pi}.json.sig" \
-                "s3://${R2_BUCKET}/os/metadata/beta/${pi}.json.sig" \
-                --cache-control "public, max-age=60, must-revalidate" \
-                --content-type "application/octet-stream" \
-                --endpoint-url "$AWS_ENDPOINT_URL"
-            done
-          fi
-
-          rm -f update-signing.private.pem
 
       - name: Attach artifacts to GitHub Release
         if: needs.release-please.outputs.release_created == 'true'

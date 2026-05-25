@@ -898,55 +898,45 @@ pub async fn list_soundcards() -> Vec<String> {
 
 // --- Auto-Update Settings ---
 
-const AUTO_UPDATE_CONF: &str = "/etc/snapdog-os.auto-update";
-const UPDATER_TIMER: &str = "/etc/systemd/system/updater.timer.d/schedule.conf";
+const CTRL_CONFIG: &str = "/data/snapdog/ctrl.toml";
 
 pub async fn get_auto_update() -> AutoUpdateConfig {
-    let content = read_file(AUTO_UPDATE_CONF).await.unwrap_or_default();
-    let mut config = AutoUpdateConfig {
-        enabled: true,
-        interval: "daily".into(),
-        time: "03:00".into(),
-    };
-    for line in content.lines() {
-        if let Some(v) = line.strip_prefix("enabled=") {
-            config.enabled = v.trim() == "true";
-        } else if let Some(v) = line.strip_prefix("interval=") {
-            config.interval = v.trim().to_string();
-        } else if let Some(v) = line.strip_prefix("time=") {
-            config.time = v.trim().to_string();
-        }
+    let content = read_file(CTRL_CONFIG).await.unwrap_or_default();
+    let doc: toml_edit::DocumentMut = content.parse().unwrap_or_default();
+    let au = doc.get("auto-update");
+    AutoUpdateConfig {
+        enabled: au
+            .and_then(|t| t.get("enabled"))
+            .and_then(toml_edit::Item::as_bool)
+            .unwrap_or(true),
+        channel: au
+            .and_then(|t| t.get("channel"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("stable")
+            .to_string(),
+        time: au
+            .and_then(|t| t.get("time"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("04:00")
+            .to_string(),
     }
-    config
 }
 
 pub async fn set_auto_update(config: AutoUpdateConfig) -> Result<()> {
-    // Generate systemd timer schedule
-    let calendar = match config.interval.as_str() {
-        "weekly" => format!("Mon {}:00", config.time),
-        "monthly" => format!("*-*-01 {}:00", config.time),
-        _ => format!("*-*-* {}:00", config.time),
-    };
+    let content = read_file(CTRL_CONFIG).await.unwrap_or_default();
+    let mut doc: toml_edit::DocumentMut = content.parse().unwrap_or_default();
 
-    // Persist config
-    let content = format!(
-        "enabled={}\ninterval={}\ntime={}\n",
-        config.enabled, config.interval, config.time
-    );
-    tokio::fs::write(AUTO_UPDATE_CONF, content).await?;
+    let au = doc
+        .entry("auto-update")
+        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+    au["enabled"] = toml_edit::value(config.enabled);
+    au["channel"] = toml_edit::value(&config.channel);
+    au["time"] = toml_edit::value(&config.time);
 
-    if config.enabled {
-        // Write timer override
-        if let Some(parent) = std::path::Path::new(UPDATER_TIMER).parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-        let timer_conf = format!("[Timer]\nOnCalendar=\nOnCalendar={calendar}\n");
-        tokio::fs::write(UPDATER_TIMER, timer_conf).await?;
-        run_cmd("systemctl", &["daemon-reload"]).await?;
-        run_cmd("systemctl", &["enable", "--now", "updater.timer"]).await?;
-    } else {
-        run_cmd("systemctl", &["disable", "--now", "updater.timer"]).await?;
+    if let Some(parent) = std::path::Path::new(CTRL_CONFIG).parent() {
+        tokio::fs::create_dir_all(parent).await?;
     }
+    tokio::fs::write(CTRL_CONFIG, doc.to_string()).await?;
     Ok(())
 }
 

@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Fabian Schmieder
 
 mod auth;
+mod auto_update;
 mod config_txt;
 mod mdns;
 #[cfg(debug_assertions)]
@@ -141,6 +142,9 @@ async fn build_app() -> Router {
         // Configure resolved
         let _ = network::configure_resolved().await;
     });
+
+    // Start auto-update scheduler
+    auto_update::spawn();
 
     let auth_state = auth::AuthState::load().await;
 

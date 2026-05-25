@@ -102,6 +102,7 @@ jobs:
     runs-on: [self-hosted, linux, x64, buildroot]
     container:
       image: ubuntu:24.04
+      options: --network=host
       volumes:
         - /srv/snapdog-buildroot/ccache:/ccache
         - /srv/snapdog-buildroot/dl:/dl

@@ -89,7 +89,7 @@ pub async fn reboot() {
 }
 
 pub async fn trigger_update() -> Result<()> {
-    let rauc = crate::rauc::Rauc::connect().await?;
+    let _rauc = crate::rauc::Rauc::connect().await?;
     // Download metadata, get bundle URL, then install via RAUC
     // For now, this is a placeholder — full implementation needs metadata fetch
     anyhow::bail!("Use /api/system/update/install with a bundle path or URL")

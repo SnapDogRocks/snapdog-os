@@ -111,6 +111,9 @@ jobs:
       fail-fast: false
       matrix:
         pi: [pi3, pi4, pi5]
+    env:
+      BR2_DL_DIR: /dl
+      BR2_CCACHE_DIR: /ccache
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -140,18 +143,10 @@ jobs:
 
       - name: Setup buildroot
         run: |
-          # Link persistent output dir
           ln -sfn /output ../buildroot-${{ matrix.pi }}
-          # Setup with persistent DL and ccache
           make setup
-        env:
-          BR2_DL_DIR: /dl
-          BR2_CCACHE_DIR: /ccache
 
       - name: Build
-        env:
-          BR2_DL_DIR: /dl
-          BR2_CCACHE_DIR: /ccache
         run: |
           chmod 755 snapdog-ctrl-binary
           make PI=${{ matrix.pi }} VERSION="${{ steps.version.outputs.version }}" config

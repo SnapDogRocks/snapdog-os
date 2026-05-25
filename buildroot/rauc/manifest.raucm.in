@@ -1,0 +1,9 @@
+[update]
+compatible=snapdog-os-@PI@
+version=@VERSION@
+
+[bundle]
+format=verity
+
+[image.rootfs]
+filename=rootfs.img

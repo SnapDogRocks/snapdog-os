@@ -11,6 +11,7 @@ mod mock;
 mod network;
 #[cfg(not(debug_assertions))]
 mod network;
+mod rauc;
 #[cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
 mod routes;
 mod server_config;

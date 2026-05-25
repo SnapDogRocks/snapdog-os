@@ -1,0 +1,5 @@
+config BR2_PACKAGE_SNAPDOG_RAUC
+	bool "snapdog-rauc"
+	help
+	  RAUC configuration for SnapDog OS (system.conf, boot handler, keyring).
+	select BR2_PACKAGE_RAUC

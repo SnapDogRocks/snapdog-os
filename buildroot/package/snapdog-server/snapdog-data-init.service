@@ -1,7 +1,9 @@
 [Unit]
 Description=SnapDog Persistent Data Initialization
 DefaultDependencies=no
-After=local-fs.target
+After=local-fs.target data.mount
+Requires=data.mount
+RequiresMountsFor=/data
 Before=network-pre.target sysinit.target systemd-networkd.service snapdog-ctrl.service snapdog.service snapdog-client.service
 Conflicts=shutdown.target
 

@@ -27,9 +27,9 @@ services:
         fi
 
         echo '── Inject snapdog-ctrl ──'
-        mkdir -p /build/snapdog-os/buildroot/board/raspberrypi/overlay/usr/bin
-        cp /build/snapdog-os/snapdog-ctrl-binary /build/snapdog-os/buildroot/board/raspberrypi/overlay/usr/bin/snapdog-ctrl
-        chmod 755 /build/snapdog-os/buildroot/board/raspberrypi/overlay/usr/bin/snapdog-ctrl
+        mkdir -p /build/buildroot-pi4/images
+        cp /build/snapdog-os/snapdog-ctrl-binary /build/buildroot-pi4/images/snapdog-ctrl
+        chmod 755 /build/buildroot-pi4/images/snapdog-ctrl
 
         echo '── Configure pi4 ──'
         mkdir -p /build/buildroot-pi4

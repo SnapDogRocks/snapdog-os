@@ -89,13 +89,38 @@ pub async fn reboot() {
 }
 
 pub async fn trigger_update() -> Result<()> {
-    run_cmd("/opt/snapdog/bin/update", &["--reboot"]).await?;
-    Ok(())
+    let rauc = crate::rauc::Rauc::connect().await?;
+    // Download metadata, get bundle URL, then install via RAUC
+    // For now, this is a placeholder — full implementation needs metadata fetch
+    anyhow::bail!("Use /api/system/update/install with a bundle path or URL")
 }
 
 pub async fn trigger_manual_install() -> Result<()> {
-    run_cmd("/opt/snapdog/bin/extract-update", &["--reboot"]).await?;
+    let rauc = crate::rauc::Rauc::connect().await?;
+    rauc.install("/tmp/update.raucb").await?;
     Ok(())
+}
+
+/// Install a RAUC bundle from a local path or URL.
+pub async fn rauc_install(source: &str) -> Result<()> {
+    let rauc = crate::rauc::Rauc::connect().await?;
+    rauc.install(source).await?;
+    Ok(())
+}
+
+/// Get RAUC installation progress.
+pub async fn rauc_progress() -> Result<crate::rauc::InstallProgress> {
+    crate::rauc::Rauc::connect().await?.progress().await
+}
+
+/// Get RAUC operation state (idle/installing).
+pub async fn rauc_operation() -> Result<String> {
+    crate::rauc::Rauc::connect().await?.operation().await
+}
+
+/// Get RAUC slot status.
+pub async fn rauc_slot_status() -> Result<Vec<crate::rauc::SlotStatus>> {
+    crate::rauc::Rauc::connect().await?.slot_status().await
 }
 
 // --- Network ---

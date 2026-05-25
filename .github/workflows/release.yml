@@ -168,7 +168,7 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           IMG="../buildroot-${{ matrix.pi }}/images/sdcard.img"
           OUT="snapdog-os-${{ matrix.pi }}-${VERSION}.img.gz"
-          UPDATE_ARC="snapdog-os-${{ matrix.pi }}-${VERSION}-update.tar.gz"
+          BUNDLE="snapdog-os-${{ matrix.pi }}-${VERSION}.raucb"
           SBOM="snapdog-os-${{ matrix.pi }}-${VERSION}-sbom.csv"
           CHECKSUMS="snapdog-os-${{ matrix.pi }}-${VERSION}.sha256"
 
@@ -177,14 +177,23 @@ jobs:
           test "$PARTITIONS" -eq 4
 
           gzip -n -c "$IMG" > "$OUT"
-          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
-            -czf "$UPDATE_ARC" -C "../buildroot-${{ matrix.pi }}/images" rootfs.ext4
           cp "../buildroot-${{ matrix.pi }}/legal-info/manifest.csv" "$SBOM"
 
-          sha256sum "$OUT" "$UPDATE_ARC" "$SBOM" > "$CHECKSUMS"
+          # Generate RAUC bundle
+          sudo apt-get install -y --no-install-recommends rauc
+          umask 077
+          printf '%s\n' "${{ secrets.RAUC_CA_KEY_PEM }}" > rauc-ca.key.pem
+          RAUC_KEY_FILE="$(pwd)/rauc-ca.key.pem" \
+            buildroot/rauc/create-bundle.sh \
+            "${{ matrix.pi }}" "$VERSION" \
+            "../buildroot-${{ matrix.pi }}/images/rootfs.ext4" \
+            "$BUNDLE"
+          rm -f rauc-ca.key.pem
+
+          sha256sum "$OUT" "$BUNDLE" "$SBOM" > "$CHECKSUMS"
 
           echo "image=${OUT}" >> "$GITHUB_OUTPUT"
-          echo "update_archive=${UPDATE_ARC}" >> "$GITHUB_OUTPUT"
+          echo "bundle=${BUNDLE}" >> "$GITHUB_OUTPUT"
           echo "sbom=${SBOM}" >> "$GITHUB_OUTPUT"
           echo "checksums=${CHECKSUMS}" >> "$GITHUB_OUTPUT"
 
@@ -193,7 +202,7 @@ jobs:
           name: image-${{ matrix.pi }}
           path: |
             ${{ steps.package.outputs.image }}
-            ${{ steps.package.outputs.update_archive }}
+            ${{ steps.package.outputs.bundle }}
             ${{ steps.package.outputs.sbom }}
             ${{ steps.package.outputs.checksums }}
           if-no-files-found: error
@@ -258,12 +267,12 @@ jobs:
           mkdir -p metadata
           for pi in pi3 pi4 pi5; do
             IMAGE="artifacts/image-${pi}/snapdog-os-${pi}-${VERSION}.img.gz"
-            UPDATE_ARC="artifacts/image-${pi}/snapdog-os-${pi}-${VERSION}-update.tar.gz"
+            BUNDLE="artifacts/image-${pi}/snapdog-os-${pi}-${VERSION}.raucb"
             SBOM="artifacts/image-${pi}/snapdog-os-${pi}-${VERSION}-sbom.csv"
             CHECKSUMS="artifacts/image-${pi}/snapdog-os-${pi}-${VERSION}.sha256"
 
             test -s "$IMAGE"
-            test -s "$UPDATE_ARC"
+            test -s "$BUNDLE"
             test -s "$SBOM"
             test -s "$CHECKSUMS"
             (cd "artifacts/image-${pi}" && sha256sum --check "snapdog-os-${pi}-${VERSION}.sha256")
@@ -271,7 +280,7 @@ jobs:
             aws s3 cp "$IMAGE" "s3://${R2_BUCKET}/os/images/" \
               --cache-control "public, max-age=31536000, immutable" \
               --endpoint-url "$AWS_ENDPOINT_URL"
-            aws s3 cp "$UPDATE_ARC" "s3://${R2_BUCKET}/os/updates/" \
+            aws s3 cp "$BUNDLE" "s3://${R2_BUCKET}/os/bundles/" \
               --cache-control "public, max-age=31536000, immutable" \
               --endpoint-url "$AWS_ENDPOINT_URL"
             aws s3 cp "$SBOM" "s3://${R2_BUCKET}/os/sbom/" \
@@ -282,7 +291,7 @@ jobs:
               --endpoint-url "$AWS_ENDPOINT_URL"
 
             IMAGE_SHA=$(sha256sum "$IMAGE" | awk '{print $1}')
-            UPDATE_SHA=$(sha256sum "$UPDATE_ARC" | awk '{print $1}')
+            BUNDLE_SHA=$(sha256sum "$BUNDLE" | awk '{print $1}')
             SBOM_SHA=$(sha256sum "$SBOM" | awk '{print $1}')
             CREATED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
             META="metadata/${pi}.json"
@@ -290,8 +299,8 @@ jobs:
               --arg v "$VERSION" \
               --arg channel "$CHANNEL" \
               --arg board "$pi" \
-              --arg url "${UPDATE_BASE_URL}/updates/snapdog-os-${pi}-${VERSION}-update.tar.gz" \
-              --arg sha "$UPDATE_SHA" \
+              --arg bundle_url "${UPDATE_BASE_URL}/bundles/snapdog-os-${pi}-${VERSION}.raucb" \
+              --arg bundle_sha "$BUNDLE_SHA" \
               --arg image_url "${UPDATE_BASE_URL}/images/snapdog-os-${pi}-${VERSION}.img.gz" \
               --arg image_sha "$IMAGE_SHA" \
               --arg sbom_url "${UPDATE_BASE_URL}/sbom/snapdog-os-${pi}-${VERSION}-sbom.csv" \
@@ -299,10 +308,10 @@ jobs:
               --arg git_sha "${GITHUB_SHA}" \
               --arg run_id "${GITHUB_RUN_ID}" \
               --arg created_at "$CREATED_AT" \
-              '{version:$v, channel:$channel, board:$board, url:$url, sha256:$sha, image_url:$image_url, image_sha256:$image_sha, sbom_url:$sbom_url, sbom_sha256:$sbom_sha, git_sha:$git_sha, github_run_id:$run_id, created_at:$created_at}' \
+              '{version:$v, channel:$channel, board:$board, bundle_url:$bundle_url, bundle_sha256:$bundle_sha, image_url:$image_url, image_sha256:$image_sha, sbom_url:$sbom_url, sbom_sha256:$sbom_sha, git_sha:$git_sha, github_run_id:$run_id, created_at:$created_at}' \
               > "$META"
 
-            openssl pkeyutl -sign -inkey update-signing.private.pem -rawin -in "${META}.sig" "$META"
+            openssl pkeyutl -sign -inkey update-signing.private.pem -rawin -in "$META" -out "${META}.sig"
             aws s3 cp "$META" "s3://${R2_BUCKET}/os/metadata/${CHANNEL}/${pi}.json" \
               --content-type "application/json" \
               --cache-control "public, max-age=60, must-revalidate" \
@@ -339,7 +348,7 @@ jobs:
         run: |
           mapfile -t release_files < <(find artifacts -type f \( \
             -name '*.img.gz' -o \
-            -name '*-update.tar.gz' -o \
+            -name '*.raucb' -o \
             -name '*-sbom.csv' -o \
             -name '*.sha256' \
           \) | sort)

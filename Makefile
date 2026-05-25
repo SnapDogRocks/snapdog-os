@@ -3,7 +3,6 @@ VERSION := $(shell cat VERSION)
 SNAPDOG_CTRL_BINARY ?= snapdog-ctrl-binary
 BRDIR := ../buildroot-$(PI)
 BRSRC := ../buildroot
-OVERLAY_CTRL := buildroot/board/raspberrypi/overlay/usr/bin/snapdog-ctrl
 
 .PHONY: setup prepare-ctrl build config clean all
 
@@ -22,9 +21,9 @@ prepare-ctrl:
 		echo "Missing $(SNAPDOG_CTRL_BINARY). Build snapdog-ctrl for aarch64 first or pass SNAPDOG_CTRL_BINARY=/path/to/snapdog-ctrl."; \
 		exit 1; \
 	fi
-	@mkdir -p $(dir $(OVERLAY_CTRL))
-	@cp "$(SNAPDOG_CTRL_BINARY)" "$(OVERLAY_CTRL)"
-	@chmod 755 "$(OVERLAY_CTRL)"
+	@mkdir -p $(BRDIR)/images
+	@cp "$(SNAPDOG_CTRL_BINARY)" "$(BRDIR)/images/snapdog-ctrl"
+	@chmod 755 "$(BRDIR)/images/snapdog-ctrl"
 
 build: prepare-ctrl ## Build image for $(PI)
 	@echo $(VERSION) > buildroot/VERSION

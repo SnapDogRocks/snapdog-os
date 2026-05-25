@@ -1,4 +1,0 @@
-snapdog-client.service
-snapdog-ctrl.service
-sshd.service
-updater.timer

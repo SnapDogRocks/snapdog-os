@@ -34,7 +34,6 @@ CONFIG_CAN=n
 CONFIG_WIMAX=n
 
 # Disable features not needed for headless audio (keep framebuffer for boot console)
-CONFIG_DRM=n
 CONFIG_MEDIA_SUPPORT=n
 CONFIG_DVB_CORE=n
 CONFIG_VIDEO_DEV=n
@@ -56,3 +55,9 @@ CONFIG_VIRTIO=y
 CONFIG_VIRTIO_BLK=y
 CONFIG_VIRTIO_NET=y
 CONFIG_VIRTIO_MMIO=y
+
+# RAUC dm-verity bundle support
+CONFIG_MD=y
+CONFIG_BLK_DEV_DM=y
+CONFIG_DM_VERITY=y
+CONFIG_CRYPTO_SHA256=y

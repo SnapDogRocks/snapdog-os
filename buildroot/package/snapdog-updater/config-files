@@ -1,9 +1,0 @@
-/etc/default/snapdog-client
-/etc/wpa_supplicant
-/etc/systemd/network
-/etc/hostname
-/etc/snapdog-os.channel
-/etc/snapdog-os.auto-update
-/etc/ssh/sshd_config.d
-/root/.ssh
-/etc/machine-id

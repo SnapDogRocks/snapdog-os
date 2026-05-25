@@ -16,3 +16,4 @@ source "$BR2_EXTERNAL_SNAPDOG_PATH/package/snapdog-server/Config.in"
 
 comment "System"
 source "$BR2_EXTERNAL_SNAPDOG_PATH/package/snapdog-ctrl/Config.in"
+source "$BR2_EXTERNAL_SNAPDOG_PATH/package/snapdog-rauc/Config.in"

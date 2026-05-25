@@ -1,1 +1,1 @@
-root=/dev/mmcblk0p2 rootwait console=ttyGS0,115200 console=tty1 net.ifnames=0 modules-load=dwc2,g_serial
+root=/dev/mmcblk0p2 rootwait console=ttyGS0,115200 console=tty1 net.ifnames=0 modules-load=dwc2,g_serial rauc.slot=A

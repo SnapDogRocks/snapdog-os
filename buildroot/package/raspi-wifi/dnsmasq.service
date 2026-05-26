@@ -1,0 +1,10 @@
+[Unit]
+Description=DNS/DHCP server (SoftAP mode)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/dnsmasq -k --conf-dir=/etc/dnsmasq.d
+
+[Install]
+WantedBy=multi-user.target

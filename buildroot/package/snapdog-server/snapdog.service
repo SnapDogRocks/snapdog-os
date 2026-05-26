@@ -13,5 +13,3 @@ SupplementaryGroups=audio
 ProtectHome=yes
 PrivateTmp=yes
 
-[Install]
-WantedBy=multi-user.target

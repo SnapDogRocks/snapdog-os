@@ -67,3 +67,7 @@ ln -sf /usr/lib/systemd/system/serial-getty@.service \
 
 # Mask wait-online (no service needs network-online.target; AP mode is intentionally offline)
 ln -sf /dev/null "$TARGET_DIR/etc/systemd/system/systemd-networkd-wait-online.service"
+
+# Disable services managed by snapdog-ctrl (it starts them based on config)
+ln -sf /dev/null "$TARGET_DIR/etc/systemd/system/sshd.service"
+ln -sf /dev/null "$TARGET_DIR/etc/systemd/system/ssh-access.target"

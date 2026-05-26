@@ -755,6 +755,87 @@ pub async fn set_auto_update(config: AutoUpdateConfig) -> Result<()> {
     Ok(())
 }
 
+// --- Service Management ---
+// snapdog-ctrl is the sole manager of optional services.
+// Services are NOT enabled in systemd — snapdog-ctrl starts them at boot based on config.
+
+const SERVICE_MAP: &[(&str, &str)] = &[
+    ("ssh", "sshd.service"),
+    ("client", "snapdog-client.service"),
+    ("server", "snapdog.service"),
+];
+
+/// Read service states from ctrl.toml, apply defaults if missing.
+pub async fn get_service_config() -> std::collections::HashMap<String, bool> {
+    let content = read_file(CTRL_CONFIG).await.unwrap_or_default();
+    let doc: toml_edit::DocumentMut = content.parse().unwrap_or_default();
+    let svc = doc.get("services");
+
+    let mut map = std::collections::HashMap::new();
+    map.insert(
+        "ssh".into(),
+        svc.and_then(|t| t.get("ssh"))
+            .and_then(toml_edit::Item::as_bool)
+            .unwrap_or(false),
+    );
+    map.insert(
+        "client".into(),
+        svc.and_then(|t| t.get("client"))
+            .and_then(toml_edit::Item::as_bool)
+            .unwrap_or(true),
+    );
+    map.insert(
+        "server".into(),
+        svc.and_then(|t| t.get("server"))
+            .and_then(toml_edit::Item::as_bool)
+            .unwrap_or(false),
+    );
+    map
+}
+
+/// Apply service states: start enabled services, stop disabled ones.
+pub async fn apply_service_config() {
+    let config = get_service_config().await;
+    for (key, unit) in SERVICE_MAP {
+        let enabled = config.get(*key).copied().unwrap_or(false);
+        if enabled {
+            let _ = run_cmd("systemctl", &["unmask", unit]).await;
+            let _ = run_cmd("systemctl", &["start", unit]).await;
+        } else {
+            let _ = run_cmd("systemctl", &["stop", unit]).await;
+        }
+    }
+}
+
+/// Set a service enabled/disabled and start/stop it.
+pub async fn set_service(name: &str, enabled: bool) -> Result<()> {
+    let unit = SERVICE_MAP
+        .iter()
+        .find(|(k, _)| *k == name)
+        .map(|(_, v)| *v)
+        .ok_or_else(|| anyhow::anyhow!("unknown service: {name}"))?;
+
+    let content = read_file(CTRL_CONFIG).await.unwrap_or_default();
+    let mut doc: toml_edit::DocumentMut = content.parse().unwrap_or_default();
+    let svc = doc
+        .entry("services")
+        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+    svc[name] = toml_edit::value(enabled);
+
+    if let Some(parent) = std::path::Path::new(CTRL_CONFIG).parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    tokio::fs::write(CTRL_CONFIG, doc.to_string()).await?;
+
+    if enabled {
+        run_cmd("systemctl", &["unmask", unit]).await?;
+        run_cmd("systemctl", &["start", unit]).await?;
+    } else {
+        run_cmd("systemctl", &["stop", unit]).await?;
+    }
+    Ok(())
+}
+
 // --- Server Connectivity Test ---
 
 pub async fn test_server(host: &str, port: u16) -> bool {

@@ -157,6 +157,11 @@ async fn build_app() -> Router {
         }
     });
 
+    // Apply service config (start/stop ssh, client, server based on ctrl.toml)
+    tokio::spawn(async {
+        system::apply_service_config().await;
+    });
+
     // Start auto-update scheduler
     auto_update::spawn();
 

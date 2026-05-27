@@ -305,6 +305,7 @@ managed = true
 
 // ── Internal ──────────────────────────────────────────────────
 
+// Sequential field-by-field parsing of a flat TOML structure — splitting would reduce readability.
 #[allow(clippy::too_many_lines)]
 fn parse_document(doc: &DocumentMut) -> ServerConfig {
     let mut config = ServerConfig::default();

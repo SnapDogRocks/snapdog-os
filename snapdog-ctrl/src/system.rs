@@ -588,8 +588,15 @@ pub async fn check_update() -> UpdateCheckResponse {
     let config = get_auto_update().await;
     let url = bundle_url(&config.channel);
 
+    // Check if bundle URL is reachable (HEAD request)
+    let available = tokio::process::Command::new("curl")
+        .args(["-sfI", "--max-time", "5", &url])
+        .output()
+        .await
+        .is_ok_and(|o| o.status.success());
+
     UpdateCheckResponse {
-        available: false, // TODO: HEAD request to check if bundle changed
+        available,
         current_version: if current.is_empty() {
             "unknown".into()
         } else {

@@ -7,11 +7,9 @@ mod auto_update;
 mod config_txt;
 mod mdns;
 #[cfg(debug_assertions)]
-mod mock;
 #[cfg(debug_assertions)]
-#[allow(dead_code)]
-mod network;
-#[cfg(not(debug_assertions))]
+mod mock;
+#[cfg_attr(debug_assertions, allow(dead_code))]
 mod network;
 mod rauc;
 #[cfg_attr(debug_assertions, allow(dead_code, unused_imports))]

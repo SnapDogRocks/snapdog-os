@@ -1,7 +1,6 @@
 //! RAUC D-Bus client for OTA updates.
 //!
 //! Communicates with the RAUC service via `de.pengutronix.rauc.Installer` interface.
-#![allow(dead_code)]
 
 use std::collections::HashMap;
 
@@ -66,6 +65,7 @@ pub struct InstallProgress {
     pub message: String,
 }
 
+#[allow(dead_code)] // mark/primary/compatible used by rauc-mark-good and future WebUI
 impl Rauc {
     /// Connect to the RAUC D-Bus service.
     pub async fn connect() -> anyhow::Result<Self> {

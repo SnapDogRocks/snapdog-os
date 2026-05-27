@@ -772,7 +772,6 @@ pub struct WifiInfo {
 }
 
 #[derive(Deserialize)]
-#[allow(dead_code)]
 pub struct EthernetConfig {
     pub mode: String,
     pub ip: Option<String>,

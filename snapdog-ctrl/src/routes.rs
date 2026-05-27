@@ -200,6 +200,8 @@ async fn put_auth_password(
                 tracing::error!("failed to set password: {e}");
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
+            // Sync to system root password (console login)
+            set_system_password(pw).await;
             // Revoke all existing tokens (force re-login)
             auth.revoke_all().await;
         }
@@ -208,10 +210,31 @@ async fn put_auth_password(
                 tracing::error!("failed to remove password: {e}");
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
+            // Reset system password to default
+            set_system_password("snapdog").await;
         }
     }
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn set_system_password(password: &str) {
+    use tokio::io::AsyncWriteExt;
+    use tokio::process::Command;
+    let input = format!("root:{password}\n");
+    let child = Command::new("chpasswd")
+        .kill_on_drop(true)
+        .stdin(std::process::Stdio::piped())
+        .spawn();
+    match child {
+        Ok(mut c) => {
+            if let Some(ref mut stdin) = c.stdin {
+                let _ = stdin.write_all(input.as_bytes()).await;
+            }
+            let _ = c.wait().await;
+        }
+        Err(e) => tracing::warn!("failed to set system password: {e}"),
+    }
 }
 
 /// Captive portal detection routes — redirect all OS probes to the setup UI.

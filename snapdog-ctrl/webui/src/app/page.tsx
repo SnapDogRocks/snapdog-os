@@ -17,7 +17,6 @@ import {
   type SshConfig,
   type ServerConfig,
   type ServerStatus,
-  type AuthStatus,
 } from "@/lib/api";
 import { useI18n } from "@/i18n/provider";
 import { locales, type Locale } from "@/i18n/config";
@@ -1267,6 +1266,60 @@ function UpdatePhaseIndicator({ label }: { label: string }) {
   );
 }
 
+function DevicePasswordCard() {
+  const [currentPw, setCurrentPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [authEnabled, setAuthEnabled] = useState(false);
+  const id = useId();
+
+  useEffect(() => {
+    api.getAuthStatus().then((s) => setAuthEnabled(s.enabled)).catch(() => {});
+  }, []);
+
+  const handleSave = async () => {
+    if (newPw !== confirmPw) { setStatus("error"); return; }
+    setStatus("saving");
+    try {
+      await api.setPassword(authEnabled ? currentPw : null, newPw || null);
+      setStatus("saved");
+      setCurrentPw(""); setNewPw(""); setConfirmPw("");
+      setAuthEnabled(!!newPw);
+      setTimeout(() => setStatus("idle"), 2000);
+    } catch { setStatus("error"); }
+  };
+
+  return (
+    <Card title="Device Password" id={id}>
+      <div className="space-y-3">
+        <p className="text-sm text-muted-foreground">
+          Protects the web UI and console login. Leave empty to disable.
+        </p>
+        {authEnabled && (
+          <div>
+            <label htmlFor={`${id}-current`} className="text-sm font-medium">Current password</label>
+            <Input id={`${id}-current`} type="password" value={currentPw} onChange={(e) => setCurrentPw(e.target.value)} />
+          </div>
+        )}
+        <div>
+          <label htmlFor={`${id}-new`} className="text-sm font-medium">New password</label>
+          <Input id={`${id}-new`} type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="Leave empty to disable" />
+        </div>
+        <div>
+          <label htmlFor={`${id}-confirm`} className="text-sm font-medium">Confirm password</label>
+          <Input id={`${id}-confirm`} type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} />
+        </div>
+        {status === "error" && <p className="text-sm text-destructive">Passwords don&apos;t match or current password is wrong.</p>}
+        {status === "saved" && <p className="text-sm text-green-600">Password updated.</p>}
+        <Button onClick={handleSave} disabled={status === "saving" || (newPw !== confirmPw)}>
+          {status === "saving" ? "Saving..." : "Save"}
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
 function SystemTab() {
   const t = useTranslations("system");
   const [info, setInfo] = useState<SystemInfo | null>(null);
@@ -1280,6 +1333,7 @@ function SystemTab() {
 
   return (
     <div className="space-y-5">
+      <DevicePasswordCard />
       <TimezoneCard />
       <LogsCard />
       <Card title={t("title")} id={cardId}>

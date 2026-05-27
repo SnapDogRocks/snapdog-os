@@ -14,8 +14,14 @@ pub fn spawn() {
             if let Err(e) = run_cycle().await {
                 tracing::warn!("auto-update cycle error: {e}");
             }
-            // Re-check config every hour
-            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            // Sleep based on interval before next check
+            let config = get_auto_update().await;
+            let sleep_secs = match config.interval.as_str() {
+                "weekly" => 7 * 24 * 3600,
+                "monthly" => 30 * 24 * 3600,
+                _ => 24 * 3600, // daily
+            };
+            tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
         }
     });
 }

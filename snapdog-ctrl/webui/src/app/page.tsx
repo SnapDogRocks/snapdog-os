@@ -1220,8 +1220,9 @@ function UpdateTab() {
 
 function AutoUpdateSettings() {
   const t = useTranslations("update");
-  const [config, setConfig] = useState({ enabled: true, channel: "stable", time: "04:00" });
+  const [config, setConfig] = useState({ enabled: true, channel: "stable", interval: "daily", time: "04:00" });
   const channelId = useId();
+  const intervalId = useId();
   const timeId = useId();
 
   useEffect(() => {
@@ -1245,6 +1246,13 @@ function AutoUpdateSettings() {
             <Select id={channelId} value={config.channel} onChange={(e) => save({ ...config, channel: e.target.value })}>
               <option value="stable">Stable</option>
               <option value="beta">Beta</option>
+            </Select>
+          </Field>
+          <Field label={t("checkInterval")} htmlFor={intervalId}>
+            <Select id={intervalId} value={config.interval} onChange={(e) => save({ ...config, interval: e.target.value })}>
+              <option value="daily">{t("daily")}</option>
+              <option value="weekly">{t("weekly")}</option>
+              <option value="monthly">{t("monthly")}</option>
             </Select>
           </Field>
           <Field label={t("updateTime")} htmlFor={timeId}>

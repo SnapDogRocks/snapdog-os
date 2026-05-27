@@ -321,6 +321,7 @@ mod mock_handlers {
         Json(AutoUpdateConfig {
             enabled: true,
             channel: "stable".into(),
+            interval: "daily".into(),
             time: "04:00".into(),
         })
     }
@@ -652,6 +653,7 @@ async fn get_update_status() -> Result<Json<UpdateStatus>, StatusCode> {
 pub struct AutoUpdateConfig {
     pub enabled: bool,
     pub channel: String,
+    pub interval: String,
     pub time: String,
 }
 

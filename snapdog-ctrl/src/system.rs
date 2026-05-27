@@ -754,6 +754,11 @@ pub async fn get_auto_update() -> AutoUpdateConfig {
             .and_then(|v| v.as_str())
             .unwrap_or("stable")
             .to_string(),
+        interval: au
+            .and_then(|t| t.get("interval"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("daily")
+            .to_string(),
         time: au
             .and_then(|t| t.get("time"))
             .and_then(|v| v.as_str())
@@ -771,6 +776,7 @@ pub async fn set_auto_update(config: AutoUpdateConfig) -> Result<()> {
         .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
     au["enabled"] = toml_edit::value(config.enabled);
     au["channel"] = toml_edit::value(&config.channel);
+    au["interval"] = toml_edit::value(&config.interval);
     au["time"] = toml_edit::value(&config.time);
 
     if let Some(parent) = std::path::Path::new(CTRL_CONFIG).parent() {

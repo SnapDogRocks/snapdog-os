@@ -134,12 +134,17 @@ async fn build_app() -> Router {
     tokio::spawn(async {
         let _ = network::configure_resolved().await;
 
+        let softap = system::get_softap_config().await;
+        if !softap.enabled {
+            return;
+        }
+
         let wifi_configured = network::is_wifi_configured().await;
         let eth_has_link = has_network_link().await;
 
         if !wifi_configured && !eth_has_link {
             tracing::info!("No network configured — starting setup AP (SSID: SnapDog-Setup)");
-            if let Err(e) = network::start_ap().await {
+            if let Err(e) = network::start_ap(&softap.password).await {
                 tracing::error!("Failed to start AP: {e}");
                 return;
             }

@@ -331,7 +331,47 @@ function NetworkTab() {
           </Button>
         </div>
       </Card>
+      <SoftApCard />
     </div>
+  );
+}
+
+function SoftApCard() {
+  const id = useId();
+  const [config, setConfig] = useState({ enabled: true, password: "snapdog123" });
+  const [status, setStatus] = useState<"idle" | "saved">("idle");
+
+  useEffect(() => {
+    fetch("/api/network/softap").then(r => r.json()).then(setConfig).catch(() => {});
+  }, []);
+
+  const save = (updated: typeof config) => {
+    setConfig(updated);
+    fetch("/api/network/softap", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updated) })
+      .then(() => { setStatus("saved"); setTimeout(() => setStatus("idle"), 2000); });
+  };
+
+  return (
+    <Card title="Setup Access Point" id={id}>
+      <div className="space-y-3">
+        <p className="text-xs text-muted-foreground">
+          Creates a temporary WiFi network on each boot when no WiFi is configured and no Ethernet is connected. Stops automatically once a network connection is established.
+        </p>
+        <div className="flex items-center justify-between">
+          <span className="text-sm">Enable Setup AP</span>
+          <Switch checked={config.enabled} onCheckedChange={(enabled) => save({ ...config, enabled })} />
+        </div>
+        {config.enabled && (
+          <div>
+            <label htmlFor={`${id}-pw`} className="text-sm font-medium">AP Password</label>
+            <Input id={`${id}-pw`} value={config.password} onChange={(e) => setConfig({ ...config, password: e.target.value })}
+              onBlur={() => { if (config.password.length >= 8) save(config); }} minLength={8} />
+            {config.password.length < 8 && <p className="text-xs text-destructive">Minimum 8 characters (WPA2)</p>}
+          </div>
+        )}
+        {status === "saved" && <p className="text-xs text-green-600">Saved</p>}
+      </div>
+    </Card>
   );
 }
 

@@ -22,15 +22,16 @@ pub async fn is_wifi_configured() -> bool {
 }
 
 /// Start temporary AP mode for initial setup.
-pub async fn start_ap() -> Result<()> {
+pub async fn start_ap(password: &str) -> Result<()> {
     tracing::info!("Starting temporary AP mode");
 
     // Write hostapd config
-    let hostapd = "\
-interface=wlan0\ndriver=nl80211\nssid=SnapDog-Setup\nhw_mode=g\nchannel=0\n\
-ieee80211n=1\nwmm_enabled=1\nwpa=2\nwpa_passphrase=snapdog123\n\
-wpa_key_mgmt=WPA-PSK\nrsn_pairwise=CCMP\n";
-    write_config(HOSTAPD_CONF, hostapd).await?;
+    let hostapd = format!(
+        "interface=wlan0\ndriver=nl80211\nssid=SnapDog-Setup\nhw_mode=g\nchannel=0\n\
+         ieee80211n=1\nwmm_enabled=1\nwpa=2\nwpa_passphrase={password}\n\
+         wpa_key_mgmt=WPA-PSK\nrsn_pairwise=CCMP\n"
+    );
+    write_config(HOSTAPD_CONF, &hostapd).await?;
 
     // Write dnsmasq config for DHCP on AP
     let dnsmasq = "\

@@ -793,6 +793,48 @@ pub async fn set_auto_update(config: AutoUpdateConfig) -> Result<()> {
     Ok(())
 }
 
+// --- SoftAP Settings ---
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct SoftApConfig {
+    pub enabled: bool,
+    pub password: String,
+}
+
+pub async fn get_softap_config() -> SoftApConfig {
+    let content = read_file(CTRL_CONFIG).await.unwrap_or_default();
+    let doc: toml_edit::DocumentMut = content.parse().unwrap_or_default();
+    let ap = doc.get("softap");
+    SoftApConfig {
+        enabled: ap
+            .and_then(|t| t.get("enabled"))
+            .and_then(toml_edit::Item::as_bool)
+            .unwrap_or(true),
+        password: ap
+            .and_then(|t| t.get("password"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("snapdog123")
+            .to_string(),
+    }
+}
+
+pub async fn set_softap_config(config: SoftApConfig) -> Result<()> {
+    let content = read_file(CTRL_CONFIG).await.unwrap_or_default();
+    let mut doc: toml_edit::DocumentMut = content.parse().unwrap_or_default();
+
+    let ap = doc
+        .entry("softap")
+        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+    ap["enabled"] = toml_edit::value(config.enabled);
+    ap["password"] = toml_edit::value(&config.password);
+
+    if let Some(parent) = std::path::Path::new(CTRL_CONFIG).parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    tokio::fs::write(CTRL_CONFIG, doc.to_string()).await?;
+    Ok(())
+}
+
 // --- Service Management ---
 // snapdog-ctrl is the sole manager of optional services.
 // Services are NOT enabled in systemd — snapdog-ctrl starts them at boot based on config.

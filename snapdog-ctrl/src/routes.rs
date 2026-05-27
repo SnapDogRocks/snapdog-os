@@ -80,6 +80,7 @@ pub fn api() -> Router {
             get(get_wifi).put(put_wifi).delete(delete_wifi),
         )
         .route("/network/wifi/scan", post(post_wifi_scan))
+        .route("/network/softap", get(get_softap).put(put_softap))
         // Audio
         .route("/audio", get(get_audio).put(put_audio))
         // Client
@@ -851,6 +852,21 @@ async fn delete_wifi() -> StatusCode {
 
 async fn post_wifi_scan() -> Json<WifiScanResult> {
     Json(system::wifi_scan().await)
+}
+
+async fn get_softap() -> Json<system::SoftApConfig> {
+    Json(system::get_softap_config().await)
+}
+
+async fn put_softap(Json(body): Json<system::SoftApConfig>) -> StatusCode {
+    if body.password.len() < 8 {
+        return StatusCode::BAD_REQUEST;
+    }
+    if let Err(e) = system::set_softap_config(body).await {
+        tracing::error!("put_softap: {e}");
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+    StatusCode::OK
 }
 
 // --- Audio ---

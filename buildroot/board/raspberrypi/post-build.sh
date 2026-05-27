@@ -9,6 +9,7 @@ TARGET_DIR=$1
 # Ensure mountpoints exist
 mkdir -p "$TARGET_DIR/data"
 mkdir -p "$TARGET_DIR/boot"
+mkdir -p "$TARGET_DIR/var/empty"
 
 # Ensure parent directories exist
 mkdir -p "$TARGET_DIR/etc/default"

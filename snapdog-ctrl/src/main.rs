@@ -170,6 +170,16 @@ async fn build_app() -> Router {
     if has_critical {
         tracing::error!("Critical health issue detected — running in degraded mode (no services)");
     } else {
+        // Auto-detect DAC on first boot: if EEPROM detected and no overlay set → apply + reboot
+        if system::auto_apply_dac_overlay().await {
+            tracing::info!("DAC detected and configured — rebooting to activate");
+            let _ = tokio::process::Command::new("systemctl")
+                .arg("reboot")
+                .status()
+                .await;
+            return Router::new(); // unreachable, but satisfies return type
+        }
+
         // Apply service config (start/stop ssh, client, server based on ctrl.toml)
         tokio::spawn(async {
             system::apply_service_config().await;

@@ -412,15 +412,7 @@ function AudioTab() {
   const cardId = useId();
 
   useEffect(() => {
-    api.getAudio().then((c) => {
-      // Auto-apply detected HAT on first boot (overlay empty = not configured)
-      if (!c.overlay && c.detected_hat) {
-        api.setAudio(c.detected_hat);
-        setConfig({ ...c, overlay: c.detected_hat });
-      } else {
-        setConfig(c);
-      }
-    }).catch(() => {});
+    api.getAudio().then(setConfig).catch(() => {});
   }, []);
 
   useWebSocket("audio_changed", useCallback(() => {

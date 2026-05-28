@@ -527,6 +527,24 @@ const AVAILABLE_OVERLAYS: &[(&str, &str)] = &[
     ("vc4-kms-v3d", "HDMI Audio"),
 ];
 
+/// Auto-apply DAC overlay on first boot if EEPROM detected and no overlay configured.
+/// Returns true if overlay was applied (caller should reboot).
+pub async fn auto_apply_dac_overlay() -> bool {
+    let current = crate::config_txt::get_audio_overlay()
+        .await
+        .unwrap_or_default();
+    if !current.is_empty() {
+        return false; // Already configured
+    }
+    if let Some(overlay) = detect_hat_overlay().await {
+        tracing::info!("First boot DAC auto-detect: applying overlay '{overlay}'");
+        if crate::config_txt::set_audio_overlay(overlay).await.is_ok() {
+            return true;
+        }
+    }
+    false
+}
+
 /// Detect DAC from HAT EEPROM product string.
 async fn detect_hat_overlay() -> Option<&'static str> {
     let product = read_file("/proc/device-tree/hat/product").await.ok()?;

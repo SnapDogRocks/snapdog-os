@@ -318,7 +318,7 @@ mod mock_handlers {
         tracing::info!("[mock] OTA manual install triggered (extracting & rebooting)");
         StatusCode::ACCEPTED
     }
-    pub fn m_get_auto_update() -> Json<AutoUpdateConfig> {
+    pub async fn m_get_auto_update() -> Json<AutoUpdateConfig> {
         Json(AutoUpdateConfig {
             enabled: true,
             channel: "stable".into(),
@@ -326,7 +326,7 @@ mod mock_handlers {
             time: "04:00".into(),
         })
     }
-    pub fn m_put_auto_update(Json(_body): Json<AutoUpdateConfig>) -> StatusCode {
+    pub async fn m_put_auto_update(Json(_body): Json<AutoUpdateConfig>) -> StatusCode {
         tracing::info!("[mock] set auto-update");
         StatusCode::OK
     }
@@ -500,6 +500,40 @@ mod mock_handlers {
         let _ = tx.send("server_changed".to_string());
         StatusCode::ACCEPTED
     }
+
+    // Auth (no-op in mock — always authenticated)
+    pub async fn get_auth_status() -> Json<serde_json::Value> {
+        Json(serde_json::json!({"enabled": false, "authenticated": true}))
+    }
+    pub async fn post_auth_login() -> StatusCode {
+        StatusCode::BAD_REQUEST
+    }
+    pub async fn post_auth_logout() -> StatusCode {
+        StatusCode::NO_CONTENT
+    }
+    pub async fn put_auth_password() -> StatusCode {
+        StatusCode::NO_CONTENT
+    }
+
+    // SoftAP
+    pub async fn get_softap() -> Json<serde_json::Value> {
+        Json(serde_json::json!({"enabled": true, "password": "snapdog123"}))
+    }
+    pub async fn put_softap(Json(_body): Json<serde_json::Value>) -> StatusCode {
+        tracing::info!("[mock] set softap config");
+        StatusCode::OK
+    }
+
+    // Client discovery
+    pub async fn scan_servers() -> Json<serde_json::Value> {
+        Json(serde_json::json!({"servers": [
+            {"name": "Living Room", "host": "192.168.1.100", "port": 1780},
+            {"name": "Kitchen", "host": "192.168.1.101", "port": 1780}
+        ]}))
+    }
+    pub async fn test_server(Json(_body): Json<serde_json::Value>) -> Json<serde_json::Value> {
+        Json(serde_json::json!({"reachable": true}))
+    }
 }
 
 #[cfg(debug_assertions)]
@@ -508,6 +542,12 @@ pub fn api_mock(state: crate::mock::MockState) -> Router {
 
     Router::new()
         .route("/ws", get(crate::ws::ws_handler))
+        // Auth
+        .route("/auth/status", get(h::get_auth_status))
+        .route("/auth/login", post(h::post_auth_login))
+        .route("/auth/logout", post(h::post_auth_logout))
+        .route("/auth/password", put(h::put_auth_password))
+        // System
         .route("/system", get(h::get_system).put(h::put_system))
         .route("/system/reboot", post(h::reboot))
         .route("/system/update", post(h::update))
@@ -515,12 +555,17 @@ pub fn api_mock(state: crate::mock::MockState) -> Router {
         .route("/system/update/status", get(h::get_update_status))
         .route("/system/update/upload", post(h::update_upload))
         .route("/system/update/install", post(h::update_install))
+        .route(
+            "/system/update/auto",
+            get(h::m_get_auto_update).put(h::m_put_auto_update),
+        )
         .route("/system/factory-reset", post(h::factory_reset))
         .route("/system/logs", get(h::get_logs))
         .route(
             "/system/timezone",
             get(h::get_timezone).put(h::put_timezone),
         )
+        // Network
         .route("/network", get(h::get_network))
         .route(
             "/network/ethernet",
@@ -531,9 +576,16 @@ pub fn api_mock(state: crate::mock::MockState) -> Router {
             get(h::get_wifi).put(h::put_wifi).delete(h::delete_wifi),
         )
         .route("/network/wifi/scan", post(h::wifi_scan))
+        .route("/network/softap", get(h::get_softap).put(h::put_softap))
+        // Audio
         .route("/audio", get(h::get_audio).put(h::put_audio))
+        // Client
         .route("/client", get(h::get_client).put(h::put_client))
+        .route("/client/scan-servers", post(h::scan_servers))
+        .route("/client/test-server", post(h::test_server))
+        // SSH
         .route("/ssh", get(h::get_ssh).put(h::put_ssh))
+        // Server
         .route("/server", get(h::get_server).put(h::put_server))
         .route("/server/status", get(h::get_server_status))
         .route("/server/enable", post(h::post_server_enable))

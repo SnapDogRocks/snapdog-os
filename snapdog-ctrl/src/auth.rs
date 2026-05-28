@@ -146,6 +146,6 @@ async fn persist_password_hash(hash: Option<&str>) -> anyhow::Result<()> {
     if let Some(parent) = std::path::Path::new(CTRL_CONFIG_PATH).parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    tokio::fs::write(CTRL_CONFIG_PATH, doc.to_string()).await?;
+    crate::system::atomic_write(CTRL_CONFIG_PATH, &doc.to_string()).await?;
     Ok(())
 }

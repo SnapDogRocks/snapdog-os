@@ -51,7 +51,7 @@ async fn run_cycle() -> anyhow::Result<()> {
     }
 
     // Construct bundle URL
-    let board = crate::system::detect_board();
+    let board = crate::system::detect_board().await;
     let suffix = if config.channel == "stable" {
         ""
     } else {

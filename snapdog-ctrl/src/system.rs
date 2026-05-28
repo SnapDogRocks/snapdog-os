@@ -671,14 +671,16 @@ pub async fn set_ssh(config: SshConfig) -> Result<()> {
 const UPDATE_BASE_URL: &str = "https://update.snapdog.cc/os/bundles";
 
 /// Construct the bundle URL for a given channel.
-pub fn bundle_url(channel: &str) -> String {
-    let board = detect_board();
+pub async fn bundle_url(channel: &str) -> String {
+    let board = detect_board().await;
     let suffix = if channel == "stable" { "" } else { "-beta" };
     format!("{UPDATE_BASE_URL}/{board}{suffix}.raucb")
 }
 
-pub fn detect_board() -> &'static str {
-    let content = std::fs::read_to_string("/etc/rauc/system.conf").unwrap_or_default();
+pub async fn detect_board() -> &'static str {
+    let content = tokio::fs::read_to_string("/etc/rauc/system.conf")
+        .await
+        .unwrap_or_default();
     if content.contains("pi5") {
         "pi5"
     } else if content.contains("pi3") {
@@ -695,7 +697,7 @@ pub async fn check_update() -> UpdateCheckResponse {
         .trim()
         .to_string();
     let config = get_auto_update().await;
-    let url = bundle_url(&config.channel);
+    let url = bundle_url(&config.channel).await;
 
     // Check if bundle URL is reachable (HEAD request)
     let available = tokio::process::Command::new("curl")
@@ -898,7 +900,7 @@ pub async fn set_auto_update(config: AutoUpdateConfig) -> Result<()> {
     if let Some(parent) = std::path::Path::new(CTRL_CONFIG).parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    tokio::fs::write(CTRL_CONFIG, doc.to_string()).await?;
+    atomic_write(CTRL_CONFIG, &doc.to_string()).await?;
     Ok(())
 }
 
@@ -940,7 +942,7 @@ pub async fn set_softap_config(config: SoftApConfig) -> Result<()> {
     if let Some(parent) = std::path::Path::new(CTRL_CONFIG).parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    tokio::fs::write(CTRL_CONFIG, doc.to_string()).await?;
+    atomic_write(CTRL_CONFIG, &doc.to_string()).await?;
     Ok(())
 }
 
@@ -1014,7 +1016,7 @@ pub async fn set_service(name: &str, enabled: bool) -> Result<()> {
     if let Some(parent) = std::path::Path::new(CTRL_CONFIG).parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    tokio::fs::write(CTRL_CONFIG, doc.to_string()).await?;
+    atomic_write(CTRL_CONFIG, &doc.to_string()).await?;
 
     if enabled {
         run_cmd("systemctl", &["unmask", unit]).await?;
@@ -1028,6 +1030,16 @@ pub async fn set_service(name: &str, enabled: bool) -> Result<()> {
 // --- Server Connectivity Test ---
 
 pub async fn test_server(host: &str, port: u16) -> bool {
+    // Only allow connections to private/link-local IPs (prevent SSRF)
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        let is_private = match ip {
+            std::net::IpAddr::V4(v4) => v4.is_private() || v4.is_link_local() || v4.is_loopback(),
+            std::net::IpAddr::V6(v6) => v6.is_loopback(),
+        };
+        if !is_private {
+            return false;
+        }
+    }
     let addr = format!("{host}:{port}");
     tokio::time::timeout(
         std::time::Duration::from_secs(3),
@@ -1049,6 +1061,18 @@ pub async fn scan_servers() -> ScanServersResponse {
 
 async fn read_file(path: &str) -> Result<String> {
     Ok(tokio::fs::read_to_string(path).await?)
+}
+
+/// Write file atomically: write to temp, fsync, rename.
+pub async fn atomic_write(path: &str, content: &str) -> Result<()> {
+    let tmp = format!("{path}.tmp");
+    tokio::fs::write(&tmp, content).await?;
+    // fsync the file
+    let f = tokio::fs::File::open(&tmp).await?;
+    f.sync_all().await?;
+    drop(f);
+    tokio::fs::rename(&tmp, path).await?;
+    Ok(())
 }
 
 async fn command_stdout(cmd: &str, args: &[&str]) -> Result<String> {

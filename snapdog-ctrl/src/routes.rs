@@ -125,14 +125,17 @@ async fn get_auth_status(
     req: Request,
 ) -> Json<AuthStatusResponse> {
     let authenticated = if auth.is_enabled().await {
-        req.headers()
+        let token = req
+            .headers()
             .get("authorization")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
-            .is_some_and(|t| {
-                // Can't await inside is_some_and, use blocking check
-                auth.0.tokens.try_read().is_ok_and(|set| set.contains(t))
-            })
+            .unwrap_or("");
+        if token.is_empty() {
+            false
+        } else {
+            auth.is_valid_token(token).await
+        }
     } else {
         true
     };
@@ -769,7 +772,7 @@ async fn put_auto_update(Json(body): Json<AutoUpdateConfig>) -> StatusCode {
 async fn post_update() -> StatusCode {
     // Install from the channel's bundle URL
     let config = system::get_auto_update().await;
-    let url = system::bundle_url(&config.channel);
+    let url = system::bundle_url(&config.channel).await;
     if let Err(e) = system::rauc_install(&url).await {
         tracing::error!("post_update: {e}");
         return StatusCode::INTERNAL_SERVER_ERROR;

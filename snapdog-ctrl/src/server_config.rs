@@ -47,7 +47,7 @@ impl Default for AudioConfig {
     fn default() -> Self {
         Self {
             sample_rate: 48000,
-            bit_depth: 16,
+            bit_depth: 32,
             channels: 2,
             source_conflict: "last_wins".into(),
             zone_switch_fade_ms: 300,
@@ -72,7 +72,7 @@ impl Default for SnapcastConfig {
     fn default() -> Self {
         Self {
             streaming_port: 1704,
-            codec: "flac".into(),
+            codec: "f32lz4".into(),
             encryption_psk: None,
             group_volume_mode: "relative".into(),
             unknown_clients: "accept".into(),
@@ -293,7 +293,7 @@ log_level = "info"
 
 [audio]
 sample_rate = 48000
-bit_depth = 16
+bit_depth = 32
 channels = 2
 source_conflict = "last_wins"
 zone_switch_fade_ms = 300
@@ -301,7 +301,7 @@ source_switch_fade_ms = 300
 
 [snapcast]
 streaming_port = 1704
-codec = "flac"
+codec = "f32lz4"
 group_volume_mode = "relative"
 unknown_clients = "accept"
 mdns_name = "SnapDog"

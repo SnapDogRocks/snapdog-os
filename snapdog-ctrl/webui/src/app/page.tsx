@@ -95,7 +95,7 @@ const DEFAULT_SERVER_CONFIG: ServerConfig = {
   http: { api_keys: [] },
   audio: {
     sample_rate: 48000,
-    bit_depth: 16,
+    bit_depth: 32,
     channels: 2,
     source_conflict: "last_wins",
     zone_switch_fade_ms: 300,
@@ -103,7 +103,7 @@ const DEFAULT_SERVER_CONFIG: ServerConfig = {
   },
   snapcast: {
     streaming_port: 1704,
-    codec: "flac",
+    codec: "f32lz4",
     encryption_psk: null,
     group_volume_mode: "relative",
     unknown_clients: "accept",

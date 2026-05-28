@@ -207,6 +207,21 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ current, new: newPassword }),
     }),
+
+  // SoftAP
+  getSoftap: () => request<{ enabled: boolean; password: string }>("/api/network/softap"),
+  setSoftap: (config: { enabled: boolean; password: string }) =>
+    request<void>("/api/network/softap", { method: "PUT", body: JSON.stringify(config) }),
+
+  // Timezone
+  getTimezone: () => request<{ timezone: string; available: string[] }>("/api/system/timezone"),
+  setTimezone: (timezone: string) =>
+    request<void>("/api/system/timezone", { method: "PUT", body: JSON.stringify({ timezone }) }),
+
+  // Auto-Update
+  getAutoUpdate: () => request<{ enabled: boolean; channel: string; interval: string; time: string }>("/api/system/update/auto"),
+  setAutoUpdate: (config: { enabled: boolean; channel: string; interval: string; time: string }) =>
+    request<void>("/api/system/update/auto", { method: "PUT", body: JSON.stringify(config) }),
 };
 
 export interface AuthStatus {

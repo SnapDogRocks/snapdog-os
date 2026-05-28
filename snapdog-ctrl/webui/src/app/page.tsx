@@ -342,13 +342,12 @@ function SoftApCard() {
   const [status, setStatus] = useState<"idle" | "saved">("idle");
 
   useEffect(() => {
-    fetch("/api/network/softap").then(r => r.json()).then(setConfig).catch(() => {});
+    api.getSoftap().then(setConfig).catch(() => {});
   }, []);
 
   const save = (updated: typeof config) => {
     setConfig(updated);
-    fetch("/api/network/softap", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updated) })
-      .then(() => { setStatus("saved"); setTimeout(() => setStatus("idle"), 2000); });
+    api.setSoftap(updated).then(() => { setStatus("saved"); setTimeout(() => setStatus("idle"), 2000); });
   };
 
   return (
@@ -904,7 +903,7 @@ function TimezoneCard() {
   const cardId = useId();
 
   useEffect(() => {
-    fetch("/api/system/timezone").then(r => r.json()).then((data) => {
+    api.getTimezone().then((data) => {
       setTimezone(data.timezone);
       setAvailable(data.available);
     }).catch(() => {});
@@ -917,7 +916,7 @@ function TimezoneCard() {
       <Field label={t("timezoneSelect")} htmlFor={tzId}>
         <Select id={tzId} value={timezone} onChange={(e) => {
           setTimezone(e.target.value);
-          fetch("/api/system/timezone", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ timezone: e.target.value }) });
+          api.setTimezone(e.target.value);
         }}>
           {available.map((tz) => (
             <option key={tz} value={tz}>{tz}</option>
@@ -1267,12 +1266,12 @@ function AutoUpdateSettings() {
   const timeId = useId();
 
   useEffect(() => {
-    fetch("/api/system/update/auto").then(r => r.json()).then(setConfig).catch(() => {});
+    api.getAutoUpdate().then(setConfig).catch(() => {});
   }, []);
 
   const save = (updated: typeof config) => {
     setConfig(updated);
-    fetch("/api/system/update/auto", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updated) });
+    api.setAutoUpdate(updated);
   };
 
   return (

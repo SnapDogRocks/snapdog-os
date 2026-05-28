@@ -92,7 +92,7 @@ pub async fn require_auth_ext(
 
     // Public endpoints that don't require auth
     let path = req.uri().path();
-    if path == "/api/auth/status" || path == "/api/auth/login" {
+    if path == "/api/auth/status" || path == "/api/auth/login" || path == "/api/ws" {
         return Ok(next.run(req).await);
     }
 

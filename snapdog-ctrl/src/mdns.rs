@@ -13,11 +13,15 @@ const BROWSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 pub async fn browse_servers() -> Vec<DiscoveredServer> {
     #[cfg(feature = "mdns-astro")]
     {
-        browse_astro().await
+        return browse_astro().await;
     }
-    #[cfg(feature = "mdns-sd")]
+    #[cfg(all(feature = "mdns-sd", not(feature = "mdns-astro")))]
     {
-        browse_mdns_sd().await
+        return browse_mdns_sd().await;
+    }
+    #[cfg(all(not(feature = "mdns-astro"), not(feature = "mdns-sd")))]
+    {
+        vec![]
     }
 }
 
@@ -60,6 +64,7 @@ async fn browse_astro() -> Vec<DiscoveredServer> {
 }
 
 #[cfg(feature = "mdns-sd")]
+#[cfg_attr(feature = "mdns-astro", allow(dead_code))]
 async fn browse_mdns_sd() -> Vec<DiscoveredServer> {
     use mdns_sd::{ServiceDaemon, ServiceEvent};
 

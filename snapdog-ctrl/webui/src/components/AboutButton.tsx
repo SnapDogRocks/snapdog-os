@@ -94,7 +94,7 @@ function AboutOverlay({ onClose }: { onClose: () => void }) {
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 600, opacity: 0 }}
         transition={{ type: "spring", damping: 30, stiffness: 300 }}
-        className="relative z-10 w-full max-w-none sm:max-w-md mx-0 sm:mx-4 rounded-t-3xl sm:rounded-2xl border-t border-x sm:border border-border bg-card p-5 sm:p-6 pb-6 shadow-2xl flex flex-col items-center gap-4 text-center touch-none select-none cursor-default flex-shrink-0"
+        className="relative z-10 w-full max-w-none sm:max-w-[398px] mx-0 sm:mx-4 rounded-t-3xl sm:rounded-2xl border-t border-x sm:border border-border bg-card p-5 sm:p-6 pb-6 shadow-2xl flex flex-col items-center gap-4 text-center touch-none select-none cursor-default flex-shrink-0"
       >
         {/* Drag handle line indicator */}
         <div className="w-12 h-1 rounded-full bg-muted-foreground/20 mx-auto cursor-grab active:cursor-grabbing shrink-0 hover:bg-muted-foreground/45 transition-colors" />

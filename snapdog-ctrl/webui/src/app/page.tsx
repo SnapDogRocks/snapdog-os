@@ -2149,12 +2149,33 @@ function HealthBanner() {
     localStorage.setItem("snapdog_dismissed_warnings", JSON.stringify([...next]));
   };
 
-  const visible = warnings.filter((w) => !dismissed.has(w.id));
-  if (visible.length === 0) return null;
+  const critical = warnings.filter((w) => w.severity === "critical");
+  const nonCritical = warnings.filter((w) => w.severity !== "critical" && !dismissed.has(w.id));
+
+  // Critical errors: full-screen overlay
+  if (critical.length > 0) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/95 p-6">
+        <div className="w-full max-w-md space-y-4 text-center">
+          <div className="text-4xl">⚠️</div>
+          <h1 className="text-xl font-bold text-destructive">System Error</h1>
+          <div className="space-y-2">
+            {critical.map((w) => (
+              <p key={w.id} className="text-sm text-destructive">{t(w.id)}</p>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">The device cannot operate normally. Try rebooting or re-flashing the SD card.</p>
+          <Button onClick={() => api.reboot()}>Reboot</Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (nonCritical.length === 0) return null;
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 pt-4 space-y-2">
-      {visible.map((w) => (
+      {nonCritical.map((w) => (
         <div key={w.id} className={`flex items-center justify-between rounded-lg px-3 py-2 text-xs ${w.severity === "warn" ? "bg-yellow-500/10 text-yellow-800 dark:text-yellow-300" : "bg-blue-500/10 text-blue-800 dark:text-blue-300"}`} role="alert">
           <span>{t(w.id)}</span>
           <button type="button" onClick={() => dismiss(w.id)} className="ml-2 opacity-60 hover:opacity-100" aria-label="Dismiss">✕</button>

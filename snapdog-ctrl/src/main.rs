@@ -162,17 +162,22 @@ async fn build_app() -> Router {
         }
     });
 
-    // Apply service config (start/stop ssh, client, server based on ctrl.toml)
-    tokio::spawn(async {
-        system::apply_service_config().await;
-    });
-
-    // Preflight health check (panics if /data not mounted)
+    // Preflight health check
     let health_warnings = system::preflight_check().await;
+    let has_critical = health_warnings.iter().any(|w| w.severity == "critical");
     let health_state = routes::HealthState(std::sync::Arc::new(health_warnings));
 
-    // Start auto-update scheduler
-    auto_update::spawn();
+    if has_critical {
+        tracing::error!("Critical health issue detected — running in degraded mode (no services)");
+    } else {
+        // Apply service config (start/stop ssh, client, server based on ctrl.toml)
+        tokio::spawn(async {
+            system::apply_service_config().await;
+        });
+
+        // Start auto-update scheduler
+        auto_update::spawn();
+    }
 
     let auth_state = auth::AuthState::load().await;
 
@@ -183,6 +188,13 @@ async fn build_app() -> Router {
         .nest("/api", routes::api())
         .merge(routes::captive_portal_routes())
         .fallback(routes::static_files)
+        .layer(axum::middleware::from_fn({
+            let hs = health_state.clone();
+            move |req, next| {
+                let hs = hs.clone();
+                async move { routes::degraded_mode_guard(hs, req, next).await }
+            }
+        }))
         .layer(axum::Extension(health_state))
         .layer(axum::middleware::from_fn({
             let auth = auth_state.clone();

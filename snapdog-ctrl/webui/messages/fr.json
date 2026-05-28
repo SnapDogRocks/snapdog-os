@@ -262,6 +262,8 @@
   "health": {
     "boot_not_mounted": "Partition boot non montée — mises à jour OTA désactivées",
     "no_wlan": "Pas d’adaptateur WiFi — AP indisponible",
-    "no_inactive_partition": "Partition inactive introuvable — mises à jour désactivées"
+    "no_inactive_partition": "Partition inactive introuvable — mises à jour désactivées",
+    "data_not_mounted": "Partition de données (/data) non montée",
+    "data_not_writable": "Partition de données (/data) non inscriptible"
   }
 }

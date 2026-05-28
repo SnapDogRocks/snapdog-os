@@ -262,6 +262,8 @@
   "health": {
     "boot_not_mounted": "Boot-partitie niet gemount — OTA-updates uitgeschakeld",
     "no_wlan": "Geen WiFi-adapter — Setup-AP niet beschikbaar",
-    "no_inactive_partition": "Inactieve partitie niet gevonden — updates uitgeschakeld"
+    "no_inactive_partition": "Inactieve partitie niet gevonden — updates uitgeschakeld",
+    "data_not_mounted": "Datapartitie (/data) niet gemount",
+    "data_not_writable": "Datapartitie (/data) niet schrijfbaar"
   }
 }

@@ -19,26 +19,30 @@ pub struct HealthWarning {
     pub severity: &'static str,
 }
 
-/// Run preflight checks. Panics if /data is not mounted (critical).
-/// Returns warnings for non-critical issues.
+/// Returns warnings (including critical ones). Never panics.
 pub async fn preflight_check() -> Vec<HealthWarning> {
+    let mut warnings = Vec::new();
+
     // Critical: /data must be mounted and writable
     let data_mounted = tokio::fs::metadata("/data").await.is_ok();
-    assert!(
-        data_mounted,
-        "/data is not mounted — cannot start without persistent storage"
-    );
-
-    let test_file = "/data/.health-check";
-    let writable = tokio::fs::write(test_file, "ok").await.is_ok();
-    let _ = tokio::fs::remove_file(test_file).await;
-    assert!(
-        writable,
-        "/data is mounted but not writable — cannot persist configuration"
-    );
-
-    // Non-critical checks
-    let mut warnings = Vec::new();
+    if data_mounted {
+        let test_file = "/data/.health-check";
+        let writable = tokio::fs::write(test_file, "ok").await.is_ok();
+        let _ = tokio::fs::remove_file(test_file).await;
+        if !writable {
+            tracing::error!("/data is not writable — configuration will not persist");
+            warnings.push(HealthWarning {
+                id: "data_not_writable",
+                severity: "critical",
+            });
+        }
+    } else {
+        tracing::error!("/data is not mounted — configuration will not persist");
+        warnings.push(HealthWarning {
+            id: "data_not_mounted",
+            severity: "critical",
+        });
+    }
 
     if tokio::fs::metadata("/boot").await.is_err() {
         warnings.push(HealthWarning {

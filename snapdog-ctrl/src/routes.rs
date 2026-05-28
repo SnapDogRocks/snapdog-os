@@ -654,6 +654,30 @@ pub struct TimezoneUpdate {
 #[derive(Clone)]
 pub struct HealthState(pub std::sync::Arc<Vec<system::HealthWarning>>);
 
+impl HealthState {
+    pub fn is_critical(&self) -> bool {
+        self.0.iter().any(|w| w.severity == "critical")
+    }
+}
+
+/// Middleware: in critical mode, only /api/system/health and /api/system/reboot are allowed.
+pub async fn degraded_mode_guard(
+    health: HealthState,
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> Result<axum::response::Response, StatusCode> {
+    if !health.is_critical() {
+        return Ok(next.run(req).await);
+    }
+
+    let path = req.uri().path();
+    if path == "/api/system/health" || path == "/api/system/reboot" || !path.starts_with("/api/") {
+        Ok(next.run(req).await)
+    } else {
+        Err(StatusCode::SERVICE_UNAVAILABLE)
+    }
+}
+
 async fn get_health(Extension(health): Extension<HealthState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "ok": health.0.is_empty(),

@@ -34,9 +34,9 @@ pub async fn start_ap(password: &str) -> Result<()> {
     write_config(HOSTAPD_CONF, &hostapd).await?;
 
     // Write dnsmasq config for DHCP on AP
-    let dnsmasq = "\
-interface=wlan0\ndhcp-range=10.11.12.100,10.11.12.200,255.255.255.0,24h\n\
-address=/#/10.11.12.13\n";
+    let dnsmasq = "interface=wlan0\nbind-interfaces\n\
+         dhcp-range=10.11.12.100,10.11.12.200,255.255.255.0,24h\n\
+         address=/#/10.11.12.13\n";
     write_config(DNSMASQ_CONF, dnsmasq).await?;
 
     // Assign static IP to wlan0 for AP mode
@@ -187,6 +187,7 @@ pub async fn configure_ethernet(static_ip: Option<&StaticConfig>) -> Result<()> 
 pub async fn configure_resolved() -> Result<()> {
     let conf = "[Resolve]\nDNSStubListener=no\n";
     write_config(RESOLVED_CONF, conf).await?;
+    run("systemctl", &["restart", "systemd-resolved"]).await?;
     Ok(())
 }
 

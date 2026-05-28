@@ -1586,7 +1586,14 @@ function ServerAudioSubTab({ config, setConfig }: { config: ServerConfig; setCon
         <Input id={portId} type="number" value={config.snapcast.streaming_port} onChange={(e) => update("snapcast.streaming_port", Number(e.target.value))} />
       </Field>
       <Field label={t("codec")} htmlFor={codecId}>
-        <Select id={codecId} value={config.snapcast.codec} onChange={(e) => update("snapcast.codec", e.target.value)}>
+        <Select id={codecId} value={config.snapcast.codec} onChange={(e) => {
+          const codec = e.target.value;
+          const c = structuredClone(config);
+          (c.snapcast as Record<string, unknown>).codec = codec;
+          if (codec === "flac" && c.audio.bit_depth > 24) c.audio.bit_depth = 24;
+          if (codec.startsWith("f32")) c.audio.bit_depth = 32;
+          setConfig(c);
+        }}>
           <option value="PCM">PCM</option>
           <option value="FLAC">FLAC</option>
           <option value="f32lz4">f32lz4</option>
@@ -1606,11 +1613,17 @@ function ServerAudioSubTab({ config, setConfig }: { config: ServerConfig; setCon
         </Select>
       </Field>
       <Field label={t("bitDepth")} htmlFor={bitDepthId}>
-        <Select id={bitDepthId} value={String(config.audio.bit_depth)} onChange={(e) => update("audio.bit_depth", Number(e.target.value))}>
-          <option value="16">16</option>
-          <option value="24">24</option>
-          <option value="32">32</option>
-        </Select>
+        {config.snapcast.codec.startsWith("f32") ? (
+          <Select id={bitDepthId} value="32" disabled>
+            <option value="32">32 (float)</option>
+          </Select>
+        ) : (
+          <Select id={bitDepthId} value={String(config.audio.bit_depth)} onChange={(e) => update("audio.bit_depth", Number(e.target.value))}>
+            <option value="16">16</option>
+            <option value="24">24</option>
+            {config.snapcast.codec !== "flac" && <option value="32">32</option>}
+          </Select>
+        )}
       </Field>
       <Field label={t("sourceConflict")} htmlFor={sourceConflictId}>
         <Select id={sourceConflictId} value={config.audio.source_conflict} onChange={(e) => update("audio.source_conflict", e.target.value)}>

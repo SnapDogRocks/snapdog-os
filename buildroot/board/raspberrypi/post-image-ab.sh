@@ -36,7 +36,13 @@ awk -v boot_files="${BOOT_FILES}" '
 	{ print }
 ' "${BOARD_DIR}/genimage-ab.cfg.in" > "${GENIMAGE_CFG}"
 
-cp -f "${BINARIES_DIR}/rootfs.ext4" "${BINARIES_DIR}/rootfs-b.ext4"
+# Create empty rootfs-b (placeholder until first OTA update)
+ROOTFS_B="${BINARIES_DIR}/rootfs-b.ext4"
+dd if=/dev/zero of="$ROOTFS_B" bs=1M count=64 status=none
+mkfs.ext4 -q -F -L rootfs-b "$ROOTFS_B"
+echo "This partition is empty. It will be used for over-the-air updates." > "${BINARIES_DIR}/.rootfs-b-readme"
+debugfs -w "$ROOTFS_B" -R "write ${BINARIES_DIR}/.rootfs-b-readme README" 2>/dev/null
+rm -f "${BINARIES_DIR}/.rootfs-b-readme"
 
 ROOTPATH_TMP="$(mktemp -d)"
 trap 'rm -rf "${ROOTPATH_TMP}" "${GENIMAGE_TMP}"' EXIT

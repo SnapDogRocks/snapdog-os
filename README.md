@@ -265,7 +265,6 @@ The public key is baked into the OS image at `/etc/snapdog-os-update.pub.pem`. T
 ## Roadmap
 
 - [ ] Per-board configuration structure (`buildroot/boards/{pi3,pi4,pi5,cm4}/`)
-- [ ] NVMe boot support (Pi5 + NVMe HAT)
 - [ ] WebUI i18n completion (all new strings in de/fr/es/nl)
 - [ ] Zone presence/scheduling UI
 - [ ] Per-zone KNX group address configuration

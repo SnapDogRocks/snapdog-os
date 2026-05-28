@@ -4,6 +4,7 @@
 #
 ################################################################################
 
+SNAPDOG_ROOT_DEV ?= /dev/mmcblk0p
 CONFIGTXT_DEPENDENCIES = rpi-firmware
 
 define CONFIGTXT_INSTALL_TARGET_CMDS

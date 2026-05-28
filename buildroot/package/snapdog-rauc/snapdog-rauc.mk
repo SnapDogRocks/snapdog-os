@@ -6,6 +6,7 @@
 #
 ################################################################################
 
+SNAPDOG_ROOT_DEV ?= /dev/mmcblk0p
 SNAPDOG_RAUC_DEPENDENCIES = rauc
 
 define SNAPDOG_RAUC_INSTALL_TARGET_CMDS

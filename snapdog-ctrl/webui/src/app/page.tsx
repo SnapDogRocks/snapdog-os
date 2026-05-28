@@ -24,6 +24,35 @@ import { useWebSocket } from "@/hooks/useWebSocket";
 
 type Tab = "dashboard" | "network" | "audio" | "client" | "server" | "ssh" | "update" | "system";
 
+const EMOJI_PRESETS = ["🔊", "🛋️", "🍽️", "🛏️", "🎵", "🏠", "🚿", "📺", "💻", "🎧", "🎶", "🌙", "☀️", "🌿", "🏢", "🎮", "📻", "🎹", "🎸", "🥁", "🎺"];
+
+function EmojiPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [custom, setCustom] = useState(false);
+  const isCustom = !EMOJI_PRESETS.includes(value) && value !== "";
+
+  return (
+    <div className="relative">
+      <button type="button" onClick={() => setOpen(!open)} className="flex size-8 items-center justify-center rounded-md border border-border text-base hover:bg-muted" aria-label="Pick icon">
+        {value || "🔊"}
+      </button>
+      {open && (
+        <div className="absolute left-0 top-9 z-50 rounded-lg border border-border bg-card p-2 shadow-lg">
+          <div className="grid grid-cols-7 gap-1">
+            {EMOJI_PRESETS.map((e) => (
+              <button key={e} type="button" className={`size-7 rounded text-base hover:bg-muted ${value === e ? "bg-primary/20" : ""}`} onClick={() => { onChange(e); setOpen(false); setCustom(false); }}>{e}</button>
+            ))}
+            <button type="button" className={`size-7 rounded text-xs hover:bg-muted ${isCustom || custom ? "bg-primary/20" : ""}`} onClick={() => setCustom(true)}>…</button>
+          </div>
+          {(custom || isCustom) && (
+            <input className="mt-2 w-full rounded border border-border px-2 py-1 text-center text-base" value={value} onChange={(e) => onChange(e.target.value)} placeholder="✨" autoFocus />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StatusDot({ connected, label }: { connected: boolean; label: string }) {
   return (
     <span
@@ -1486,6 +1515,12 @@ function ServerTab() {
           </a>
         )}
 
+        {status.enabled && (
+          <Field label={t("deviceName")} htmlFor={`${cardId}-name`}>
+            <Input id={`${cardId}-name`} value={config.name} onChange={(e) => { const c = structuredClone(config); c.name = e.target.value; setConfig(c); }} placeholder="SnapDog" />
+          </Field>
+        )}
+
 
         {status.enabled && (
           <>
@@ -1615,6 +1650,10 @@ function ServerAudioSubTab({ config, setConfig }: { config: ServerConfig; setCon
           <option value="debug">debug</option>
         </Select>
       </Field>
+      <div className="flex items-center justify-between">
+        <span className="text-sm">{t("advertiseSnapcast")}</span>
+        <Switch checked={config.snapcast.advertise_snapcast} onCheckedChange={(v) => update("snapcast.advertise_snapcast", v)} />
+      </div>
     </div>
   );
 }
@@ -1684,6 +1723,14 @@ function ServerSourcesSubTab({ config, setConfig }: { config: ServerConfig; setC
             <Field label={t("url")} htmlFor={subUrlId}><Input id={subUrlId} value={config.subsonic.url} onChange={(e) => updateSub("url", e.target.value)} /></Field>
             <Field label={t("username")} htmlFor={subUserId}><Input id={subUserId} value={config.subsonic.username} onChange={(e) => updateSub("username", e.target.value)} /></Field>
             <Field label={t("password")} htmlFor={subPassId}><Input id={subPassId} type="password" value={config.subsonic.password} onChange={(e) => updateSub("password", e.target.value)} /></Field>
+            <Field label={t("streamingFormat")} htmlFor={`${subPassId}-fmt`}>
+              <Select id={`${subPassId}-fmt`} value={config.subsonic.format} onChange={(e) => updateSub("format", e.target.value)}>
+                <option value="raw">Original (raw)</option>
+                <option value="flac">FLAC</option>
+                <option value="mp3">MP3</option>
+                <option value="opus">Opus</option>
+              </Select>
+            </Field>
           </div>
         )}
       </div>
@@ -1713,6 +1760,12 @@ function ServerSourcesSubTab({ config, setConfig }: { config: ServerConfig; setC
         {config.airplay && (
           <div className="space-y-2 pl-2 border-l-2 border-border">
             <Field label={t("password")} htmlFor={airPassId}><Input id={airPassId} value={config.airplay.password ?? ""} onChange={(e) => { const c = structuredClone(config); c.airplay = { ...c.airplay!, password: e.target.value || null }; setConfig(c); }} /></Field>
+            <Field label={t("airplayMode")} htmlFor={`${airPassId}-mode`}>
+              <Select id={`${airPassId}-mode`} value={config.airplay.mode} onChange={(e) => { const c = structuredClone(config); c.airplay = { ...c.airplay!, mode: e.target.value }; setConfig(c); }}>
+                <option value="airplay2">AirPlay 2</option>
+                <option value="airplay1">AirPlay 1 (Legacy)</option>
+              </Select>
+            </Field>
           </div>
         )}
       </div>
@@ -1762,13 +1815,21 @@ function ServerZonesSubTab({ config, setConfig }: { config: ServerConfig; setCon
       <div className="space-y-2">
         <span className="text-sm font-medium">{t("clients")}</span>
         {config.clients.map((cl, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <Input className="flex-1" placeholder={t("clientName")} value={cl.name} onChange={(e) => updateClient(i, "name", e.target.value)} aria-label={`${t("clientName")} ${i + 1}`} />
-            <Input className="w-32" placeholder={t("mac")} value={cl.mac} onChange={(e) => updateClient(i, "mac", e.target.value)} aria-label={`${t("mac")} ${i + 1}`} />
-            <Select className="w-28" value={cl.zone} onChange={(e) => updateClient(i, "zone", e.target.value)} aria-label={`${t("zone")} ${i + 1}`}>
-              {config.zones.map((z) => <option key={z.name} value={z.name}>{z.name}</option>)}
-            </Select>
-            <Button variant="outline" size="icon-xs" onClick={() => removeClient(i)} aria-label="Remove">×</Button>
+          <div key={i} className="space-y-1">
+            <div className="flex items-center gap-2">
+              <EmojiPicker value={cl.icon} onChange={(v) => updateClient(i, "icon", v)} />
+              <Input className="flex-1" placeholder={t("clientName")} value={cl.name} onChange={(e) => updateClient(i, "name", e.target.value)} aria-label={`${t("clientName")} ${i + 1}`} />
+              <Input className="w-32" placeholder={t("mac")} value={cl.mac} onChange={(e) => updateClient(i, "mac", e.target.value)} aria-label={`${t("mac")} ${i + 1}`} />
+              <Select className="w-28" value={cl.zone} onChange={(e) => updateClient(i, "zone", e.target.value)} aria-label={`${t("zone")} ${i + 1}`}>
+                {config.zones.map((z) => <option key={z.name} value={z.name}>{z.name}</option>)}
+              </Select>
+              <Button variant="outline" size="icon-xs" onClick={() => removeClient(i)} aria-label="Remove">×</Button>
+            </div>
+            <div className="flex items-center gap-2 pl-8">
+              <span className="text-xs text-muted-foreground w-16">Max Vol</span>
+              <input type="range" min={1} max={100} value={cl.max_volume} onChange={(e) => updateClient(i, "max_volume", Number(e.target.value))} className="flex-1 h-1.5 accent-primary" aria-label={`Max volume ${i + 1}`} />
+              <span className="text-xs w-8 text-right">{cl.max_volume}%</span>
+            </div>
           </div>
         ))}
         <Button variant="outline" size="xs" onClick={addClient}>{t("addClient")}</Button>

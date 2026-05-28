@@ -94,6 +94,10 @@
   },
   "ssh": {
     "title": "SSH",
+    "deviceName": "Device Name",
+    "advertiseSnapcast": "Advertise for Snapcast clients",
+    "airplayMode": "Protocol",
+    "streamingFormat": "Streaming format",
     "enable": "Activar SSH",
     "enableDescription": "Permitir acceso remoto",
     "authorizedKeys": "Claves autorizadas",
@@ -168,6 +172,10 @@
   },
   "server": {
     "title": "Servidor",
+    "deviceName": "Device Name",
+    "advertiseSnapcast": "Advertise for Snapcast clients",
+    "airplayMode": "Protocol",
+    "streamingFormat": "Streaming format",
     "enable": "Activar servidor",
     "enableDescription": "Usar SnapDog como servidor multiroom",
     "disabled": "El servidor está desactivado",

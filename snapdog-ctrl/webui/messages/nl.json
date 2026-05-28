@@ -94,6 +94,10 @@
   },
   "ssh": {
     "title": "SSH",
+    "deviceName": "Device Name",
+    "advertiseSnapcast": "Advertise for Snapcast clients",
+    "airplayMode": "Protocol",
+    "streamingFormat": "Streaming format",
     "enable": "SSH inschakelen",
     "enableDescription": "Externe toegang toestaan",
     "authorizedKeys": "Geautoriseerde sleutels",
@@ -168,6 +172,10 @@
   },
   "server": {
     "title": "Server",
+    "deviceName": "Device Name",
+    "advertiseSnapcast": "Advertise for Snapcast clients",
+    "airplayMode": "Protocol",
+    "streamingFormat": "Streaming format",
     "enable": "Server inschakelen",
     "enableDescription": "SnapDog als multiroom-server gebruiken",
     "disabled": "Server is uitgeschakeld",

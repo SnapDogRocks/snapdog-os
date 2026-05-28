@@ -26,8 +26,9 @@ define CONFIGTXT_REMOVESTUFF
 endef
 
 define CONFIGTXT_QUIET_INSTALL_TARGET_CMDS
-	$(INSTALL) -D -m 644 $(BR2_EXTERNAL_SNAPDOG_PATH)/package/configtxt/cmdline.quiet \
-		$(BINARIES_DIR)/rpi-firmware/cmdline.txt
+	sed 's|@SNAPDOG_ROOT_DEV@|$(SNAPDOG_ROOT_DEV)|' \
+		$(BR2_EXTERNAL_SNAPDOG_PATH)/package/configtxt/cmdline.quiet.in \
+		> $(BINARIES_DIR)/rpi-firmware/cmdline.txt
 endef
 
 

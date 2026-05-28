@@ -2,19 +2,26 @@
 # RAUC custom bootloader backend for Raspberry Pi.
 # Uses config.txt (primary) and tryboot.txt (one-shot trial boot).
 # Slot state persisted in /data/rauc-slot-state.
+# Device-agnostic: works with mmcblk, nvme, or any block device.
 
 set -eu
 
 BOOT_MNT=/boot
 STATE_FILE=/data/rauc-slot-state
 CMDLINE="$BOOT_MNT/cmdline.txt"
-TRYBOOT_CMDLINE="$BOOT_MNT/tryboot.txt"
+
+# Detect root device base from cmdline (e.g. /dev/mmcblk0p or /dev/nvme0n1p)
+detect_root_base() {
+  ROOT=$(sed -n 's/.*root=\([^ ]*\).*/\1/p' "$1" 2>/dev/null || sed -n 's/.*root=\([^ ]*\).*/\1/p' /proc/cmdline)
+  echo "${ROOT%[0-9]}"
+}
 
 # Map bootname (A/B) to partition device
 slot_to_dev() {
+  BASE=$(detect_root_base "$CMDLINE")
   case "$1" in
-    A) echo "/dev/mmcblk0p2" ;;
-    B) echo "/dev/mmcblk0p3" ;;
+    A) echo "${BASE}2" ;;
+    B) echo "${BASE}3" ;;
     *) echo "unknown" ;;
   esac
 }
@@ -23,8 +30,8 @@ slot_to_dev() {
 cmdline_to_bootname() {
   ROOT=$(sed -n 's/.*root=\([^ ]*\).*/\1/p' "$1" 2>/dev/null)
   case "$ROOT" in
-    */mmcblk0p2) echo "A" ;;
-    */mmcblk0p3) echo "B" ;;
+    *2) echo "A" ;;
+    *3) echo "B" ;;
     *) echo "" ;;
   esac
 }
@@ -53,8 +60,6 @@ get_primary() {
 set_primary() {
   local SLOT="$1"
   with_boot_rw write_cmdline "$CMDLINE" "$SLOT"
-  # Remove tryboot if it exists (promotion)
-  [ -f "$TRYBOOT_CMDLINE" ] && with_boot_rw rm -f "$TRYBOOT_CMDLINE"
 }
 
 get_state() {
@@ -76,11 +81,10 @@ set_state() {
 }
 
 get_current() {
-  # Read from /proc/cmdline what we actually booted
   ROOT=$(sed -n 's/.*root=\([^ ]*\).*/\1/p' /proc/cmdline)
   case "$ROOT" in
-    */mmcblk0p2|*/vda2) echo "A" ;;
-    */mmcblk0p3|*/vda3) echo "B" ;;
+    *2) echo "A" ;;
+    *3) echo "B" ;;
     *) echo "" ;;
   esac
 }

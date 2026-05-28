@@ -6,7 +6,7 @@
 # Online resizes the active root partition (1GB pre-allocated).
 # Safe expansion and formatting of the unmounted data partition (partition 4).
 
-# Detect the active root partition device (e.g. /dev/mmcblk0p2 or /dev/mmcblk0p3)
+# Detect the active root partition device (e.g. /dev/mmcblk0p2, /dev/nvme0n1p2)
 ACTIVE=$(mount | grep " / " | awk '{print $1}')
 if [ -z "$ACTIVE" ]; then
   echo "Could not detect active root partition, aborting"

@@ -1,0 +1,47 @@
+image boot.vfat {
+	vfat {
+		files = {
+#BOOT_FILES#
+		}
+	}
+
+	size = 256M
+}
+
+image data.ext4 {
+	ext4 {
+		label = "data"
+	}
+
+	size = 128M
+}
+
+image nvme.img {
+	hdimage {
+		gpt = true
+	}
+
+	partition boot {
+		partition-type-uuid = C12A7328-F81F-11D2-BA4B-00A0C93EC93B
+		bootable = "true"
+		image = "boot.vfat"
+	}
+
+	partition rootfsA {
+		partition-type-uuid = 0FC63DAF-8483-4772-8E79-3D69D8477DE4
+		image = "rootfs.ext4"
+		size = 1024M
+	}
+
+	partition rootfsB {
+		partition-type-uuid = 0FC63DAF-8483-4772-8E79-3D69D8477DE4
+		image = "rootfs-b.ext4"
+		size = 1024M
+	}
+
+	partition data {
+		partition-type-uuid = 0FC63DAF-8483-4772-8E79-3D69D8477DE4
+		image = "data.ext4"
+		size = 128M
+	}
+}

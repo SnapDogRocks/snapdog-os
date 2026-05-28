@@ -11,7 +11,8 @@ SNAPDOG_RAUC_DEPENDENCIES = rauc
 define SNAPDOG_RAUC_INSTALL_TARGET_CMDS
 	# system.conf (substitute board compatible)
 	mkdir -p $(TARGET_DIR)/etc/rauc
-	sed 's/@SNAPDOG_PI_VERSION@/pi$(SNAPDOG_PI_VERSION)/' \
+	sed -e 's/@SNAPDOG_PI_VERSION@/pi$(SNAPDOG_PI_VERSION)/' \
+		-e 's|@SNAPDOG_ROOT_DEV@|$(SNAPDOG_ROOT_DEV)|' \
 		$(BR2_EXTERNAL_SNAPDOG_PATH)/package/snapdog-rauc/system.conf.in \
 		> $(TARGET_DIR)/etc/rauc/system.conf
 

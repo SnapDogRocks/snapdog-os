@@ -1,6 +1,7 @@
 PI ?= pi4
 VERSION := $(shell cat VERSION)
 SNAPDOG_CTRL_BINARY ?= snapdog-ctrl-binary
+SNAPDOG_ROOT_DEV ?= /dev/mmcblk0p
 BRDIR := ../buildroot-$(PI)
 BRSRC := ../buildroot
 
@@ -27,8 +28,8 @@ prepare-ctrl:
 
 build: prepare-ctrl ## Build image for $(PI)
 	@echo $(VERSION) > buildroot/VERSION
-	@cd $(BRSRC) && make O=$(abspath $(BRDIR)) BR2_EXTERNAL=$(abspath buildroot) SNAPDOG_PI_VERSION=$(subst pi,,$(PI)) olddefconfig
-	@cd $(BRSRC) && make O=$(abspath $(BRDIR)) BR2_EXTERNAL=$(abspath buildroot) SNAPDOG_PI_VERSION=$(subst pi,,$(PI))
+	@cd $(BRSRC) && make O=$(abspath $(BRDIR)) BR2_EXTERNAL=$(abspath buildroot) SNAPDOG_PI_VERSION=$(subst pi,,$(PI)) SNAPDOG_ROOT_DEV=$(SNAPDOG_ROOT_DEV) olddefconfig
+	@cd $(BRSRC) && make O=$(abspath $(BRDIR)) BR2_EXTERNAL=$(abspath buildroot) SNAPDOG_PI_VERSION=$(subst pi,,$(PI)) SNAPDOG_ROOT_DEV=$(SNAPDOG_ROOT_DEV)
 
 config: ## Configure for $(PI)
 	@mkdir -p $(BRDIR)

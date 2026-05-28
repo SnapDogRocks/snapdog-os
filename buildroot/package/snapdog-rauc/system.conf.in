@@ -11,11 +11,11 @@ bootloader-custom-backend=/usr/lib/rauc/boot-handler.sh
 path=/etc/rauc/ca.cert.pem
 
 [slot.rootfs.0]
-device=/dev/mmcblk0p2
+device=@SNAPDOG_ROOT_DEV@2
 type=raw
 bootname=A
 
 [slot.rootfs.1]
-device=/dev/mmcblk0p3
+device=@SNAPDOG_ROOT_DEV@3
 type=raw
 bootname=B

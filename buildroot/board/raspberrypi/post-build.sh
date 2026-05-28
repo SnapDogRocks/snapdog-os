@@ -58,6 +58,11 @@ ln -sf /data/hostname "$TARGET_DIR/etc/hostname"
 rm -rf "$TARGET_DIR/root/.ssh"
 ln -sf /data/ssh "$TARGET_DIR/root/.ssh"
 
+# Substitute boot partition device in fstab
+if [ -n "${SNAPDOG_ROOT_DEV:-}" ]; then
+  sed -i "s|/dev/mmcblk0p1|${SNAPDOG_ROOT_DEV}1|" "$TARGET_DIR/etc/fstab"
+fi
+
 # First-boot marker: triggers partition resize + format
 touch "$TARGET_DIR/resize-me"
 

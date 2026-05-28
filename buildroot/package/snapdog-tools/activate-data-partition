@@ -11,8 +11,9 @@ if mount -L data /data 2>/dev/null; then
 fi
 
 # Fallback: detect device and try partition 4
-DEVICE=$(mount | grep " / " | awk '{print $1}' | sed 's/p\?[0-9]$//')
-P4="${DEVICE}$(echo "$DEVICE" | grep -q "mmcblk" && echo "p")4"
+ROOT=$(mount | grep " / " | awk '{print $1}')
+# Strip trailing partition number to get base (works for mmcblk0p2, nvme0n1p2, sda2)
+P4="${ROOT%[0-9]}4"
 
 if [ -b "$P4" ]; then
   # Format if no filesystem

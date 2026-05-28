@@ -6,6 +6,9 @@
 use crate::system::{get_auto_update, rauc_install, rauc_operation};
 
 const UPDATE_BASE_URL: &str = "https://update.snapdog.cc/os/bundles";
+const SECS_PER_DAY: u64 = 24 * 3600;
+const SECS_PER_WEEK: u64 = 7 * SECS_PER_DAY;
+const SECS_PER_MONTH: u64 = 30 * SECS_PER_DAY;
 
 /// Spawn the auto-update background loop.
 pub fn spawn() {
@@ -17,9 +20,9 @@ pub fn spawn() {
             // Sleep based on interval before next check
             let config = get_auto_update().await;
             let sleep_secs = match config.interval.as_str() {
-                "weekly" => 7 * 24 * 3600,
-                "monthly" => 30 * 24 * 3600,
-                _ => 24 * 3600, // daily
+                "weekly" => SECS_PER_WEEK,
+                "monthly" => SECS_PER_MONTH,
+                _ => SECS_PER_DAY,
             };
             tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
         }

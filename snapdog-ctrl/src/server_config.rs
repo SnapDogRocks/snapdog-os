@@ -298,7 +298,10 @@ codec = "flac"
 group_volume_mode = "relative"
 unknown_clients = "accept"
 mdns_name = "SnapDog"
-managed = true
+
+[subsonic.cache]
+path = "/tmp/snapdog-cache"
+max_size_mb = 512
 "#
     .to_string()
 }

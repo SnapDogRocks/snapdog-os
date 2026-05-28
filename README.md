@@ -186,20 +186,8 @@ The device configuration service is a single Rust binary with an embedded web UI
 ```bash
 cd snapdog-ctrl
 SNAPDOG_SETUP_PORT=8080 cargo run
-# → http://localhost:8080 (mock mode, all APIs functional)
+# → http://localhost:80 (mock mode, all APIs functional)
 ```
-
-## OTA Updates
-
-| Feature | Detail |
-|---------|--------|
-| Framework | [RAUC](https://rauc.io/) |
-| Mechanism | A/B root partitions with atomic switching |
-| Bundle format | `.raucb` (verity, X.509 signed) |
-| Rollback | Automatic if snapdog-ctrl fails to start |
-| Channels | `stable` (tagged releases), `beta` (every push) |
-| Auto-update | Daily at configurable time (default 04:00) |
-| Server | `update.snapdog.cc/os/bundles/` (Cloudflare R2) |
 
 ## DAC Support
 
@@ -273,6 +261,16 @@ gh secret set SNAPDOG_UPDATE_SIGNING_KEY_PEM < secrets/update-signing.private.pe
 ```
 
 The public key is baked into the OS image at `/etc/snapdog-os-update.pub.pem`. The release workflow refuses to publish if the private signing key does not match the committed public key.
+
+## Roadmap
+
+- [ ] Per-board configuration structure (`buildroot/boards/{pi3,pi4,pi5,cm4}/`)
+- [ ] NVMe boot support (Pi5 + NVMe HAT)
+- [ ] WebUI i18n completion (all new strings in de/fr/es/nl)
+- [ ] Zone presence/scheduling UI
+- [ ] Per-zone KNX group address configuration
+- [ ] Custom Docker build image for CI (faster builds)
+- [ ] Hardware test suite (automated boot + API verification)
 
 ## License
 

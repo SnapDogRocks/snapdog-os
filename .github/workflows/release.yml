@@ -215,8 +215,10 @@ jobs:
 
       - name: Install publish tools
         run: |
-          curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscli.zip
-          unzip -q /tmp/awscli.zip -d /tmp && sudo /tmp/aws/install
+          if ! aws --version 2>/dev/null; then
+            curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscli.zip
+            unzip -q /tmp/awscli.zip -d /tmp && sudo /tmp/aws/install
+          fi
 
       - name: Upload to Cloudflare R2
         env:

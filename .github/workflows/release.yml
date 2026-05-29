@@ -164,7 +164,6 @@ jobs:
           cp "../buildroot-${{ matrix.pi }}/legal-info/manifest.csv" "$SBOM"
 
           # Generate RAUC bundle
-          sudo apt-get install -y --no-install-recommends rauc
           umask 077
           printf '%s\n' "${{ secrets.RAUC_CA_KEY_PEM }}" > rauc-ca.key.pem
           RAUC_KEY_FILE="$(pwd)/rauc-ca.key.pem" \

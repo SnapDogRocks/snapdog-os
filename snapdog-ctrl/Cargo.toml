@@ -45,7 +45,7 @@ anyhow = "1"
 
 # mDNS service discovery
 astro-dnssd = { version = "0.3.6", optional = true }
-mdns-sd = { version = "0.19", optional = true }
+mdns-sd = { version = "0.20", optional = true }
 
 # Embedded static files
 rust-embed = { version = "8", features = ["axum"] }

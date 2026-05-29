@@ -13,6 +13,7 @@
     "@hugeicons/core-free-icons": "^4.2.0",
     "@hugeicons/react": "^1.1.6",
     "@parcel/watcher": "^2.5.6",
+    "@swc/core-linux-x64-gnu": "^1.15.40",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "framer-motion": "^12.40.0",
@@ -37,5 +38,8 @@
   },
   "overrides": {
     "postcss": "^8.5.10"
+  },
+  "optionalDependencies": {
+    "@parcel/watcher-linux-x64-glibc": "^2.5.6"
   }
 }

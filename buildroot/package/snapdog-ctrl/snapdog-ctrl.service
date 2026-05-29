@@ -5,6 +5,9 @@ After=network.target
 [Service]
 Type=simple
 ExecStart=/usr/bin/snapdog-ctrl
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty1
 Restart=on-failure
 RestartSec=5
 SupplementaryGroups=netdev

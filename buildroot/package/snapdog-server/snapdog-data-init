@@ -23,3 +23,26 @@ mkdir -p "$DATA/ssh"
 [ -f "$DATA/snapdog-os.channel" ] || echo "stable" > "$DATA/snapdog-os.channel"
 [ -f "$DATA/snapdog-os.auto-update" ] || printf 'enabled=true\ninterval=daily\ntime=03:00\n' > "$DATA/snapdog-os.auto-update"
 [ -f "$DATA/hostname" ] || echo "snapdog" > "$DATA/hostname"
+
+# Default network: DHCP on all ethernet and wifi interfaces
+[ -f "$DATA/systemd/network/80-dhcp.network" ] || cat > "$DATA/systemd/network/80-dhcp.network" << 'EOF'
+[Match]
+Name=eth* end*
+
+[Network]
+DHCP=yes
+
+[DHCPv4]
+RouteMetric=100
+EOF
+
+[ -f "$DATA/systemd/network/80-wlan.network" ] || cat > "$DATA/systemd/network/80-wlan.network" << 'EOF'
+[Match]
+Name=wlan0
+
+[Network]
+DHCP=yes
+
+[DHCPv4]
+RouteMetric=600
+EOF

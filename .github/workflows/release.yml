@@ -268,10 +268,16 @@ jobs:
             aws s3 cp "$BUNDLE" "s3://${R2_BUCKET}/os/bundles/snapdog-os-${pi}${SUFFIX}.raucb" \
               --cache-control "public, max-age=300" \
               --endpoint-url "$AWS_ENDPOINT_URL"
+            aws s3 cp "$IMAGE" "s3://${R2_BUCKET}/os/images/snapdog-os-${pi}${SUFFIX}.img.gz" \
+              --cache-control "public, max-age=300" \
+              --endpoint-url "$AWS_ENDPOINT_URL"
 
             # Stable release also overwrites the beta pointer
             if [ -z "$SUFFIX" ]; then
               aws s3 cp "$BUNDLE" "s3://${R2_BUCKET}/os/bundles/snapdog-os-${pi}-beta.raucb" \
+                --cache-control "public, max-age=300" \
+                --endpoint-url "$AWS_ENDPOINT_URL"
+              aws s3 cp "$IMAGE" "s3://${R2_BUCKET}/os/images/snapdog-os-${pi}-beta.img.gz" \
                 --cache-control "public, max-age=300" \
                 --endpoint-url "$AWS_ENDPOINT_URL"
             fi

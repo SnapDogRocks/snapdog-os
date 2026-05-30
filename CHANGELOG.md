@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.3.0](https://github.com/SnapDogRocks/snapdog-os/compare/v0.2.0...v0.3.0) (2026-05-30)
+
+
+### Features
+
+* **ci:** add latest image redirect on R2 ([7fd441f](https://github.com/SnapDogRocks/snapdog-os/commit/7fd441f863f3e78cf96db21aca5fbb87793cdc4c))
+* **ctrl:** output logs to HDMI framebuffer (tty1) for debug ([7ad78b2](https://github.com/SnapDogRocks/snapdog-os/commit/7ad78b2af1220cec3cdafd21358cb223599d15b9))
+* **webui:** upgrade Next.js 15→16 (Turbopack) ([00a1a95](https://github.com/SnapDogRocks/snapdog-os/commit/00a1a9558fbde9f07a4eef4dfe0828d89535ed32))
+
+
+### Bug Fixes
+
+* **ci:** add x86_64 native optional deps for Next.js Turbopack ([632e219](https://github.com/SnapDogRocks/snapdog-os/commit/632e219b53656811b63eb83a9a874ceaf681ee00))
+* **ci:** downgrade Next.js 16→15 (removes Turbopack native dep requirement) ([51c3cd6](https://github.com/SnapDogRocks/snapdog-os/commit/51c3cd6ce2439593a569145d2b436aea4bae7d8e))
+* **ci:** remove apt-get from Publish step (jq/openssl pre-installed on GitHub runners) ([6c3dad3](https://github.com/SnapDogRocks/snapdog-os/commit/6c3dad3d18153a01afdd93f58946bfe7f295e1c2))
+* **ci:** remove sudo apt-get rauc from Package step (runner already has it) ([f8f3a1b](https://github.com/SnapDogRocks/snapdog-os/commit/f8f3a1b319356a714af50cd442901c2abde47087))
+* **ci:** skip AWS CLI install if already present on runner ([081edd4](https://github.com/SnapDogRocks/snapdog-os/commit/081edd45caf62f8c78eb2f1bba07bcecc6392265))
+* **ci:** use npm install instead of npm ci (resolves platform-specific native deps) ([393161a](https://github.com/SnapDogRocks/snapdog-os/commit/393161a8228156183e1a26acece038acd5d65f71))
+* correct update URL (updates.snapdog.cc, not update.snapdog.cc) ([dc49338](https://github.com/SnapDogRocks/snapdog-os/commit/dc49338c224089ce9d0388018380db6a0774cf93))
+* downgrade eslint to v9 (v10 incompatible with eslint-config-next) ([3d794f2](https://github.com/SnapDogRocks/snapdog-os/commit/3d794f2ba09bbfd2b56935cf7a1ea73e4a9c5e4f))
+* **network:** add default DHCP .network files in snapdog-data-init ([0d080dd](https://github.com/SnapDogRocks/snapdog-os/commit/0d080ddc589a1d4c4769c9d256c51bbe1fd1dc9d))
+* **network:** stop resolved before starting dnsmasq in AP mode ([3c06e08](https://github.com/SnapDogRocks/snapdog-os/commit/3c06e08efb9e6531d5250642c3e9090974e519b9))
+* regenerate lockfile with Node 22.13.0 (matches CI) ([3ec4807](https://github.com/SnapDogRocks/snapdog-os/commit/3ec48075c9f37e739bc7b0857a895b7baa1eecdc))
+* remove .wrangler cache, add to gitignore ([b94fc80](https://github.com/SnapDogRocks/snapdog-os/commit/b94fc801c8245204e35d23d48629a341a32018f4))
+* remove core dump from repo, add to gitignore ([70ced5e](https://github.com/SnapDogRocks/snapdog-os/commit/70ced5e627cfa8c30efe87c5e9501d9b0e836063))
+* remove core dump, add to gitignore ([5804820](https://github.com/SnapDogRocks/snapdog-os/commit/5804820e8d4fc9931eadecb08a625dd3fd520a45))
+
 ## [0.2.0](https://github.com/metaneutrons/snapdog-os/compare/v0.1.0...v0.2.0) (2026-05-29)
 
 

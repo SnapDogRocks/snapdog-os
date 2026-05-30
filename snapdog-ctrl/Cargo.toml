@@ -58,7 +58,7 @@ bcrypt = "0.19.1"
 rand = "0.10.1"
 
 # D-Bus (RAUC OTA)
-zbus = "5.15.0"
+zbus = "5.16.0"
 
 [lints.rust]
 unsafe_code = "forbid"

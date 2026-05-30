@@ -5,13 +5,13 @@
 <h1 align="center">SnapDog OS</h1>
 
 <p align="center">
-  Buildroot-based minimal Linux <a href="https://github.com/metaneutrons/snapdog">SnapDog</a> multiroom audio system.
+  Buildroot-based minimal Linux <a href="https://github.com/SnapDogRocks/snapdog">SnapDog</a> multiroom audio system.
 </p>
 
 <p align="center">
-  <a href="https://github.com/metaneutrons/snapdog-os/actions"><img src="https://github.com/metaneutrons/snapdog-os/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/metaneutrons/snapdog-os/releases"><img src="https://img.shields.io/github/v/release/metaneutrons/snapdog-os" alt="Release"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/metaneutrons/snapdog-os" alt="License"></a>
+  <a href="https://github.com/SnapDogRocks/snapdog-os/actions"><img src="https://github.com/SnapDogRocks/snapdog-os/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/SnapDogRocks/snapdog-os/releases"><img src="https://img.shields.io/github/v/release/SnapDogRocks/snapdog-os" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/SnapDogRocks/snapdog-os" alt="License"></a>
 </p>
 
 ---
@@ -20,16 +20,16 @@
 > **Alpha — not ready for production use.**
 > SnapDog OS is under active development and has not been sufficiently tested on real hardware. Do not deploy it on devices you rely on.
 >
-> For a working multiroom audio setup today, use **Raspberry Pi OS** with the [SnapDog `.deb` package](https://github.com/metaneutrons/snapdog/releases) from [metaneutrons/snapdog](https://github.com/metaneutrons/snapdog).
+> For a working multiroom audio setup today, use **Raspberry Pi OS** with the [SnapDog `.deb` package](https://github.com/SnapDogRocks/snapdog/releases) from [SnapDogRocks/snapdog](https://github.com/SnapDogRocks/snapdog).
 
 ---
 
-SnapDog OS turns a Raspberry Pi with an I2S DAC into a dedicated network audio receiver for the [**SnapDog**](https://github.com/metaneutrons/snapdog) multiroom audio system. It boots in seconds, connects to your SnapDog server automatically via mDNS, and is fully configurable through a web browser — no SSH, no command line, no manual setup required.
+SnapDog OS turns a Raspberry Pi with an I2S DAC into a dedicated network audio receiver for the [**SnapDog**](https://github.com/SnapDogRocks/snapdog) multiroom audio system. It boots in seconds, connects to your SnapDog server automatically via mDNS, and is fully configurable through a web browser — no SSH, no command line, no manual setup required.
 
 ## Features
 
 - **Boots in seconds** — minimal embedded image, no desktop, no bloat
-- **Synchronized audio** — Snapcast-compatible multiroom playback via [snapdog-client](https://github.com/metaneutrons/snapdog)
+- **Synchronized audio** — Snapcast-compatible multiroom playback via [snapdog-client](https://github.com/SnapDogRocks/snapdog)
 - **Any I2S DAC** — HiFiBerry, Allo, IQAudio, JustBoom, MAX98357A, and more
 - **Zero-config setup** — captive portal WiFi configuration from your phone
 - **Web UI** — [SnapDog Control](#snapdog-ctrl) for network, audio, and system settings
@@ -51,7 +51,7 @@ All builds are 64-bit (aarch64). Kernel: Raspberry Pi Linux 6.6 LTS.
 
 ### Raspberry Pi Imager (recommended)
 
-1. Download the latest image from [Releases](https://github.com/metaneutrons/snapdog-os/releases)
+1. Download the latest image from [Releases](https://github.com/SnapDogRocks/snapdog-os/releases) or [updates.snapdog.cc](https://updates.snapdog.cc/os/images/snapdog-os-pi4-beta.img.gz)
 2. Open [Raspberry Pi Imager](https://www.raspberrypi.com/software/)
 3. Choose **"Use custom"** and select the downloaded `.img.gz` file
 4. Select your SD card and write
@@ -231,7 +231,7 @@ Output: `../buildroot-pi4/images/sdcard.img`
 
 ## Related
 
-- [**snapdog**](https://github.com/metaneutrons/snapdog) — SnapDog multiroom audio server and client
+- [**snapdog**](https://github.com/SnapDogRocks/snapdog) — SnapDog multiroom audio server and client
 
 ## Repository Setup
 

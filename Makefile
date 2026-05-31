@@ -37,7 +37,8 @@ config: ## Configure for $(PI)
 	@if [ "$(PI)" = "pi5" ]; then cd $(BRSRC) && make raspberrypi5_defconfig; \
 	elif [ "$(PI)" = "pi4" ]; then cd $(BRSRC) && make raspberrypi4_64_defconfig; \
 	elif [ "$(PI)" = "pi3" ]; then cd $(BRSRC) && make raspberrypi3_64_defconfig; \
-	else echo "Use PI=pi3|pi4|pi5"; exit 1; fi
+	elif [ "$(PI)" = "zero2w" ]; then cd $(BRSRC) && make raspberrypizero2w_defconfig; \
+	else echo "Use PI=pi3|pi4|pi5|zero2w"; exit 1; fi
 	@mv $(BRSRC)/.config $(BRDIR)/.config
 	@buildroot/scripts/apply-config-overrides \
 		$(BRDIR)/.config buildroot/configs/override.conf BR2_PACKAGE_SNAPDOG_OS_ALL
@@ -52,6 +53,7 @@ all: ## Build all Pi variants
 	@$(MAKE) PI=pi3 config build
 	@$(MAKE) PI=pi4 config build
 	@$(MAKE) PI=pi5 config build
+	@$(MAKE) PI=zero2w config build
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'

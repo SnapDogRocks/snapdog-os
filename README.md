@@ -44,6 +44,7 @@ SnapDog OS turns a Raspberry Pi with an I2S DAC into a dedicated network audio r
 | Raspberry Pi 5 | ✅ |
 | Raspberry Pi 4 | ✅ |
 | Raspberry Pi 3 | ✅ |
+| Raspberry Pi Zero 2 W | ✅ |
 
 All builds are 64-bit (aarch64). Kernel: Raspberry Pi Linux 6.6 LTS.
 

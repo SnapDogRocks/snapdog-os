@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { AboutButton } from "@/components/AboutButton";
+import { MiniPlayer } from "@/components/MiniPlayer";
 import {
   api,
   type SystemInfo,
@@ -2283,6 +2284,11 @@ function SetupPage() {
   const [tab, setTab] = useState<Tab>("dashboard");
   const { locale, setLocale } = useI18n();
   const [isConnected, setIsConnected] = useState(true);
+  const [clientEnabled, setClientEnabled] = useState(false);
+
+  useEffect(() => {
+    api.getClient().then((c) => setClientEnabled(c.server_url !== "__disabled__")).catch(() => {});
+  }, []);
 
   useEffect(() => {
     const checkConnection = async () => {
@@ -2386,6 +2392,8 @@ function SetupPage() {
           {tab === "system" && <SystemTab />}
         </div>
       </main>
+
+      <MiniPlayer clientEnabled={clientEnabled} />
 
       {!isConnected && (
         <div 

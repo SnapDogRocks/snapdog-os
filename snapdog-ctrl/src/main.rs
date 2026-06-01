@@ -9,6 +9,8 @@ mod mdns;
 #[cfg(debug_assertions)]
 #[cfg(debug_assertions)]
 mod mock;
+#[cfg(not(debug_assertions))]
+mod mpris_client;
 #[cfg_attr(debug_assertions, allow(dead_code))]
 mod network;
 mod rauc;
@@ -200,7 +202,15 @@ async fn build_app() -> Router {
     let auth_state = auth::AuthState::load().await;
 
     let (tx, _rx) = tokio::sync::broadcast::channel::<String>(100);
-    let ws_sender = ws::WsSender(tx);
+    let ws_sender = ws::WsSender(tx.clone());
+
+    // Start MPRIS2 poller if client is enabled
+    let now_playing = if system::is_service_enabled("client").await {
+        let (np, _handle) = mpris_client::start(tx);
+        np
+    } else {
+        std::sync::Arc::new(tokio::sync::Mutex::new(mpris_client::NowPlaying::default()))
+    };
 
     Router::new()
         .nest("/api", routes::api())
@@ -224,6 +234,7 @@ async fn build_app() -> Router {
         .layer(axum::Extension(auth_state))
         .layer(axum::Extension(ws_sender))
         .layer(CompressionLayer::new())
+        .layer(axum::Extension(now_playing))
         .layer(TraceLayer::new_for_http())
 }
 

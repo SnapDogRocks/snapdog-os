@@ -34,8 +34,15 @@ class WebSocketManager {
 
     this.socket.onmessage = (event) => {
       try {
-        const eventName = event.data as string;
-        this.emit(eventName);
+        const raw = event.data as string;
+        const colonIdx = raw.indexOf(":");
+        if (colonIdx > 0) {
+          const eventName = raw.slice(0, colonIdx);
+          const payload = JSON.parse(raw.slice(colonIdx + 1));
+          this.emit(eventName, payload);
+        } else {
+          this.emit(raw);
+        }
       } catch { /* ignore parse errors */ }
     };
 

@@ -263,5 +263,16 @@
     "no_inactive_partition": "Inactive partition not found — updates disabled",
     "data_not_mounted": "Data partition (/data) is not mounted",
     "data_not_writable": "Data partition (/data) is not writable"
+  },
+  "player": {
+    "play": "Play",
+    "pause": "Pause",
+    "next": "Next",
+    "previous": "Previous",
+    "mute": "Mute",
+    "unmute": "Unmute",
+    "close": "Close",
+    "nowPlaying": "Now Playing",
+    "seek": "Seek"
   }
 }

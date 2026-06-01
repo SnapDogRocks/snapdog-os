@@ -105,6 +105,11 @@ pub fn api() -> Router {
         .route("/settings/export", get(get_settings_export))
         .route("/settings/preview", post(post_settings_preview))
         .route("/settings/import", post(post_settings_import))
+        // Now Playing
+        .route("/now-playing", get(get_now_playing))
+        .route("/now-playing/command", post(post_now_playing_command))
+        .route("/now-playing/volume", put(put_now_playing_volume))
+        .route("/now-playing/seek", post(post_now_playing_seek))
         // 404 for unknown API routes
         .fallback(api_not_found)
 }
@@ -1330,4 +1335,83 @@ async fn post_settings_import(body: axum::body::Bytes) -> impl IntoResponse {
     });
 
     Json(serde_json::json!({"status": "ok", "rebooting": true})).into_response()
+}
+
+// ── Now Playing ───────────────────────────────────────────────
+
+#[cfg(not(debug_assertions))]
+async fn get_now_playing(
+    Extension(state): Extension<crate::mpris_client::SharedNowPlaying>,
+) -> impl IntoResponse {
+    let np = state.lock().await;
+    Json(serde_json::to_value(&*np).unwrap_or_default())
+}
+
+#[cfg(debug_assertions)]
+async fn get_now_playing() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "playing": false,
+        "title": "",
+        "artist": "",
+        "album": "",
+        "cover_url": null,
+        "duration_ms": 0,
+        "position_ms": 0,
+        "seekable": false,
+        "can_next": false,
+        "can_prev": false,
+        "volume": 100,
+        "muted": false
+    }))
+}
+
+#[cfg(not(debug_assertions))]
+async fn post_now_playing_command(Json(body): Json<serde_json::Value>) -> StatusCode {
+    let cmd = body.get("command").and_then(|v| v.as_str()).unwrap_or("");
+    match crate::mpris_client::send_command(cmd).await {
+        Ok(()) => StatusCode::OK,
+        Err(e) => {
+            tracing::error!("now-playing command failed: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+async fn post_now_playing_command() -> StatusCode {
+    StatusCode::OK
+}
+
+#[cfg(not(debug_assertions))]
+async fn put_now_playing_volume(Json(body): Json<serde_json::Value>) -> StatusCode {
+    let vol = body.get("volume").and_then(|v| v.as_f64()).unwrap_or(1.0);
+    match crate::mpris_client::set_volume(vol / 100.0).await {
+        Ok(()) => StatusCode::OK,
+        Err(e) => {
+            tracing::error!("now-playing volume failed: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+async fn put_now_playing_volume() -> StatusCode {
+    StatusCode::OK
+}
+
+#[cfg(not(debug_assertions))]
+async fn post_now_playing_seek(Json(body): Json<serde_json::Value>) -> StatusCode {
+    let offset_ms = body.get("offset_ms").and_then(|v| v.as_i64()).unwrap_or(0);
+    match crate::mpris_client::seek(offset_ms * 1000).await {
+        Ok(()) => StatusCode::OK,
+        Err(e) => {
+            tracing::error!("now-playing seek failed: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+async fn post_now_playing_seek() -> StatusCode {
+    StatusCode::OK
 }

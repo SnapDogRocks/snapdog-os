@@ -238,6 +238,15 @@ export const api = {
   flashRawConfirm: (challenge: string) =>
     request<void>("/api/system/update/flash-raw/confirm", { method: "POST", body: JSON.stringify({ challenge }) }),
 
+  // Now Playing
+  getNowPlaying: () => request<import("./api").NowPlaying>("/api/now-playing"),
+  nowPlayingCommand: (command: string) =>
+    request<void>("/api/now-playing/command", { method: "POST", body: JSON.stringify({ command }) }),
+  setNowPlayingVolume: (volume: number) =>
+    request<void>("/api/now-playing/volume", { method: "PUT", body: JSON.stringify({ volume }) }),
+  nowPlayingSeek: (offset_ms: number) =>
+    request<void>("/api/now-playing/seek", { method: "POST", body: JSON.stringify({ offset_ms }) }),
+
   // Health
   getHealth: () => request<{ ok: boolean; warnings: { id: string; severity: string }[] }>("/api/system/health"),
 
@@ -282,4 +291,19 @@ export interface SettingsPreview {
   ssh_keys_present: boolean;
   has_auth: boolean;
   files: string[];
+}
+
+export interface NowPlaying {
+  playing: boolean;
+  title: string;
+  artist: string;
+  album: string;
+  cover_url: string;
+  duration_ms: number;
+  position_ms: number;
+  seekable: boolean;
+  can_next: boolean;
+  can_prev: boolean;
+  volume: number;
+  muted: boolean;
 }

@@ -273,5 +273,16 @@
     "no_inactive_partition": "Inaktive Partition nicht gefunden — Updates deaktiviert",
     "data_not_mounted": "Datenpartition (/data) ist nicht gemountet",
     "data_not_writable": "Datenpartition (/data) ist nicht beschreibbar"
+  },
+  "player": {
+    "play": "Wiedergabe",
+    "pause": "Pause",
+    "next": "Nächster",
+    "previous": "Vorheriger",
+    "mute": "Stumm",
+    "unmute": "Ton an",
+    "close": "Schließen",
+    "nowPlaying": "Aktuelle Wiedergabe",
+    "seek": "Spulen"
   }
 }

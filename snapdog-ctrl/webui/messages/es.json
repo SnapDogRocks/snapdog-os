@@ -273,5 +273,16 @@
     "no_inactive_partition": "Partición inactiva no encontrada — actualizaciones desactivadas",
     "data_not_mounted": "Partición de datos (/data) no montada",
     "data_not_writable": "Partición de datos (/data) no escribible"
+  },
+  "player": {
+    "play": "Reproducir",
+    "pause": "Pausa",
+    "next": "Siguiente",
+    "previous": "Anterior",
+    "mute": "Silenciar",
+    "unmute": "Activar sonido",
+    "close": "Cerrar",
+    "nowPlaying": "Reproduciendo",
+    "seek": "Buscar"
   }
 }

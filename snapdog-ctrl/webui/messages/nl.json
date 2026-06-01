@@ -273,5 +273,16 @@
     "no_inactive_partition": "Inactieve partitie niet gevonden — updates uitgeschakeld",
     "data_not_mounted": "Datapartitie (/data) niet gemount",
     "data_not_writable": "Datapartitie (/data) niet schrijfbaar"
+  },
+  "player": {
+    "play": "Afspelen",
+    "pause": "Pauze",
+    "next": "Volgende",
+    "previous": "Vorige",
+    "mute": "Dempen",
+    "unmute": "Geluid aan",
+    "close": "Sluiten",
+    "nowPlaying": "Nu aan het spelen",
+    "seek": "Zoeken"
   }
 }

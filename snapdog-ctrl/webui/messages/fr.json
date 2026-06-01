@@ -273,5 +273,16 @@
     "no_inactive_partition": "Partition inactive introuvable — mises à jour désactivées",
     "data_not_mounted": "Partition de données (/data) non montée",
     "data_not_writable": "Partition de données (/data) non inscriptible"
+  },
+  "player": {
+    "play": "Lecture",
+    "pause": "Pause",
+    "next": "Suivant",
+    "previous": "Précédent",
+    "mute": "Muet",
+    "unmute": "Son",
+    "close": "Fermer",
+    "nowPlaying": "En cours",
+    "seek": "Rechercher"
   }
 }

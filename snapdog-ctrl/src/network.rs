@@ -24,9 +24,29 @@ pub async fn is_wifi_configured() -> bool {
 pub async fn start_ap(password: &str) -> Result<()> {
     tracing::info!("Starting temporary AP mode");
 
+    // Derive unique SSID from last 4 hex chars of wlan0 MAC
+    let ssid = tokio::fs::read_to_string("/sys/class/net/wlan0/address")
+        .await
+        .map_or_else(
+            |_| "SnapDog-Setup".into(),
+            |mac| {
+                let suffix: String = mac
+                    .trim()
+                    .replace(':', "")
+                    .chars()
+                    .rev()
+                    .take(4)
+                    .collect::<String>()
+                    .chars()
+                    .rev()
+                    .collect();
+                format!("SnapDog-{}", suffix.to_uppercase())
+            },
+        );
+
     // Write hostapd config
     let hostapd = format!(
-        "interface=wlan0\ndriver=nl80211\nssid=SnapDog-Setup\nhw_mode=g\nchannel=6\n\
+        "interface=wlan0\ndriver=nl80211\nssid={ssid}\nhw_mode=g\nchannel=6\n\
          ieee80211n=1\nwmm_enabled=1\nwpa=2\nwpa_passphrase={password}\n\
          wpa_key_mgmt=WPA-PSK\nrsn_pairwise=CCMP\n"
     );

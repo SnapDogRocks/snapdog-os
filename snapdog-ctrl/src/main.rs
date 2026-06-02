@@ -155,7 +155,7 @@ async fn build_app() -> Router {
         let eth_has_link = has_network_link().await;
 
         if !wifi_configured && !eth_has_link {
-            tracing::info!("No network configured — starting setup AP (SSID: SnapDog-Setup)");
+            tracing::info!("No network configured — starting setup AP");
             if let Err(e) = network::start_ap(&softap.password).await {
                 tracing::error!("Failed to start AP: {e}");
                 return;

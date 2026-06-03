@@ -13,7 +13,7 @@ const SYSTEMD_OVERRIDE_PATH: &str = "/etc/systemd/system/snapdog-client.service.
 pub struct RpiTuningDriver;
 
 impl RpiTuningDriver {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 
@@ -144,7 +144,7 @@ fn remove_cmdline_arg(content: &str, arg: &str) -> String {
     let trimmed = content.trim();
     let parts: Vec<&str> = trimmed.split_whitespace().filter(|&x| x != arg).collect();
     if parts.is_empty() {
-        "".to_string()
+        String::new()
     } else {
         parts.join(" ") + "\n"
     }

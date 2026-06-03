@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 pub mod generic;
 pub mod rpi;
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct TuningConfig {
     pub rf_kill_wifi: bool,
     pub rf_kill_bluetooth: bool,

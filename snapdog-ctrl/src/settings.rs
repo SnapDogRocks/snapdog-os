@@ -82,7 +82,11 @@ pub fn preview_settings(data: &[u8]) -> Result<SettingsPreview> {
             let mut buf = String::new();
             entry.read_to_string(&mut buf).ok();
             hostname = Some(buf.trim().to_string());
-        } else if path_str.contains("wpa_supplicant") && path_str.ends_with(".conf") {
+        } else if path_str.contains("wpa_supplicant")
+            && std::path::Path::new(&path_str)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("conf"))
+        {
             let mut buf = String::new();
             if entry.read_to_string(&mut buf).is_ok() {
                 wifi_configured = buf.contains("network=");

@@ -29,7 +29,7 @@ pub async fn detect_wifi_interface() -> String {
 }
 
 /// Dynamically detects all ethernet interface names.
-/// Falls back to ["eth0"] if none are found.
+/// Falls back to `["eth0"]` if none are found.
 pub async fn detect_ethernet_interfaces() -> Vec<String> {
     let mut eths = Vec::new();
     if let Ok(mut entries) = tokio::fs::read_dir("/sys/class/net").await {

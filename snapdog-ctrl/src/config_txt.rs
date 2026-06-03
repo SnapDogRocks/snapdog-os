@@ -7,6 +7,7 @@
 //! Only modifies the specific key being changed.
 
 use anyhow::{Context, Result};
+use std::fmt::Write as _;
 
 const CONFIG_PATH: &str = "/boot/config.txt";
 const BACKUP_PATH: &str = "/boot/config.txt.bak";
@@ -180,7 +181,7 @@ pub fn add_dtoverlay(content: &str, overlay: &str) -> String {
     if !result.is_empty() {
         result.push('\n');
     }
-    result.push_str(&format!("dtoverlay={overlay}\n"));
+    let _ = writeln!(result, "dtoverlay={overlay}");
     result
 }
 

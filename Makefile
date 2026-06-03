@@ -1,8 +1,9 @@
 PI ?= pi4
+BOARD ?= $(PI)
 VERSION := $(shell cat VERSION)
 SNAPDOG_CTRL_BINARY ?= snapdog-ctrl-binary
 SNAPDOG_ROOT_DEV ?= /dev/mmcblk0p
-BRDIR := ../buildroot-$(PI)
+BRDIR := ../buildroot-$(BOARD)
 BRSRC := ../buildroot
 
 .PHONY: setup prepare-ctrl build config clean all
@@ -27,33 +28,40 @@ prepare-ctrl:
 	@cp "$(SNAPDOG_CTRL_BINARY)" "$(BRDIR)/images/snapdog-ctrl"
 	@chmod 755 "$(BRDIR)/images/snapdog-ctrl"
 
-build: prepare-ctrl ## Build image for $(PI)
+build: prepare-ctrl ## Build image for $(BOARD)
 	@echo $(VERSION) > buildroot/VERSION
-	@cd $(BRSRC) && make O=$(abspath $(BRDIR)) BR2_EXTERNAL=$(abspath buildroot) SNAPDOG_PI_VERSION=$(subst pi,,$(PI)) SNAPDOG_ROOT_DEV=$(SNAPDOG_ROOT_DEV) olddefconfig
-	@cd $(BRSRC) && make O=$(abspath $(BRDIR)) BR2_EXTERNAL=$(abspath buildroot) SNAPDOG_PI_VERSION=$(subst pi,,$(PI)) SNAPDOG_ROOT_DEV=$(SNAPDOG_ROOT_DEV)
+	@cd $(BRSRC) && make O=$(abspath $(BRDIR)) BR2_EXTERNAL=$(abspath buildroot) SNAPDOG_PI_VERSION=$(subst pi,,$(BOARD)) SNAPDOG_ROOT_DEV=$(SNAPDOG_ROOT_DEV) olddefconfig
+	@cd $(BRSRC) && make O=$(abspath $(BRDIR)) BR2_EXTERNAL=$(abspath buildroot) SNAPDOG_PI_VERSION=$(subst pi,,$(BOARD)) SNAPDOG_ROOT_DEV=$(SNAPDOG_ROOT_DEV)
 
-config: ## Configure for $(PI)
+config: ## Configure for $(BOARD)
 	@mkdir -p $(BRDIR)
-	@if [ "$(PI)" = "pi5" ]; then cd $(BRSRC) && make raspberrypi5_defconfig; \
-	elif [ "$(PI)" = "pi4" ]; then cd $(BRSRC) && make raspberrypi4_64_defconfig; \
-	elif [ "$(PI)" = "pi3" ]; then cd $(BRSRC) && make raspberrypi3_64_defconfig; \
-	elif [ "$(PI)" = "zero2w" ]; then cd $(BRSRC) && make raspberrypizero2w_defconfig; \
-	else echo "Use PI=pi3|pi4|pi5|zero2w"; exit 1; fi
+	@if [ "$(BOARD)" = "pi5" ]; then cd $(BRSRC) && make raspberrypi5_defconfig; \
+	elif [ "$(BOARD)" = "pi4" ]; then cd $(BRSRC) && make raspberrypi4_64_defconfig; \
+	elif [ "$(BOARD)" = "pi3" ]; then cd $(BRSRC) && make raspberrypi3_64_defconfig; \
+	elif [ "$(BOARD)" = "zero2w" ]; then cd $(BRSRC) && make raspberrypizero2w_defconfig; \
+	else \
+		if [ -f "$(BRSRC)/configs/$(BOARD)_defconfig" ]; then \
+			cd $(BRSRC) && make $(BOARD)_defconfig; \
+		else \
+			echo "Unknown BOARD=$(BOARD) and no defconfig found in Buildroot."; \
+			exit 1; \
+		fi; \
+	fi
 	@mv $(BRSRC)/.config $(BRDIR)/.config
 	@buildroot/scripts/apply-config-overrides \
 		$(BRDIR)/.config buildroot/configs/override.conf BR2_PACKAGE_SNAPDOG_OS_ALL
 
-menuconfig: ## Open menuconfig for $(PI)
+menuconfig: ## Open menuconfig for $(BOARD)
 	@cd $(BRSRC) && make O=$(abspath $(BRDIR)) BR2_EXTERNAL=$(abspath buildroot) menuconfig
 
-clean: ## Clean build output for $(PI)
+clean: ## Clean build output for $(BOARD)
 	rm -rf $(BRDIR)
 
 all: ## Build all Pi variants
-	@$(MAKE) PI=pi3 config build
-	@$(MAKE) PI=pi4 config build
-	@$(MAKE) PI=pi5 config build
-	@$(MAKE) PI=zero2w config build
+	@$(MAKE) BOARD=pi3 config build
+	@$(MAKE) BOARD=pi4 config build
+	@$(MAKE) BOARD=pi5 config build
+	@$(MAKE) BOARD=zero2w config build
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'

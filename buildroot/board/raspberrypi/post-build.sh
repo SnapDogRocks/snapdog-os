@@ -31,8 +31,8 @@ ln -sf /data/default/snapdog-client "$TARGET_DIR/etc/default/snapdog-client"
 rm -f "$TARGET_DIR/etc/snapdog/snapdog.toml"
 ln -sf /data/snapdog/snapdog.toml "$TARGET_DIR/etc/snapdog/snapdog.toml"
 
-rm -f "$TARGET_DIR/etc/wpa_supplicant/wpa_supplicant-wlan0.conf"
-ln -sf /data/wpa_supplicant/wpa_supplicant-wlan0.conf "$TARGET_DIR/etc/wpa_supplicant/wpa_supplicant-wlan0.conf"
+rm -rf "$TARGET_DIR/etc/wpa_supplicant"
+ln -sf /data/wpa_supplicant "$TARGET_DIR/etc/wpa_supplicant"
 
 rm -f "$TARGET_DIR/etc/hostapd/hostapd.conf"
 ln -sf /data/hostapd/hostapd.conf "$TARGET_DIR/etc/hostapd/hostapd.conf"

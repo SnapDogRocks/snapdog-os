@@ -173,7 +173,7 @@ function DashboardTab() {
         </dd>
         <dt className="text-muted-foreground">{t("uptime")}</dt>
         <dd>{uptimeHours}h {uptimeMinutes}m</dd>
-        <dt className="text-muted-foreground">{t("piVersion")}</dt>
+        <dt className="text-muted-foreground">{t("boardModel")}</dt>
         <dd>{info.board_model || "—"}</dd>
       </dl>
     </Card>

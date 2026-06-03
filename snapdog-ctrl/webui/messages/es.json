@@ -24,7 +24,7 @@
     "ethConnected": "Ethernet conectado",
     "ethDisconnected": "Ethernet no conectado",
     "uptime": "Tiempo activo",
-    "piVersion": "Hardware"
+    "boardModel": "Hardware"
   },
   "network": {
     "wifi": "WiFi",

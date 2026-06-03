@@ -1551,6 +1551,49 @@ function SettingsCard() {
   );
 }
 
+function InfoTooltip({ content }: { content: string }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    if (isOpen) {
+      document.addEventListener("click", handleOutsideClick);
+    }
+    return () => document.removeEventListener("click", handleOutsideClick);
+  }, [isOpen]);
+
+  return (
+    <div ref={ref} className="relative inline-block ml-1.5 align-middle group">
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        onMouseEnter={() => setIsOpen(true)}
+        onMouseLeave={() => setIsOpen(false)}
+        className="text-muted-foreground/60 hover:text-foreground transition-colors cursor-help inline-flex items-center justify-center p-0.5 rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        aria-label="More info"
+      >
+        <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z" />
+        </svg>
+      </button>
+      {isOpen && (
+        <div
+          role="tooltip"
+          className="absolute bottom-full left-1/2 z-50 mb-2 w-64 -translate-x-1/2 rounded-lg border border-border bg-popover p-2.5 text-left text-xs font-normal text-popover-foreground shadow-md animate-in fade-in zoom-in-95 duration-100 pointer-events-none"
+        >
+          {content}
+          <div className="absolute top-full left-1/2 -mt-1 h-2 w-2 -translate-x-1/2 rotate-45 border-b border-r border-border bg-popover" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HardwareTuningCard() {
   const t = useTranslations("tuning");
   const [config, setConfig] = useState<TuningConfig | null>(null);
@@ -1596,30 +1639,30 @@ function HardwareTuningCard() {
           </div>
         )}
         <div className="flex items-center justify-between">
-          <div>
+          <div className="flex items-center">
             <label htmlFor={wifiId} className="text-sm font-medium">{t("disableWifi")}</label>
-            <p className="text-xs text-muted-foreground">{t("disableWifiDesc")}</p>
+            <InfoTooltip content={t("disableWifiDesc")} />
           </div>
           <Switch id={wifiId} checked={config.rf_kill_wifi} onCheckedChange={(c) => toggle("rf_kill_wifi", c)} disabled={saving} />
         </div>
         <div className="flex items-center justify-between border-t border-border pt-4">
-          <div>
+          <div className="flex items-center">
             <label htmlFor={btId} className="text-sm font-medium">{t("disableBluetooth")}</label>
-            <p className="text-xs text-muted-foreground">{t("disableBluetoothDesc")}</p>
+            <InfoTooltip content={t("disableBluetoothDesc")} />
           </div>
           <Switch id={btId} checked={config.rf_kill_bluetooth} onCheckedChange={(c) => toggle("rf_kill_bluetooth", c)} disabled={saving} />
         </div>
         <div className="flex items-center justify-between border-t border-border pt-4">
-          <div>
+          <div className="flex items-center">
             <label htmlFor={onboardAudioId} className="text-sm font-medium">{t("disableOnboardAudio")}</label>
-            <p className="text-xs text-muted-foreground">{t("disableOnboardAudioDesc")}</p>
+            <InfoTooltip content={t("disableOnboardAudioDesc")} />
           </div>
           <Switch id={onboardAudioId} checked={config.disable_onboard_audio} onCheckedChange={(c) => toggle("disable_onboard_audio", c)} disabled={saving} />
         </div>
         <div className="flex items-center justify-between border-t border-border pt-4">
-          <div>
+          <div className="flex items-center">
             <label htmlFor={exclusiveCoreId} className="text-sm font-medium">{t("exclusiveCore")}</label>
-            <p className="text-xs text-muted-foreground">{t("exclusiveCoreDesc")}</p>
+            <InfoTooltip content={t("exclusiveCoreDesc")} />
           </div>
           <Switch id={exclusiveCoreId} checked={config.exclusive_audio_core} onCheckedChange={(c) => toggle("exclusive_audio_core", c)} disabled={saving} />
         </div>

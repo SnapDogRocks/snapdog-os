@@ -60,6 +60,7 @@ pub fn api() -> Router {
         .route("/auth/password", put(put_auth_password))
         // System
         .route("/system", get(get_system).put(put_system))
+        .route("/system/tuning", get(get_tuning).put(put_tuning))
         .route("/system/health", get(get_health))
         .route("/system/reboot", post(post_reboot))
         .route("/system/update", post(post_update))
@@ -302,6 +303,20 @@ mod mock_handlers {
         m.set_system(b.hostname, b.channel)
             .await
             .map_or(StatusCode::INTERNAL_SERVER_ERROR, |()| StatusCode::OK)
+    }
+    pub async fn get_tuning(
+        State(m): State<crate::mock::MockState>,
+    ) -> Json<crate::tuning::TuningConfig> {
+        Json(m.get_tuning().await)
+    }
+    pub async fn put_tuning(
+        State(m): State<crate::mock::MockState>,
+        Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
+        Json(body): Json<crate::tuning::TuningConfig>,
+    ) -> StatusCode {
+        m.set_tuning(body).await;
+        let _ = tx.send("system_changed".to_string());
+        StatusCode::OK
     }
     pub async fn reboot(State(m): State<crate::mock::MockState>) -> StatusCode {
         m.reboot().await;
@@ -570,6 +585,7 @@ pub fn api_mock(state: crate::mock::MockState) -> Router {
         .route("/auth/password", put(h::put_auth_password))
         // System
         .route("/system", get(h::get_system).put(h::put_system))
+        .route("/system/tuning", get(h::get_tuning).put(h::put_tuning))
         .route("/system/health", get(get_health))
         .route("/system/reboot", post(h::reboot))
         .route("/system/update", post(h::update))
@@ -624,7 +640,7 @@ pub struct SystemInfo {
     pub version: String,
     pub channel: String,
     pub uptime_seconds: u64,
-    pub pi_version: u8,
+    pub board_model: String,
     pub components: ComponentVersions,
 }
 
@@ -707,6 +723,34 @@ async fn put_system(Json(body): Json<SystemUpdate>) -> StatusCode {
         return StatusCode::INTERNAL_SERVER_ERROR;
     }
     StatusCode::OK
+}
+
+async fn get_tuning() -> Result<Json<crate::tuning::TuningConfig>, StatusCode> {
+    let driver = crate::tuning::get_active_driver().await;
+    match driver.get_config().await {
+        Ok(cfg) => Ok(Json(cfg)),
+        Err(e) => {
+            tracing::error!("get_tuning error: {e}");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+async fn put_tuning(
+    Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
+    Json(body): Json<crate::tuning::TuningConfig>,
+) -> StatusCode {
+    let driver = crate::tuning::get_active_driver().await;
+    match driver.set_config(&body).await {
+        Ok(()) => {
+            let _ = tx.send("system_changed".to_string());
+            StatusCode::OK
+        }
+        Err(e) => {
+            tracing::error!("put_tuning error: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
 }
 
 async fn post_reboot() -> StatusCode {

@@ -35,8 +35,15 @@ export interface SystemInfo {
   version: string;
   channel: string;
   uptime_seconds: number;
-  pi_version: number;
+  board_model: string;
   components: { server: string; client: string; ctrl: string; kernel: string };
+}
+
+export interface TuningConfig {
+  rf_kill_wifi: boolean;
+  rf_kill_bluetooth: boolean;
+  disable_onboard_audio: boolean;
+  exclusive_audio_core: boolean;
 }
 
 export interface WifiNetwork {
@@ -140,6 +147,9 @@ export const api = {
   getSystem: () => request<SystemInfo>("/api/system"),
   setSystem: (data: { hostname?: string; channel?: string }) =>
     request<void>("/api/system", { method: "PUT", body: JSON.stringify(data) }),
+  getTuning: () => request<TuningConfig>("/api/system/tuning"),
+  setTuning: (config: TuningConfig) =>
+    request<void>("/api/system/tuning", { method: "PUT", body: JSON.stringify(config) }),
   triggerUpdate: () => request<void>("/api/system/update", { method: "POST" }),
   checkUpdate: () => request<UpdateCheck>("/api/system/update/check"),
   getUpdateStatus: () => request<import("./api").UpdateStatus>("/api/system/update/status"),

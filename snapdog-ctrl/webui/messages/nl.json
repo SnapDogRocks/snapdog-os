@@ -284,5 +284,17 @@
     "close": "Sluiten",
     "nowPlaying": "Nu aan het spelen",
     "seek": "Zoeken"
+  },
+  "tuning": {
+    "title": "Hardware Optimalisatie",
+    "saving": "Instellingen opslaan...",
+    "disableWifi": "WiFi Uitschakelen",
+    "disableWifiDesc": "Schakelt de draadloze radio uit om elektrische ruis te verminderen.",
+    "disableBluetooth": "Bluetooth Uitschakelen",
+    "disableBluetoothDesc": "Schakelt Bluetooth uit om RF-interferentie te verminderen.",
+    "disableOnboardAudio": "Onboard Audio Uitschakelen",
+    "disableOnboardAudioDesc": "Schakelt de standaard 3.5mm jack & HDMI-audio uit om conflicten te voorkomen.",
+    "exclusiveCore": "Exclusieve Audiokern",
+    "exclusiveCoreDesc": "Isoleert CPU-kern 3 en vergrendelt de kloksnelheid voor stabiele audio (vereist herstart)."
   }
 }

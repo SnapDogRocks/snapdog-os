@@ -27,6 +27,7 @@ struct State {
     overlay: String,
     client: ClientConfig,
     ssh: SshConfig,
+    tuning: crate::tuning::TuningConfig,
 }
 
 impl MockState {
@@ -60,8 +61,23 @@ impl MockState {
                     enabled: false,
                     pubkeys: vec![],
                 },
+                tuning: crate::tuning::TuningConfig {
+                    rf_kill_wifi: false,
+                    rf_kill_bluetooth: false,
+                    disable_onboard_audio: false,
+                    exclusive_audio_core: false,
+                },
             })),
         }
+    }
+
+    pub async fn get_tuning(&self) -> crate::tuning::TuningConfig {
+        self.inner.lock().await.tuning.clone()
+    }
+
+    pub async fn set_tuning(&self, config: crate::tuning::TuningConfig) {
+        let mut s = self.inner.lock().await;
+        s.tuning = config;
     }
 
     pub async fn get_system_info(&self) -> SystemInfo {
@@ -71,7 +87,7 @@ impl MockState {
             version: "0.1.0".into(),
             channel: s.channel.clone(),
             uptime_seconds: 86400,
-            pi_version: 4,
+            board_model: "Mock SnapDog Board".into(),
             components: crate::routes::ComponentVersions {
                 server: "0.11.3".into(),
                 client: "0.11.3".into(),

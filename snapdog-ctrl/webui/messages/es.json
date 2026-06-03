@@ -284,5 +284,17 @@
     "close": "Cerrar",
     "nowPlaying": "Reproduciendo",
     "seek": "Buscar"
+  },
+  "tuning": {
+    "title": "Ajuste de Hardware",
+    "saving": "Guardando ajustes...",
+    "disableWifi": "Desactivar WiFi",
+    "disableWifiDesc": "Apaga la radio inalámbrica para reducir el ruido eléctrico.",
+    "disableBluetooth": "Desactivar Bluetooth",
+    "disableBluetoothDesc": "Apaga la radio Bluetooth para reducir las interferencias de RF.",
+    "disableOnboardAudio": "Desactivar Audio Integrado",
+    "disableOnboardAudioDesc": "Desactiva los controladores de audio analógico de 3.5 mm y HDMI para evitar conflictos.",
+    "exclusiveCore": "Núcleo de Audio Exclusivo",
+    "exclusiveCoreDesc": "Aísla el núcleo 3 de la CPU y bloquea la frecuencia de reloj para una reproducción fluida (requiere reiniciar)."
   }
 }

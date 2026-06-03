@@ -284,5 +284,17 @@
     "close": "Schließen",
     "nowPlaying": "Aktuelle Wiedergabe",
     "seek": "Spulen"
+  },
+  "tuning": {
+    "title": "Hardware-Optimierung",
+    "saving": "Einstellungen werden gespeichert...",
+    "disableWifi": "WLAN deaktivieren",
+    "disableWifiDesc": "Schaltet das Funkmodul aus, um elektrisches Rauschen zu reduzieren.",
+    "disableBluetooth": "Bluetooth deaktivieren",
+    "disableBluetoothDesc": "Schaltet Bluetooth aus, um Funkinterferenzen zu verringern.",
+    "disableOnboardAudio": "Onboard-Audio deaktivieren",
+    "disableOnboardAudioDesc": "Deaktiviert den analogen Klinkenanschluss und HDMI-Sound, um Konflikte zu vermeiden.",
+    "exclusiveCore": "Exklusiver Audiokern",
+    "exclusiveCoreDesc": "Isoliert den CPU-Kern 3 und sperrt die Taktfrequenz für eine ruckelfreie Wiedergabe (erfordert Neustart)."
   }
 }

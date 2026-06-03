@@ -274,5 +274,17 @@
     "close": "Close",
     "nowPlaying": "Now Playing",
     "seek": "Seek"
+  },
+  "tuning": {
+    "title": "Hardware Tuning",
+    "saving": "Saving settings...",
+    "disableWifi": "Disable WiFi",
+    "disableWifiDesc": "Turns off the wireless radio to reduce electrical noise.",
+    "disableBluetooth": "Disable Bluetooth",
+    "disableBluetoothDesc": "Turns off the Bluetooth radio to reduce RF interference.",
+    "disableOnboardAudio": "Disable Onboard Audio",
+    "disableOnboardAudioDesc": "Disables default 3.5mm jack & HDMI audio controllers to prevent conflicts.",
+    "exclusiveCore": "Exclusive Audio Core",
+    "exclusiveCoreDesc": "Isolates CPU Core 3 and locks clock speed for glitch-free playback (requires reboot)."
   }
 }

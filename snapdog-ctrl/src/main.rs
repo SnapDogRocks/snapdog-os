@@ -7,7 +7,6 @@ mod auto_update;
 mod config_txt;
 mod mdns;
 #[cfg(debug_assertions)]
-#[cfg(debug_assertions)]
 mod mock;
 #[cfg(not(debug_assertions))]
 mod mpris_client;
@@ -20,6 +19,7 @@ mod server_config;
 mod settings;
 #[cfg_attr(debug_assertions, allow(dead_code))]
 mod system;
+mod tuning;
 mod ws;
 
 use axum::Router;
@@ -238,10 +238,10 @@ async fn build_app() -> Router {
         .layer(TraceLayer::new_for_http())
 }
 
-/// Check if any ethernet interface has carrier (link detected).
 #[cfg(not(debug_assertions))]
 async fn has_network_link() -> bool {
-    for iface in &["eth0", "end0"] {
+    let ifaces = network::detect_ethernet_interfaces().await;
+    for iface in ifaces {
         let path = format!("/sys/class/net/{iface}/carrier");
         if let Ok(val) = tokio::fs::read_to_string(&path).await {
             if val.trim() == "1" {

@@ -1,70 +1,108 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 Fabian Schmieder
 
-//! Network management — `WiFi` AP mode, client mode, ethernet, and scanning.
-//! Replaces the shell-script based raspi-wifi package.
-
 use anyhow::{Context, Result};
 use tokio::process::Command;
 
-const WPA_CONF: &str = "/etc/wpa_supplicant/wpa_supplicant-wlan0.conf";
 const HOSTAPD_CONF: &str = "/etc/hostapd/hostapd.conf";
 const DNSMASQ_CONF: &str = "/etc/dnsmasq.d/snapdog-ap.conf";
 pub const ETH_NETWORK_PATH: &str = "/etc/systemd/network/10-ethernet.network";
 const WIFI_NETWORK: &str = "/etc/systemd/network/20-wifi.network";
 
+fn wpa_conf_path(iface: &str) -> String {
+    format!("/etc/wpa_supplicant/wpa_supplicant-{iface}.conf")
+}
+
+/// Dynamically detects the primary wireless interface name.
+/// Falls back to "wlan0" if none is found.
+pub async fn detect_wifi_interface() -> String {
+    if let Ok(mut entries) = tokio::fs::read_dir("/sys/class/net").await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if let Ok(name) = entry.file_name().into_string() {
+                if name.starts_with("wl") {
+                    return name;
+                }
+            }
+        }
+    }
+    "wlan0".to_string()
+}
+
+/// Dynamically detects all ethernet interface names.
+/// Falls back to ["eth0"] if none are found.
+pub async fn detect_ethernet_interfaces() -> Vec<String> {
+    let mut eths = Vec::new();
+    if let Ok(mut entries) = tokio::fs::read_dir("/sys/class/net").await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if let Ok(name) = entry.file_name().into_string() {
+                if name.starts_with("eth") || name.starts_with("en") {
+                    eths.push(name);
+                }
+            }
+        }
+    }
+    if eths.is_empty() {
+        vec!["eth0".to_string()]
+    } else {
+        eths
+    }
+}
+
 /// Check if `WiFi` is configured (has at least one network block).
 pub async fn is_wifi_configured() -> bool {
-    tokio::fs::read_to_string(WPA_CONF)
+    let iface = detect_wifi_interface().await;
+    tokio::fs::read_to_string(wpa_conf_path(&iface))
         .await
         .is_ok_and(|c| c.contains("network="))
 }
 
 /// Start temporary AP mode for initial setup.
 pub async fn start_ap(password: &str) -> Result<()> {
-    tracing::info!("Starting temporary AP mode");
+    let iface = detect_wifi_interface().await;
+    tracing::info!("Starting temporary AP mode on interface {iface}");
 
-    // Derive unique SSID from last 4 hex chars of wlan0 MAC
-    let ssid = tokio::fs::read_to_string("/sys/class/net/wlan0/address")
-        .await
-        .map_or_else(
-            |_| "SnapDog-Setup".into(),
-            |mac| {
-                let suffix: String = mac
-                    .trim()
-                    .replace(':', "")
-                    .chars()
-                    .rev()
-                    .take(4)
-                    .collect::<String>()
-                    .chars()
-                    .rev()
-                    .collect();
-                format!("SnapDog-{}", suffix.to_uppercase())
-            },
-        );
+    // Derive unique SSID from last 4 hex chars of MAC
+    let address_path = format!("/sys/class/net/{iface}/address");
+    let ssid = tokio::fs::read_to_string(&address_path).await.map_or_else(
+        |_| "SnapDog-Setup".into(),
+        |mac| {
+            let suffix: String = mac
+                .trim()
+                .replace(':', "")
+                .chars()
+                .rev()
+                .take(4)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect();
+            format!("SnapDog-{}", suffix.to_uppercase())
+        },
+    );
 
     // Write hostapd config
     let hostapd = format!(
-        "interface=wlan0\ndriver=nl80211\nssid={ssid}\nhw_mode=g\nchannel=6\n\
+        "interface={iface}\ndriver=nl80211\nssid={ssid}\nhw_mode=g\nchannel=6\n\
          ieee80211n=1\nwmm_enabled=1\nwpa=2\nwpa_passphrase={password}\n\
          wpa_key_mgmt=WPA-PSK\nrsn_pairwise=CCMP\n"
     );
     write_config(HOSTAPD_CONF, &hostapd).await?;
 
     // Write dnsmasq config for DHCP on AP
-    let dnsmasq = "interface=wlan0\nbind-interfaces\n\
+    let dnsmasq = format!(
+        "interface={iface}\nbind-interfaces\n\
          dhcp-range=10.11.12.100,10.11.12.200,255.255.255.0,24h\n\
-         address=/#/10.11.12.13\n";
-    write_config(DNSMASQ_CONF, dnsmasq).await?;
+         address=/#/10.11.12.13\n"
+    );
+    write_config(DNSMASQ_CONF, &dnsmasq).await?;
 
-    // Assign static IP to wlan0 for AP mode
-    run("ip", &["addr", "flush", "dev", "wlan0"]).await?;
-    run("ip", &["addr", "add", "10.11.12.13/24", "dev", "wlan0"]).await?;
-    run("ip", &["link", "set", "wlan0", "up"]).await?;
+    // Assign static IP to interface for AP mode
+    run("ip", &["addr", "flush", "dev", &iface]).await?;
+    run("ip", &["addr", "add", "10.11.12.13/24", "dev", &iface]).await?;
+    run("ip", &["link", "set", &iface, "up"]).await?;
 
     // Stop wpa_supplicant, start hostapd + dnsmasq
-    let _ = run("systemctl", &["stop", "wpa_supplicant@wlan0"]).await;
+    let _ = run("systemctl", &["stop", &format!("wpa_supplicant@{iface}")]).await;
     run("systemctl", &["start", "hostapd"]).await?;
     run("systemctl", &["start", "dnsmasq"]).await?;
 
@@ -73,12 +111,13 @@ pub async fn start_ap(password: &str) -> Result<()> {
 
 /// Stop AP mode and switch to `WiFi` client mode.
 pub async fn stop_ap() -> Result<()> {
-    tracing::info!("Stopping AP mode, switching to client");
+    let iface = detect_wifi_interface().await;
+    tracing::info!("Stopping AP mode on interface {iface}, switching to client");
     let _ = run("systemctl", &["stop", "hostapd"]).await;
     let _ = run("systemctl", &["stop", "dnsmasq"]).await;
-    run("ip", &["addr", "flush", "dev", "wlan0"]).await?;
+    run("ip", &["addr", "flush", "dev", &iface]).await?;
     run("systemctl", &["start", "systemd-resolved"]).await?;
-    run("systemctl", &["restart", "wpa_supplicant@wlan0"]).await?;
+    run("systemctl", &["start", &format!("wpa_supplicant@{iface}")]).await?;
     run("systemctl", &["restart", "systemd-networkd"]).await?;
     Ok(())
 }
@@ -89,7 +128,8 @@ pub async fn connect_wifi(
     password: &str,
     static_ip: Option<&StaticConfig>,
 ) -> Result<()> {
-    tracing::info!("Connecting to WiFi: {ssid}");
+    let iface = detect_wifi_interface().await;
+    tracing::info!("Connecting to WiFi on interface {iface}: {ssid}");
     if let Some(config) = static_ip {
         validate_static_config(config)?;
     }
@@ -100,14 +140,14 @@ pub async fn connect_wifi(
         "ctrl_interface=/var/run/wpa_supplicant\nupdate_config=1\ncountry=DE\np2p_disabled=1\n\n\
          network={{\n  ssid=\"{ssid}\"\n  psk=\"{password}\"\n  key_mgmt=WPA-PSK\n}}\n"
     );
-    write_config(WPA_CONF, &wpa).await?;
+    write_config(&wpa_conf_path(&iface), &wpa).await?;
 
-    // Write networkd config for wlan0
+    // Write networkd config for wifi
     let network = static_ip.map_or_else(
-        || "[Match]\nName=wlan0\n\n[Network]\nDHCP=yes\n".to_string(),
+        || format!("[Match]\nName={iface}\n\n[Network]\nDHCP=yes\n"),
         |s| {
             format!(
-                "[Match]\nName=wlan0\n\n[Network]\nAddress={}/{}\nGateway={}\nDNS={}\n",
+                "[Match]\nName={iface}\n\n[Network]\nAddress={}/{}\nGateway={}\nDNS={}\n",
                 s.ip,
                 subnet_to_prefix(&s.subnet),
                 s.gateway,
@@ -123,26 +163,32 @@ pub async fn connect_wifi(
 
 /// Disconnect `WiFi` and remove saved credentials.
 pub async fn disconnect_wifi() -> Result<()> {
-    tracing::info!("Disconnecting WiFi");
+    let iface = detect_wifi_interface().await;
+    tracing::info!("Disconnecting WiFi on interface {iface}");
     let wpa =
         "ctrl_interface=/var/run/wpa_supplicant\nupdate_config=1\ncountry=DE\np2p_disabled=1\n";
-    write_config(WPA_CONF, wpa).await?;
-    run("systemctl", &["restart", "wpa_supplicant@wlan0"]).await?;
+    write_config(&wpa_conf_path(&iface), wpa).await?;
+    run(
+        "systemctl",
+        &["restart", &format!("wpa_supplicant@{iface}")],
+    )
+    .await?;
     Ok(())
 }
 
 /// Scan for available `WiFi` networks.
 pub async fn scan_networks() -> Result<Vec<ScannedNetwork>> {
+    let iface = detect_wifi_interface().await;
     // Trigger scan
     let _ = Command::new("wpa_cli")
-        .args(["-i", "wlan0", "scan"])
+        .args(["-i", &iface, "scan"])
         .output()
         .await;
 
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     let output = Command::new("wpa_cli")
-        .args(["-i", "wlan0", "scan_results"])
+        .args(["-i", &iface, "scan_results"])
         .output()
         .await
         .context("wpa_cli scan_results failed")?;
@@ -187,11 +233,12 @@ pub async fn configure_ethernet(static_ip: Option<&StaticConfig>) -> Result<()> 
         validate_static_config(config)?;
     }
 
+    let ifaces = detect_ethernet_interfaces().await.join(" ");
     let network = static_ip.map_or_else(
-        || "[Match]\nName=eth0 end0\n\n[Network]\nDHCP=yes\n".to_string(),
+        || format!("[Match]\nName={ifaces}\n\n[Network]\nDHCP=yes\n"),
         |s| {
             format!(
-                "[Match]\nName=eth0 end0\n\n[Network]\nAddress={}/{}\nGateway={}\nDNS={}\n",
+                "[Match]\nName={ifaces}\n\n[Network]\nAddress={}/{}\nGateway={}\nDNS={}\n",
                 s.ip,
                 subnet_to_prefix(&s.subnet),
                 s.gateway,

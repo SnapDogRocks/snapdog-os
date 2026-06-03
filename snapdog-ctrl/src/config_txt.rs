@@ -133,8 +133,7 @@ fn replace_audio_overlay(content: &str, new_overlay: &str) -> String {
     result.join("\n") + "\n"
 }
 
-#[cfg(test)]
-fn find_value(content: &str, key: &str) -> Option<String> {
+pub fn find_value(content: &str, key: &str) -> Option<String> {
     let prefix = format!("{key}=");
     content
         .lines()
@@ -145,8 +144,7 @@ fn find_value(content: &str, key: &str) -> Option<String> {
         })
 }
 
-#[cfg(test)]
-fn upsert_value(content: &str, key: &str, value: &str) -> String {
+pub fn upsert_value(content: &str, key: &str, value: &str) -> String {
     let prefix = format!("{key}=");
     let new_line = format!("{key}={value}");
     let mut result = Vec::new();
@@ -166,6 +164,35 @@ fn upsert_value(content: &str, key: &str, value: &str) -> String {
         result.push(new_line);
     }
 
+    result.join("\n") + "\n"
+}
+
+pub fn has_dtoverlay(content: &str, overlay: &str) -> bool {
+    let line_target = format!("dtoverlay={overlay}");
+    content.lines().any(|l| l.trim() == line_target)
+}
+
+pub fn add_dtoverlay(content: &str, overlay: &str) -> String {
+    if has_dtoverlay(content, overlay) {
+        return content.to_string();
+    }
+    let mut result = content.trim_end().to_string();
+    if !result.is_empty() {
+        result.push('\n');
+    }
+    result.push_str(&format!("dtoverlay={overlay}\n"));
+    result
+}
+
+pub fn remove_dtoverlay(content: &str, overlay: &str) -> String {
+    let line_target = format!("dtoverlay={overlay}");
+    let mut result = Vec::new();
+    for line in content.lines() {
+        if line.trim() == line_target {
+            continue;
+        }
+        result.push(line.to_string());
+    }
     result.join("\n") + "\n"
 }
 

@@ -118,12 +118,7 @@ pub async fn get_system_info() -> SystemInfo {
         version: version.trim().to_string(),
         channel: channel.trim().to_string(),
         uptime_seconds: uptime,
-        pi_version: read_file("/etc/raspberrypi.version")
-            .await
-            .unwrap_or_default()
-            .trim()
-            .parse()
-            .unwrap_or(4),
+        board_model: detect_board_model().await,
         components: ComponentVersions {
             server: client.clone(),
             client,
@@ -131,6 +126,17 @@ pub async fn get_system_info() -> SystemInfo {
             kernel,
         },
     }
+}
+
+pub async fn detect_board_model() -> String {
+    if let Ok(model) = tokio::fs::read_to_string("/proc/device-tree/model").await {
+        let trimmed = model.trim_end_matches('\0').trim().to_string();
+        if !trimmed.is_empty() {
+            return trimmed;
+        }
+    }
+    // Fallback to RAUC compatible
+    detect_board().await
 }
 
 pub async fn set_system(hostname: Option<String>, channel: Option<String>) -> Result<()> {

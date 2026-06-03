@@ -18,6 +18,7 @@ import {
   type SshConfig,
   type ServerConfig,
   type ServerStatus,
+  type TuningConfig,
 } from "@/lib/api";
 import { useI18n } from "@/i18n/provider";
 import { locales, type Locale } from "@/i18n/config";
@@ -173,7 +174,7 @@ function DashboardTab() {
         <dt className="text-muted-foreground">{t("uptime")}</dt>
         <dd>{uptimeHours}h {uptimeMinutes}m</dd>
         <dt className="text-muted-foreground">{t("piVersion")}</dt>
-        <dd>Raspberry Pi {info.pi_version}</dd>
+        <dd>{info.board_model || "—"}</dd>
       </dl>
     </Card>
   );
@@ -1550,6 +1551,83 @@ function SettingsCard() {
   );
 }
 
+function HardwareTuningCard() {
+  const t = useTranslations("tuning");
+  const [config, setConfig] = useState<TuningConfig | null>(null);
+  const [saving, setSaving] = useState(false);
+  const cardId = useId();
+  const wifiId = useId();
+  const btId = useId();
+  const onboardAudioId = useId();
+  const exclusiveCoreId = useId();
+
+  const fetchConfig = useCallback(() => {
+    api.getTuning().then(setConfig).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    fetchConfig();
+  }, [fetchConfig]);
+
+  useWebSocket("system_changed", fetchConfig);
+
+  if (!config) return <Skeleton className="h-40 w-full" />;
+
+  const toggle = async (key: keyof TuningConfig, val: boolean) => {
+    const newConfig = { ...config, [key]: val };
+    setConfig(newConfig);
+    setSaving(true);
+    try {
+      await api.setTuning(newConfig);
+    } catch (e) {
+      console.error(e);
+      setConfig(config);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card title={t("title")} id={cardId}>
+      <div className="space-y-4">
+        {saving && (
+          <div className="text-xs text-muted-foreground animate-pulse mb-2">
+            {t("saving")}
+          </div>
+        )}
+        <div className="flex items-center justify-between">
+          <div>
+            <label htmlFor={wifiId} className="text-sm font-medium">{t("disableWifi")}</label>
+            <p className="text-xs text-muted-foreground">{t("disableWifiDesc")}</p>
+          </div>
+          <Switch id={wifiId} checked={config.rf_kill_wifi} onCheckedChange={(c) => toggle("rf_kill_wifi", c)} disabled={saving} />
+        </div>
+        <div className="flex items-center justify-between border-t border-border pt-4">
+          <div>
+            <label htmlFor={btId} className="text-sm font-medium">{t("disableBluetooth")}</label>
+            <p className="text-xs text-muted-foreground">{t("disableBluetoothDesc")}</p>
+          </div>
+          <Switch id={btId} checked={config.rf_kill_bluetooth} onCheckedChange={(c) => toggle("rf_kill_bluetooth", c)} disabled={saving} />
+        </div>
+        <div className="flex items-center justify-between border-t border-border pt-4">
+          <div>
+            <label htmlFor={onboardAudioId} className="text-sm font-medium">{t("disableOnboardAudio")}</label>
+            <p className="text-xs text-muted-foreground">{t("disableOnboardAudioDesc")}</p>
+          </div>
+          <Switch id={onboardAudioId} checked={config.disable_onboard_audio} onCheckedChange={(c) => toggle("disable_onboard_audio", c)} disabled={saving} />
+        </div>
+        <div className="flex items-center justify-between border-t border-border pt-4">
+          <div>
+            <label htmlFor={exclusiveCoreId} className="text-sm font-medium">{t("exclusiveCore")}</label>
+            <p className="text-xs text-muted-foreground">{t("exclusiveCoreDesc")}</p>
+          </div>
+          <Switch id={exclusiveCoreId} checked={config.exclusive_audio_core} onCheckedChange={(c) => toggle("exclusive_audio_core", c)} disabled={saving} />
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function SystemTab() {
   const t = useTranslations("system");
   const [info, setInfo] = useState<SystemInfo | null>(null);
@@ -1567,6 +1645,7 @@ function SystemTab() {
       <SettingsCard />
       <TimezoneCard />
       <LogsCard />
+      <HardwareTuningCard />
       <Card title={t("title")} id={cardId}>
         <div className="space-y-4">
           <Field label={t("version")}>

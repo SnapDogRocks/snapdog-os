@@ -14,10 +14,11 @@ use zbus::zvariant::Value;
 const BUS_NAME: &str = "org.mpris.MediaPlayer2.snapdog_client";
 const OBJECT_PATH: &str = "/org/mpris/MediaPlayer2";
 const PLAYER_IFACE: &str = "org.mpris.MediaPlayer2.Player";
-const POLL_INTERVAL: Duration = Duration::from_millis(1000);
+const POLL_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Now-playing state exposed to the WebUI.
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+/// Now-playing state exposed to the `WebUI`.
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct NowPlaying {
     pub playing: bool,
     pub title: String,
@@ -57,14 +58,14 @@ async fn poll_loop(
     ws_tx: &broadcast::Sender<String>,
 ) -> anyhow::Result<()> {
     let conn = zbus::Connection::system().await?;
-    let proxy = zbus::fdi::PropertiesProxy::builder(&conn)
+    let proxy = zbus::fdo::PropertiesProxy::builder(&conn)
         .destination(BUS_NAME)?
         .path(OBJECT_PATH)?
         .build()
         .await?;
 
     loop {
-        let props = proxy.get_all(PLAYER_IFACE).await?;
+        let props = proxy.get_all(PLAYER_IFACE.try_into()?).await?;
         let new_state = parse_props(&props);
 
         let mut current = state.lock().await;
@@ -80,81 +81,82 @@ async fn poll_loop(
     }
 }
 
-fn parse_props(props: &HashMap<String, Value<'_>>) -> NowPlaying {
+fn parse_props(props: &HashMap<String, zbus::zvariant::OwnedValue>) -> NowPlaying {
     let playing = props
         .get("PlaybackStatus")
-        .and_then(|v| v.downcast_ref::<str>())
+        .and_then(|v| <&str>::try_from(v).ok())
         .is_some_and(|s| s == "Playing");
 
     let volume_f = props
         .get("Volume")
-        .and_then(|v| v.downcast_ref::<f64>())
-        .copied()
+        .and_then(|v| v.downcast_ref::<f64>().ok())
         .unwrap_or(1.0);
     let muted = volume_f == 0.0;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let volume = (volume_f * 100.0) as u16;
 
     let position_us = props
         .get("Position")
-        .and_then(|v| v.downcast_ref::<i64>())
-        .copied()
+        .and_then(|v| v.downcast_ref::<i64>().ok())
         .unwrap_or(0);
 
     let seekable = props
         .get("CanSeek")
-        .and_then(|v| v.downcast_ref::<bool>())
-        .copied()
+        .and_then(|v| v.downcast_ref::<bool>().ok())
         .unwrap_or(false);
 
     let can_next = props
         .get("CanGoNext")
-        .and_then(|v| v.downcast_ref::<bool>())
-        .copied()
+        .and_then(|v| v.downcast_ref::<bool>().ok())
         .unwrap_or(false);
 
     let can_prev = props
         .get("CanGoPrevious")
-        .and_then(|v| v.downcast_ref::<bool>())
-        .copied()
+        .and_then(|v| v.downcast_ref::<bool>().ok())
         .unwrap_or(false);
 
     let metadata = props
         .get("Metadata")
-        .and_then(|v| v.downcast_ref::<HashMap<String, Value<'_>>>());
+        .and_then(|v| HashMap::<String, Value<'static>>::try_from(Value::from(v.clone())).ok());
 
-    let (title, artist, album, cover_url, duration_ms) = if let Some(meta) = metadata {
-        let title = meta
-            .get("xesam:title")
-            .and_then(|v| v.downcast_ref::<str>())
-            .unwrap_or("")
-            .to_string();
-        let artist = meta
-            .get("xesam:artist")
-            .and_then(|v| {
-                // MPRIS2 spec: xesam:artist is Vec<String>
-                v.downcast_ref::<Vec<String>>()
-                    .and_then(|a| a.first().cloned())
-                    .or_else(|| v.downcast_ref::<str>().map(String::from))
-            })
-            .unwrap_or_default();
-        let album = meta
-            .get("xesam:album")
-            .and_then(|v| v.downcast_ref::<str>())
-            .unwrap_or("")
-            .to_string();
-        let cover_url = meta
-            .get("mpris:artUrl")
-            .and_then(|v| v.downcast_ref::<str>())
-            .map(String::from);
-        let duration_us = meta
-            .get("mpris:length")
-            .and_then(|v| v.downcast_ref::<i64>())
-            .copied()
-            .unwrap_or(0);
-        (title, artist, album, cover_url, duration_us / 1000)
-    } else {
-        (String::new(), String::new(), String::new(), None, 0)
-    };
+    let (title, artist, album, cover_url, duration_ms) = metadata.map_or_else(
+        || (String::new(), String::new(), String::new(), None, 0),
+        |meta| {
+            let title = meta
+                .get("xesam:title")
+                .and_then(|v| <&str>::try_from(v).ok())
+                .unwrap_or("")
+                .to_string();
+            let artist = meta
+                .get("xesam:artist")
+                .and_then(|v| {
+                    // MPRIS2 spec: xesam:artist is Vec<String>
+                    zbus::zvariant::Array::try_from(v.clone())
+                        .ok()
+                        .and_then(|arr| {
+                            arr.inner()
+                                .first()
+                                .and_then(|val| <&str>::try_from(val).ok().map(String::from))
+                        })
+                        .or_else(|| <&str>::try_from(v).ok().map(String::from))
+                })
+                .unwrap_or_default();
+            let album = meta
+                .get("xesam:album")
+                .and_then(|v| <&str>::try_from(v).ok())
+                .unwrap_or("")
+                .to_string();
+            let cover_url = meta
+                .get("mpris:artUrl")
+                .and_then(|v| <&str>::try_from(v).ok())
+                .map(String::from);
+            let duration_us = meta
+                .get("mpris:length")
+                .and_then(|v| v.downcast_ref::<i64>().ok())
+                .unwrap_or(0);
+            (title, artist, album, cover_url, duration_us / 1000)
+        },
+    );
 
     NowPlaying {
         playing,
@@ -175,7 +177,7 @@ fn parse_props(props: &HashMap<String, Value<'_>>) -> NowPlaying {
 /// Send a transport command to snapdog-client via D-Bus.
 pub async fn send_command(command: &str) -> anyhow::Result<()> {
     let conn = zbus::Connection::system().await?;
-    let proxy = zbus::Proxy::builder(&conn)
+    let proxy: zbus::Proxy<'_> = zbus::proxy::Builder::new(&conn)
         .destination(BUS_NAME)?
         .path(OBJECT_PATH)?
         .interface(PLAYER_IFACE)?
@@ -197,13 +199,13 @@ pub async fn send_command(command: &str) -> anyhow::Result<()> {
 /// Set volume via D-Bus (0.0–1.0).
 pub async fn set_volume(volume: f64) -> anyhow::Result<()> {
     let conn = zbus::Connection::system().await?;
-    let proxy = zbus::fdi::PropertiesProxy::builder(&conn)
+    let proxy = zbus::fdo::PropertiesProxy::builder(&conn)
         .destination(BUS_NAME)?
         .path(OBJECT_PATH)?
         .build()
         .await?;
     proxy
-        .set(PLAYER_IFACE, "Volume", &Value::from(volume))
+        .set(PLAYER_IFACE.try_into()?, "Volume", Value::from(volume))
         .await?;
     Ok(())
 }
@@ -211,7 +213,7 @@ pub async fn set_volume(volume: f64) -> anyhow::Result<()> {
 /// Seek to position (microseconds) via D-Bus.
 pub async fn seek(offset_us: i64) -> anyhow::Result<()> {
     let conn = zbus::Connection::system().await?;
-    let proxy = zbus::Proxy::builder(&conn)
+    let proxy: zbus::Proxy<'_> = zbus::proxy::Builder::new(&conn)
         .destination(BUS_NAME)?
         .path(OBJECT_PATH)?
         .interface(PLAYER_IFACE)?

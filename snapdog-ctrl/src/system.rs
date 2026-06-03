@@ -330,18 +330,6 @@ struct WpaStatus {
     ip: String,
 }
 
-async fn first_existing_interface(candidates: &[&str]) -> Option<String> {
-    for iface in candidates {
-        if tokio::fs::metadata(format!("/sys/class/net/{iface}"))
-            .await
-            .is_ok()
-        {
-            return Some((*iface).to_string());
-        }
-    }
-    None
-}
-
 async fn interface_status(iface: &str) -> InterfaceStatus {
     let (ip, subnet) = ipv4_address(iface).await.unwrap_or_default();
     let gateway = default_gateway(iface).await.unwrap_or_default();
@@ -1055,6 +1043,11 @@ pub async fn set_service(name: &str, enabled: bool) -> Result<()> {
         run_cmd("systemctl", &["stop", unit]).await?;
     }
     Ok(())
+}
+
+pub async fn is_service_enabled(name: &str) -> bool {
+    let config = get_service_config().await;
+    *config.get(name).unwrap_or(&false)
 }
 
 // --- Server Connectivity Test ---

@@ -1428,7 +1428,10 @@ async fn post_now_playing_command() -> StatusCode {
 
 #[cfg(not(debug_assertions))]
 async fn put_now_playing_volume(Json(body): Json<serde_json::Value>) -> StatusCode {
-    let vol = body.get("volume").and_then(|v| v.as_f64()).unwrap_or(1.0);
+    let vol = body
+        .get("volume")
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or(1.0);
     match crate::mpris_client::set_volume(vol / 100.0).await {
         Ok(()) => StatusCode::OK,
         Err(e) => {
@@ -1445,7 +1448,10 @@ async fn put_now_playing_volume() -> StatusCode {
 
 #[cfg(not(debug_assertions))]
 async fn post_now_playing_seek(Json(body): Json<serde_json::Value>) -> StatusCode {
-    let offset_ms = body.get("offset_ms").and_then(|v| v.as_i64()).unwrap_or(0);
+    let offset_ms = body
+        .get("offset_ms")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(0);
     match crate::mpris_client::seek(offset_ms * 1000).await {
         Ok(()) => StatusCode::OK,
         Err(e) => {

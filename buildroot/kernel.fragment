@@ -68,3 +68,12 @@ CONFIG_PCI=y
 CONFIG_PCIE_BRCMSTB=y
 CONFIG_NVME_CORE=y
 CONFIG_BLK_DEV_NVME=y
+
+# Real-Time audio scheduler optimizations
+# Disable RT group scheduling to allow systemd services to obtain RT priority
+CONFIG_RT_GROUP_SCHED=n
+
+# 250Hz timer frequency (balance latency and overhead)
+CONFIG_HZ_250=y
+CONFIG_HZ=250
+CONFIG_NO_HZ_IDLE=y

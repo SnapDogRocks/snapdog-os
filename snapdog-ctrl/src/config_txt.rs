@@ -91,9 +91,9 @@ fn match_line_key_value(line: &str, search_key: &str) -> Option<String> {
     let without_comment = trimmed.split('#').next()?;
 
     // Split line by '=' and trim each part
-    let line_parts: Vec<&str> = without_comment.split('=').map(|p| p.trim()).collect();
+    let line_parts: Vec<&str> = without_comment.split('=').map(str::trim).collect();
     // Split search key by '=' and trim each part
-    let search_parts: Vec<&str> = search_key.split('=').map(|p| p.trim()).collect();
+    let search_parts: Vec<&str> = search_key.split('=').map(str::trim).collect();
 
     if line_parts.len() > search_parts.len() {
         // Check if the prefix matches the search key parts
@@ -181,12 +181,10 @@ pub fn upsert_value(content: &str, key: &str, value: &str) -> String {
 
 pub fn has_dtoverlay(content: &str, overlay: &str) -> bool {
     content.lines().any(|l| {
-        if let Some(val) = match_line_key_value(l, "dtoverlay") {
+        match_line_key_value(l, "dtoverlay").is_some_and(|val| {
             let name = val.split(',').next().unwrap_or("").trim();
             name == overlay
-        } else {
-            false
-        }
+        })
     })
 }
 

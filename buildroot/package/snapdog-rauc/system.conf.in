@@ -1,5 +1,5 @@
 [system]
-compatible=snapdog-os-@SNAPDOG_PI_VERSION@
+compatible=snapdog-os-@SNAPDOG_BOARD@
 bootloader=custom
 statusfile=/data/rauc.status
 bundle-formats=verity

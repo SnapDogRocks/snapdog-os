@@ -29,8 +29,8 @@ prepare-ctrl:
 
 build: prepare-ctrl ## Build image for $(BOARD)
 	@echo $(VERSION) > buildroot/VERSION
-	@cd $(BRSRC) && make O=$(abspath $(BRDIR)) BR2_EXTERNAL=$(abspath buildroot) SNAPDOG_PI_VERSION=$(subst pi,,$(BOARD)) SNAPDOG_ROOT_DEV=$(SNAPDOG_ROOT_DEV) olddefconfig
-	@cd $(BRSRC) && make O=$(abspath $(BRDIR)) BR2_EXTERNAL=$(abspath buildroot) SNAPDOG_PI_VERSION=$(subst pi,,$(BOARD)) SNAPDOG_ROOT_DEV=$(SNAPDOG_ROOT_DEV)
+	@cd $(BRSRC) && make O=$(abspath $(BRDIR)) BR2_EXTERNAL=$(abspath buildroot) SNAPDOG_BOARD=$(BOARD) SNAPDOG_ROOT_DEV=$(SNAPDOG_ROOT_DEV) olddefconfig
+	@cd $(BRSRC) && make O=$(abspath $(BRDIR)) BR2_EXTERNAL=$(abspath buildroot) SNAPDOG_BOARD=$(BOARD) SNAPDOG_ROOT_DEV=$(SNAPDOG_ROOT_DEV)
 
 config: ## Configure for $(BOARD)
 	@mkdir -p $(BRDIR)

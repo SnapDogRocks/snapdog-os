@@ -1,5 +1,5 @@
 [update]
-compatible=snapdog-os-@PI@
+compatible=snapdog-os-@BOARD@
 version=@VERSION@
 
 [bundle]

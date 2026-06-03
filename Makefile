@@ -1,5 +1,4 @@
-PI ?= pi4
-BOARD ?= $(PI)
+BOARD ?= pi4
 VERSION := $(shell cat VERSION)
 SNAPDOG_CTRL_BINARY ?= snapdog-ctrl-binary
 SNAPDOG_ROOT_DEV ?= /dev/mmcblk0p

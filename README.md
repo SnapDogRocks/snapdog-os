@@ -211,12 +211,12 @@ Requires a Linux host with standard buildroot dependencies (`build-essential`, `
 ```bash
 make setup                         # Download buildroot 2025.02
 # provide an aarch64 snapdog-ctrl binary at ./snapdog-ctrl-binary
-make PI=pi4 config                 # Configure for Raspberry Pi 4
-make PI=pi4 build                  # Build SD card image
-make all                           # Build for all Pi variants
+make BOARD=pi4 config               # Configure for Raspberry Pi 4
+make BOARD=pi4 build                # Build SD card image
+make all                           # Build for all board variants
 ```
 
-Output: `../buildroot-pi4/images/sdcard.img`
+Output: `../buildroot-<board>/images/sdcard.img`
 
 ## Security
 

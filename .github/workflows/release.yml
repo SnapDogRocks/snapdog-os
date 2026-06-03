@@ -98,13 +98,13 @@ jobs:
           retention-days: 7
 
   build-image:
-    name: Build image (${{ matrix.pi }})
+    name: Build image (${{ matrix.board }})
     runs-on: [self-hosted, linux, x64, buildroot]
     needs: [release-please, build-ctrl]
     strategy:
       fail-fast: false
       matrix:
-        pi: [pi3, pi4, pi5, zero2w]
+        board: [pi3, pi4, pi5, zero2w]
     env:
       BR2_DL_DIR: /dl
       BR2_CCACHE_DIR: /ccache
@@ -129,47 +129,47 @@ jobs:
 
       - name: Setup buildroot
         run: |
-          ln -sfn /srv/${{ matrix.pi }} ../buildroot-${{ matrix.pi }}
+          ln -sfn /srv/${{ matrix.board }} ../buildroot-${{ matrix.board }}
           make setup
 
       - name: Build
         run: |
           chmod 755 snapdog-ctrl-binary
-          make PI=${{ matrix.pi }} VERSION="${{ steps.version.outputs.version }}" config
-          make PI=${{ matrix.pi }} VERSION="${{ steps.version.outputs.version }}" build
+          make BOARD=${{ matrix.board }} VERSION="${{ steps.version.outputs.version }}" config
+          make BOARD=${{ matrix.board }} VERSION="${{ steps.version.outputs.version }}" build
 
       - name: Generate Buildroot legal manifest
         run: |
           cd ../buildroot
-          make O="${{ github.workspace }}/../buildroot-${{ matrix.pi }}" \
+          make O="${{ github.workspace }}/../buildroot-${{ matrix.board }}" \
             BR2_EXTERNAL="${{ github.workspace }}/buildroot" \
-            SNAPDOG_PI_VERSION="${{ matrix.pi == 'pi3' && '3' || matrix.pi == 'pi4' && '4' || matrix.pi == 'zero2w' && 'zero2w' || '5' }}" \
+            SNAPDOG_PI_VERSION="${{ matrix.board == 'pi3' && '3' || matrix.board == 'pi4' && '4' || matrix.board == 'zero2w' && 'zero2w' || '5' }}" \
             legal-info
 
       - name: Package
         id: package
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          IMG="../buildroot-${{ matrix.pi }}/images/sdcard.img"
-          OUT="snapdog-os-${{ matrix.pi }}-${VERSION}.img.gz"
-          BUNDLE="snapdog-os-${{ matrix.pi }}-${VERSION}.raucb"
-          SBOM="snapdog-os-${{ matrix.pi }}-${VERSION}-sbom.csv"
-          CHECKSUMS="snapdog-os-${{ matrix.pi }}-${VERSION}.sha256"
+          IMG="../buildroot-${{ matrix.board }}/images/sdcard.img"
+          OUT="snapdog-os-${{ matrix.board }}-${VERSION}.img.gz"
+          BUNDLE="snapdog-os-${{ matrix.board }}-${VERSION}.raucb"
+          SBOM="snapdog-os-${{ matrix.board }}-${VERSION}-sbom.csv"
+          CHECKSUMS="snapdog-os-${{ matrix.board }}-${VERSION}.sha256"
 
           test -s "$IMG"
           PARTITIONS=$(sfdisk -J "$IMG" | jq '.partitiontable.partitions | length')
           test "$PARTITIONS" -eq 4
 
           gzip -n -c "$IMG" > "$OUT"
-          cp "../buildroot-${{ matrix.pi }}/legal-info/manifest.csv" "$SBOM"
+          cp "../buildroot-${{ matrix.board }}/legal-info/manifest.csv" "$SBOM"
 
           # Generate RAUC bundle
           umask 077
           printf '%s\n' "${{ secrets.RAUC_CA_KEY_PEM }}" > rauc-ca.key.pem
           RAUC_KEY_FILE="$(pwd)/rauc-ca.key.pem" \
             buildroot/rauc/create-bundle.sh \
-            "${{ matrix.pi }}" "$VERSION" \
-            "../buildroot-${{ matrix.pi }}/images/rootfs.ext4" \
+            "${{ matrix.board }}" "$VERSION" \
+            "../buildroot-${{ matrix.board }}/images/rootfs.ext4" \
             "$BUNDLE"
           rm -f rauc-ca.key.pem
 
@@ -182,7 +182,7 @@ jobs:
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: image-${{ matrix.pi }}
+          name: image-${{ matrix.board }}
           path: |
             ${{ steps.package.outputs.image }}
             ${{ steps.package.outputs.bundle }}
@@ -241,17 +241,17 @@ jobs:
             SUFFIX="-beta"
           fi
 
-          for pi in pi3 pi4 pi5; do
-            IMAGE="artifacts/image-${pi}/snapdog-os-${pi}-${VERSION}.img.gz"
-            BUNDLE="artifacts/image-${pi}/snapdog-os-${pi}-${VERSION}.raucb"
-            SBOM="artifacts/image-${pi}/snapdog-os-${pi}-${VERSION}-sbom.csv"
-            CHECKSUMS="artifacts/image-${pi}/snapdog-os-${pi}-${VERSION}.sha256"
+          for board in pi3 pi4 pi5; do
+            IMAGE="artifacts/image-${board}/snapdog-os-${board}-${VERSION}.img.gz"
+            BUNDLE="artifacts/image-${board}/snapdog-os-${board}-${VERSION}.raucb"
+            SBOM="artifacts/image-${board}/snapdog-os-${board}-${VERSION}-sbom.csv"
+            CHECKSUMS="artifacts/image-${board}/snapdog-os-${board}-${VERSION}.sha256"
 
             test -s "$IMAGE"
             test -s "$BUNDLE"
             test -s "$SBOM"
             test -s "$CHECKSUMS"
-            (cd "artifacts/image-${pi}" && sha256sum --check "snapdog-os-${pi}-${VERSION}.sha256")
+            (cd "artifacts/image-${board}" && sha256sum --check "snapdog-os-${board}-${VERSION}.sha256")
 
             # Versioned archives (immutable)
             aws s3 cp "$IMAGE" "s3://${R2_BUCKET}/os/images/" \
@@ -265,19 +265,19 @@ jobs:
               --endpoint-url "$AWS_ENDPOINT_URL"
 
             # Flat "latest" bundle (overwritten each release, short cache)
-            aws s3 cp "$BUNDLE" "s3://${R2_BUCKET}/os/bundles/snapdog-os-${pi}${SUFFIX}.raucb" \
+            aws s3 cp "$BUNDLE" "s3://${R2_BUCKET}/os/bundles/snapdog-os-${board}${SUFFIX}.raucb" \
               --cache-control "public, max-age=300" \
               --endpoint-url "$AWS_ENDPOINT_URL"
-            aws s3 cp "$IMAGE" "s3://${R2_BUCKET}/os/images/snapdog-os-${pi}${SUFFIX}.img.gz" \
+            aws s3 cp "$IMAGE" "s3://${R2_BUCKET}/os/images/snapdog-os-${board}${SUFFIX}.img.gz" \
               --cache-control "public, max-age=300" \
               --endpoint-url "$AWS_ENDPOINT_URL"
 
             # Stable release also overwrites the beta pointer
             if [ -z "$SUFFIX" ]; then
-              aws s3 cp "$BUNDLE" "s3://${R2_BUCKET}/os/bundles/snapdog-os-${pi}-beta.raucb" \
+              aws s3 cp "$BUNDLE" "s3://${R2_BUCKET}/os/bundles/snapdog-os-${board}-beta.raucb" \
                 --cache-control "public, max-age=300" \
                 --endpoint-url "$AWS_ENDPOINT_URL"
-              aws s3 cp "$IMAGE" "s3://${R2_BUCKET}/os/images/snapdog-os-${pi}-beta.img.gz" \
+              aws s3 cp "$IMAGE" "s3://${R2_BUCKET}/os/images/snapdog-os-${board}-beta.img.gz" \
                 --cache-control "public, max-age=300" \
                 --endpoint-url "$AWS_ENDPOINT_URL"
             fi

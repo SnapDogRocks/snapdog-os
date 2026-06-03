@@ -6,7 +6,7 @@
 
 set -euo pipefail
 
-PI="${1:?Usage: $0 <pi3|pi4|pi5> <version> <rootfs.ext4> <output.raucb>}"
+BOARD="${1:?Usage: $0 <board> <version> <rootfs.ext4> <output.raucb>}"
 VERSION="${2:?}"
 ROOTFS="${3:?}"
 OUTPUT="${4:?}"
@@ -23,7 +23,7 @@ WORKDIR=$(mktemp -d)
 trap 'rm -rf "$WORKDIR"' EXIT
 
 # Create manifest
-sed -e "s/@PI@/$PI/" -e "s/@VERSION@/$VERSION/" \
+sed -e "s/@BOARD@/$BOARD/" -e "s/@VERSION@/$VERSION/" \
   "$SCRIPT_DIR/manifest.raucm.in" > "$WORKDIR/manifest.raucm"
 
 # Copy rootfs image

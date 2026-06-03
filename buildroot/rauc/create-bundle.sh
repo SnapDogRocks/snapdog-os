@@ -1,6 +1,6 @@
 #!/bin/bash
 # Generate a signed RAUC bundle from a rootfs image.
-# Usage: ./create-bundle.sh <pi3|pi4|pi5> <version> <rootfs.ext4> <output.raucb>
+# Usage: ./create-bundle.sh <board> <version> <rootfs.ext4> <output.raucb>
 #
 # Requires: rauc, openssl, signing key + cert
 

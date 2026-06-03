@@ -51,7 +51,11 @@ pub async fn preflight_check() -> Vec<HealthWarning> {
         });
     }
 
-    if tokio::fs::metadata("/sys/class/net/wlan0").await.is_err() {
+    let wifi_iface = crate::network::detect_wifi_interface().await;
+    if tokio::fs::metadata(format!("/sys/class/net/{wifi_iface}"))
+        .await
+        .is_err()
+    {
         warnings.push(HealthWarning {
             id: "no_wlan",
             severity: "info",
@@ -224,8 +228,6 @@ pub async fn rauc_slot_status() -> Result<Vec<crate::rauc::SlotStatus>> {
 
 // --- Network ---
 
-const ETHERNET_INTERFACES: &[&str] = &["eth0", "end0"];
-const WIFI_INTERFACE: &str = "wlan0";
 const ETH_NETWORK: &str = "/etc/systemd/network/10-ethernet.network";
 const WIFI_NETWORK: &str = "/etc/systemd/network/20-wifi.network";
 
@@ -235,9 +237,8 @@ pub async fn get_network_overview() -> NetworkOverview {
 }
 
 pub async fn get_ethernet() -> EthernetInfo {
-    let iface = first_existing_interface(ETHERNET_INTERFACES)
-        .await
-        .unwrap_or_else(|| ETHERNET_INTERFACES[0].to_string());
+    let eths = crate::network::detect_ethernet_interfaces().await;
+    let iface = eths.first().cloned().unwrap_or_else(|| "eth0".to_string());
     let status = interface_status(&iface).await;
 
     EthernetInfo {
@@ -265,9 +266,10 @@ pub async fn set_ethernet(config: EthernetConfig) -> Result<()> {
 }
 
 pub async fn get_wifi() -> WifiInfo {
-    let status = interface_status(WIFI_INTERFACE).await;
-    let wpa = wpa_status(WIFI_INTERFACE).await;
-    let signal = wifi_signal(WIFI_INTERFACE).await.unwrap_or_default();
+    let iface = crate::network::detect_wifi_interface().await;
+    let status = interface_status(&iface).await;
+    let wpa = wpa_status(&iface).await;
+    let signal = wifi_signal(&iface).await.unwrap_or_default();
     let connected = wpa.state == "COMPLETED" || status.connected;
 
     WifiInfo {
@@ -747,6 +749,11 @@ pub async fn factory_reset() -> Result<()> {
     tracing::warn!("Factory reset initiated");
 
     // Remove configurations directly from the writeable /data partition to preserve symbolic links
+    let wifi_iface = crate::network::detect_wifi_interface().await;
+    let _ = tokio::fs::remove_file(format!(
+        "/data/wpa_supplicant/wpa_supplicant-{wifi_iface}.conf"
+    ))
+    .await;
     let _ = tokio::fs::remove_file("/data/wpa_supplicant/wpa_supplicant-wlan0.conf").await;
     let _ = tokio::fs::remove_file("/data/systemd/network/10-ethernet.network").await;
     let _ = tokio::fs::remove_file("/data/systemd/network/20-wifi.network").await;

@@ -118,7 +118,12 @@ impl RpiTuningDriver {
         // 3. Update systemd CPUAffinity drop-in
         if config.exclusive_audio_core {
             tokio::fs::create_dir_all(SYSTEMD_OVERRIDE_DIR).await?;
-            let affinity_override = "[Service]\nCPUAffinity=3\n";
+            let affinity_override = "[Service]\n\
+                                     CPUAffinity=3\n\
+                                     CPUSchedulingPolicy=rr\n\
+                                     CPUSchedulingPriority=99\n\
+                                     LimitRTPRIO=99\n\
+                                     LimitMEMLOCK=infinity\n";
             tokio::fs::write(SYSTEMD_OVERRIDE_PATH, affinity_override).await?;
         } else if tokio::fs::metadata(SYSTEMD_OVERRIDE_PATH).await.is_ok() {
             tokio::fs::remove_file(SYSTEMD_OVERRIDE_PATH).await?;

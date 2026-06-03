@@ -79,18 +79,41 @@ pub async fn set_audio_overlay(overlay: &str) -> Result<()> {
 
 // ── Internal parsing ──────────────────────────────────────────
 
+/// Helper to parse a line into parts by '=', supporting nested '=' (like in dtparam=audio=off),
+/// ignoring spaces around '=', and ignoring trailing comments.
+fn match_line_key_value(line: &str, search_key: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if trimmed.starts_with('#') {
+        return None;
+    }
+
+    // Split inline comment if any
+    let without_comment = trimmed.split('#').next()?;
+
+    // Split line by '=' and trim each part
+    let line_parts: Vec<&str> = without_comment.split('=').map(|p| p.trim()).collect();
+    // Split search key by '=' and trim each part
+    let search_parts: Vec<&str> = search_key.split('=').map(|p| p.trim()).collect();
+
+    if line_parts.len() > search_parts.len() {
+        // Check if the prefix matches the search key parts
+        if line_parts[..search_parts.len()] == search_parts[..] {
+            // The value is the rest of the parts joined by '='
+            return Some(line_parts[search_parts.len()..].join("="));
+        }
+    }
+    None
+}
+
 fn find_audio_overlay(content: &str) -> Option<String> {
     content
         .lines()
         .filter_map(|line| {
-            let trimmed = line.trim_start();
-            if trimmed.starts_with('#') {
-                None
-            } else {
-                trimmed.strip_prefix("dtoverlay=")
-            }
+            let val = match_line_key_value(line, "dtoverlay")?;
+            // Split by comma to get the actual overlay name
+            let name = val.split(',').next()?.trim().to_string();
+            Some(name)
         })
-        .map(|v| v.split(',').next().unwrap_or("").trim().to_string())
         .find(|name| is_audio_overlay(name))
 }
 
@@ -105,25 +128,22 @@ fn replace_audio_overlay(content: &str, new_overlay: &str) -> String {
     let mut found = false;
 
     for line in content.lines() {
-        let trimmed = line.trim_start();
+        let mut is_audio = false;
 
-        // Check if this is an audio overlay line (not commented out)
-        if !trimmed.starts_with('#') {
-            if let Some(overlay_value) = trimmed.strip_prefix("dtoverlay=") {
-                let name = overlay_value.split(',').next().unwrap_or("").trim();
-                if is_audio_overlay(name) {
-                    // Replace or remove this line
-                    if !new_overlay.is_empty() && !found {
-                        result.push(format!("dtoverlay={new_overlay}"));
-                        found = true;
-                    }
-                    // Skip the old line (either replaced or removed)
-                    continue;
+        if let Some(val) = match_line_key_value(line, "dtoverlay") {
+            let name = val.split(',').next().unwrap_or("").trim();
+            if is_audio_overlay(name) {
+                is_audio = true;
+                if !new_overlay.is_empty() && !found {
+                    result.push(format!("dtoverlay={new_overlay}"));
+                    found = true;
                 }
             }
         }
 
-        result.push(line.to_string());
+        if !is_audio {
+            result.push(line.to_string());
+        }
     }
 
     // If no existing audio overlay was found, append the new one
@@ -135,25 +155,16 @@ fn replace_audio_overlay(content: &str, new_overlay: &str) -> String {
 }
 
 pub fn find_value(content: &str, key: &str) -> Option<String> {
-    let prefix = format!("{key}=");
-    content
-        .lines()
-        .filter(|l| !l.trim_start().starts_with('#'))
-        .find_map(|l| {
-            let trimmed = l.trim();
-            trimmed.strip_prefix(&prefix).map(|v| v.trim().to_string())
-        })
+    content.lines().find_map(|l| match_line_key_value(l, key))
 }
 
 pub fn upsert_value(content: &str, key: &str, value: &str) -> String {
-    let prefix = format!("{key}=");
     let new_line = format!("{key}={value}");
     let mut result = Vec::new();
     let mut found = false;
 
     for line in content.lines() {
-        let trimmed = line.trim();
-        if !trimmed.starts_with('#') && trimmed.starts_with(&prefix) {
+        if match_line_key_value(line, key).is_some() {
             result.push(new_line.clone());
             found = true;
         } else {
@@ -169,8 +180,14 @@ pub fn upsert_value(content: &str, key: &str, value: &str) -> String {
 }
 
 pub fn has_dtoverlay(content: &str, overlay: &str) -> bool {
-    let line_target = format!("dtoverlay={overlay}");
-    content.lines().any(|l| l.trim() == line_target)
+    content.lines().any(|l| {
+        if let Some(val) = match_line_key_value(l, "dtoverlay") {
+            let name = val.split(',').next().unwrap_or("").trim();
+            name == overlay
+        } else {
+            false
+        }
+    })
 }
 
 pub fn add_dtoverlay(content: &str, overlay: &str) -> String {
@@ -186,11 +203,13 @@ pub fn add_dtoverlay(content: &str, overlay: &str) -> String {
 }
 
 pub fn remove_dtoverlay(content: &str, overlay: &str) -> String {
-    let line_target = format!("dtoverlay={overlay}");
     let mut result = Vec::new();
     for line in content.lines() {
-        if line.trim() == line_target {
-            continue;
+        if let Some(val) = match_line_key_value(line, "dtoverlay") {
+            let name = val.split(',').next().unwrap_or("").trim();
+            if name == overlay {
+                continue;
+            }
         }
         result.push(line.to_string());
     }
@@ -272,5 +291,22 @@ kernel=Image
     fn upsert_new_value() {
         let result = upsert_value(SAMPLE_CONFIG, "gpu_mem", "128");
         assert!(result.contains("gpu_mem=128"));
+    }
+
+    #[test]
+    fn robust_spacing_and_comments() {
+        let config = "\
+# RPi config
+  dtparam  =  audio  =  off   # disable built-in audio
+dtoverlay = disable-wifi,someparam=1 # disable wifi
+";
+        assert_eq!(find_value(config, "dtparam=audio"), Some("off".into()));
+        assert!(has_dtoverlay(config, "disable-wifi"));
+
+        let removed = remove_dtoverlay(config, "disable-wifi");
+        assert!(!has_dtoverlay(&removed, "disable-wifi"));
+
+        let upserted = upsert_value(config, "dtparam=audio", "on");
+        assert_eq!(find_value(&upserted, "dtparam=audio"), Some("on".into()));
     }
 }

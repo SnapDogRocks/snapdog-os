@@ -63,22 +63,9 @@ pub async fn start_ap(password: &str) -> Result<()> {
 
     // Derive unique SSID from last 4 hex chars of MAC
     let address_path = format!("/sys/class/net/{iface}/address");
-    let ssid = tokio::fs::read_to_string(&address_path).await.map_or_else(
-        |_| "SnapDog-Setup".into(),
-        |mac| {
-            let suffix: String = mac
-                .trim()
-                .replace(':', "")
-                .chars()
-                .rev()
-                .take(4)
-                .collect::<String>()
-                .chars()
-                .rev()
-                .collect();
-            format!("SnapDog-{}", suffix.to_uppercase())
-        },
-    );
+    let ssid = tokio::fs::read_to_string(&address_path)
+        .await
+        .map_or_else(|_| "SnapDog-Setup".into(), |mac| derive_ssid(&mac));
 
     // Write hostapd config
     let hostapd = format!(
@@ -317,6 +304,22 @@ async fn run(cmd: &str, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
+fn derive_ssid(mac: &str) -> String {
+    let clean = mac.trim().replace(':', "");
+    if clean.len() != 12 || !clean.chars().all(|c| c.is_ascii_hexdigit()) {
+        return "SnapDog-Setup".to_string();
+    }
+    let suffix: String = clean
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    format!("SnapDog-{}", suffix.to_uppercase())
+}
+
 fn subnet_to_prefix(subnet: &str) -> u8 {
     let bits: u32 = subnet
         .split('.')
@@ -341,5 +344,14 @@ mod tests {
     #[test]
     fn wpa_quoted_string_rejects_newlines() {
         assert!(wpa_quoted_string("ssid", "bad\nssid").is_err());
+    }
+
+    #[test]
+    fn test_derive_ssid() {
+        assert_eq!(derive_ssid("b8:27:eb:1a:2b:3c"), "SnapDog-2B3C");
+        assert_eq!(derive_ssid("  B8:27:EB:1A:2B:3C\n"), "SnapDog-2B3C");
+        assert_eq!(derive_ssid(""), "SnapDog-Setup");
+        assert_eq!(derive_ssid("12"), "SnapDog-Setup");
+        assert_eq!(derive_ssid("not-a-mac-address"), "SnapDog-Setup");
     }
 }

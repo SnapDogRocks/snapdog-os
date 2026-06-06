@@ -879,6 +879,8 @@ struct PendingFlash {
     expires: std::time::Instant,
 }
 
+const RAW_FLASH_CHALLENGE_TTL_SECONDS: u64 = 120;
+
 static PENDING_FLASH: OnceLock<Mutex<Option<PendingFlash>>> = OnceLock::new();
 
 fn flash_lock() -> &'static Mutex<Option<PendingFlash>> {
@@ -916,7 +918,8 @@ async fn post_flash_raw_upload(
     let challenge = rand::distr::Alphanumeric
         .sample_string(&mut rand::rng(), 6)
         .to_uppercase();
-    let expires = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let expires =
+        std::time::Instant::now() + std::time::Duration::from_secs(RAW_FLASH_CHALLENGE_TTL_SECONDS);
 
     *flash_lock().lock().await = Some(PendingFlash {
         challenge: challenge.clone(),
@@ -925,7 +928,7 @@ async fn post_flash_raw_upload(
 
     Ok(Json(FlashChallengeResponse {
         challenge,
-        expires_in_seconds: 60,
+        expires_in_seconds: RAW_FLASH_CHALLENGE_TTL_SECONDS,
     }))
 }
 

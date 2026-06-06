@@ -13,7 +13,7 @@ description = "Development firmware update tool for SnapDog OS"
 clap = { version = "4", features = ["derive", "env"] }
 
 # HTTP Client
-reqwest = { version = "0.12", features = ["json", "multipart", "stream"] }
+reqwest = { version = "0.13", features = ["json", "multipart", "stream"] }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -24,7 +24,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # Terminal UI & Progress Bars
-indicatif = { version = "0.17", features = ["tokio"] }
+indicatif = { version = "0.18", features = ["tokio"] }
 
 # Secure interactive password input
 rpassword = "7.3"

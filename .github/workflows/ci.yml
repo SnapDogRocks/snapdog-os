@@ -52,17 +52,26 @@ jobs:
       - name: Lint webui
         run: cd snapdog-ctrl/webui && npm run lint
 
-      - name: Format
+      - name: Format (snapdog-ctrl)
         run: cd snapdog-ctrl && cargo fmt --check
+
+      - name: Format (snapdog-update)
+        run: cd snapdog-update && cargo fmt --check
 
       - name: Install system deps
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libavahi-compat-libdnssd-dev
 
-      - name: Clippy
+      - name: Clippy (snapdog-ctrl)
         run: cd snapdog-ctrl && cargo clippy --locked --all-targets
 
-      - name: Test
+      - name: Clippy (snapdog-update)
+        run: cd snapdog-update && cargo clippy --locked --all-targets
+
+      - name: Test (snapdog-ctrl)
         run: cd snapdog-ctrl && cargo test --locked
+
+      - name: Test (snapdog-update)
+        run: cd snapdog-update && cargo test --locked
 
   security-audit:
     name: Security Audit

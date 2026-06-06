@@ -6,7 +6,7 @@ rust-version = "1.85"
 license = "GPL-3.0-only"
 repository = "https://github.com/metaneutrons/snapdog-os"
 authors = ["Fabian Schmieder"]
-description = "Development firmware update tool for SnapDog OS"
+description = "Firmware update tool for SnapDog OS"
 
 [dependencies]
 # CLI Parsing
@@ -29,16 +29,12 @@ indicatif = { version = "0.18", features = ["tokio"] }
 # Secure interactive password input
 rpassword = "7.3"
 
-# Logging
-tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Error handling
 thiserror = "2"
-anyhow = "1"
 
 # Utilities
-mime_guess = "2"
 tokio-util = { version = "0.7", features = ["io"] }
 
 [dev-dependencies]

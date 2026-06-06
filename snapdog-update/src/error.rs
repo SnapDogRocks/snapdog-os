@@ -11,6 +11,24 @@ pub enum UpgradeError {
     #[error("HTTP client error: {0}")]
     Http(#[from] reqwest::Error),
 
+    #[error("invalid SnapDog URL: {0}")]
+    InvalidBaseUrl(String),
+
+    #[error("invalid argument: {0}")]
+    InvalidArgument(String),
+
+    #[error("{input} is required in non-interactive mode")]
+    NonInteractiveInputRequired {
+        input: &'static str,
+        hint: &'static str,
+    },
+
+    #[error("input error: {0}")]
+    Input(String),
+
+    #[error("authentication token returned by target cannot be sent as an HTTP header")]
+    InvalidAuthToken,
+
     #[error("Authentication failed (check credentials)")]
     Unauthorized,
 
@@ -22,8 +40,18 @@ pub enum UpgradeError {
     #[error("Preflight health warning: target system reports critical warnings: {0:?}")]
     SystemUnhealthy(Vec<String>),
 
-    #[error("Upload failed with status: {0}")]
-    UploadFailed(reqwest::StatusCode),
+    #[error("{action} failed with status {status}: {body}")]
+    HttpStatus {
+        action: &'static str,
+        status: reqwest::StatusCode,
+        body: String,
+    },
+
+    #[error("unsupported image type for '{path}'")]
+    UnsupportedImage { path: String },
+
+    #[error("raw flash confirmation did not match the device challenge")]
+    RawFlashChallengeMismatch,
 
     #[error("Upgrade failed: {0}")]
     Failed(String),
@@ -36,3 +64,57 @@ pub enum UpgradeError {
 }
 
 pub type Result<T> = std::result::Result<T, UpgradeError>;
+
+impl UpgradeError {
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::Io(_) => "io_error",
+            Self::Http(_) | Self::HttpStatus { .. } => "http_error",
+            Self::InvalidBaseUrl(_) => "invalid_base_url",
+            Self::InvalidArgument(_) => "invalid_argument",
+            Self::NonInteractiveInputRequired { .. } => "input_required",
+            Self::Input(_) => "input_error",
+            Self::InvalidAuthToken => "invalid_auth_token",
+            Self::Unauthorized => "unauthorized",
+            Self::IncompatibleBoard { .. } => "incompatible_board",
+            Self::SystemUnhealthy(_) => "system_unhealthy",
+            Self::UnsupportedImage { .. } => "unsupported_image",
+            Self::RawFlashChallengeMismatch => "raw_flash_challenge_mismatch",
+            Self::Failed(_) => "upgrade_failed",
+            Self::ChallengeRejected => "challenge_rejected",
+            Self::Timeout(_) => "timeout",
+        }
+    }
+
+    pub const fn hint(&self) -> Option<&'static str> {
+        match self {
+            Self::InvalidBaseUrl(_) => Some("Use an absolute URL such as http://snapdog.local."),
+            Self::NonInteractiveInputRequired { hint, .. } => Some(hint),
+            Self::Unauthorized => {
+                Some("Pass --password, set SNAPDOG_PASSWORD, or login through the control UI.")
+            }
+            Self::InvalidAuthToken => {
+                Some("Retry authentication; if this repeats, update the target control service.")
+            }
+            Self::IncompatibleBoard { .. } => {
+                Some("Download an image built for the target board model.")
+            }
+            Self::SystemUnhealthy(_) => {
+                Some("Resolve critical health warnings on the target before updating.")
+            }
+            Self::UnsupportedImage { .. } => {
+                Some("Use a .raucb bundle, or pass --raw for .img/.img.gz files.")
+            }
+            Self::RawFlashChallengeMismatch => {
+                Some("Copy the challenge exactly as printed by the device.")
+            }
+            Self::ChallengeRejected => {
+                Some("Request a new raw flash challenge; the previous one may have expired.")
+            }
+            Self::Timeout(_) => Some(
+                "Check device power, network connectivity, and whether the update is still running.",
+            ),
+            _ => None,
+        }
+    }
+}

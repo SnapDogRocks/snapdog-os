@@ -3,92 +3,125 @@
 
 use crate::client::UpdateClient;
 use crate::error::{Result, UpgradeError};
-use crate::progress::ProgressUi;
+use crate::output::Reporter;
+use std::future::Future;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::time::sleep;
 
-#[derive(Clone, Copy)]
-pub enum ImageType {
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum ImageType {
     RaucBundle,
-    RawFlash,
+    RawFlashPrepare,
+    RawFlashConfirm,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum RunOutcome {
+    Completed,
+    RawFlashConfirmationRequired {
+        challenge: String,
+        expires_in_seconds: u64,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum BoardKind {
+    Pi3,
+    Pi4,
+    Pi5,
+    Zero2w,
 }
 
 pub struct UpgradeManager {
     client: UpdateClient,
-    image_path: std::path::PathBuf,
+    image_path: Option<std::path::PathBuf>,
     image_type: ImageType,
+    raw_confirmation: Option<String>,
     timeout: Duration,
     poll_interval: Duration,
+    reporter: Reporter,
 }
 
 impl UpgradeManager {
     pub fn new(
         base_url: &str,
-        image_path: &Path,
+        image_path: Option<&Path>,
         force_raw: bool,
+        raw_confirmation: Option<String>,
         timeout: Duration,
         poll_interval: Duration,
-    ) -> Self {
-        let image_type = if force_raw {
-            ImageType::RawFlash
-        } else {
-            let ext = image_path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("");
-            if ext == "raucb" {
-                ImageType::RaucBundle
-            } else {
-                ImageType::RawFlash
-            }
-        };
+        reporter: Reporter,
+    ) -> Result<Self> {
+        if timeout.is_zero() {
+            return Err(UpgradeError::InvalidArgument(
+                "--timeout-mins must be greater than zero".to_string(),
+            ));
+        }
+        if poll_interval.is_zero() {
+            return Err(UpgradeError::InvalidArgument(
+                "--poll-secs must be greater than zero".to_string(),
+            ));
+        }
 
-        Self {
-            client: UpdateClient::new(base_url),
-            image_path: image_path.to_path_buf(),
+        let image_type = resolve_image_type(image_path, force_raw, raw_confirmation.as_deref())?;
+
+        Ok(Self {
+            client: UpdateClient::new(base_url)?,
+            image_path: image_path.map(Path::to_path_buf),
             image_type,
+            raw_confirmation,
             timeout,
             poll_interval,
+            reporter,
+        })
+    }
+
+    pub async fn run(&mut self, password: Option<&str>) -> Result<RunOutcome> {
+        self.reporter
+            .status("preflight", "Starting preflight checks...");
+        self.client
+            .preflight_auth(password, self.reporter.interactive())
+            .await?;
+
+        let deadline = deadline_from_now(self.timeout)?;
+        let info = run_with_deadline(
+            deadline,
+            "fetch system information",
+            self.client.system_info(),
+        )
+        .await?;
+        self.reporter.status(
+            "target",
+            format!(
+                "Connected to '{}' (active version: '{}', board: '{}', uptime: {}s)",
+                info.hostname, info.version, info.board_model, info.uptime_seconds
+            ),
+        );
+
+        if let Some(path) = &self.image_path {
+            validate_board_compatibility(path, &info.board_model)?;
+        }
+
+        self.check_health(deadline).await?;
+
+        match self.image_type {
+            ImageType::RaucBundle => {
+                self.run_rauc_flow(deadline).await?;
+                self.wait_for_reboot(&info.version, deadline).await?;
+                Ok(RunOutcome::Completed)
+            }
+            ImageType::RawFlashPrepare => self.run_raw_prepare_flow(&info.version, deadline).await,
+            ImageType::RawFlashConfirm => {
+                self.run_raw_confirm_flow(&info.version, deadline).await?;
+                Ok(RunOutcome::Completed)
+            }
         }
     }
 
-    pub async fn run(&mut self, password: Option<&str>) -> Result<()> {
-        tracing::info!("Starting preflight checks...");
-        self.client.preflight_auth(password).await?;
-
-        // 1. Fetch system details and check target architecture
-        let info = self.client.system_info().await?;
-        tracing::info!(
-            "Connected to '{}' (active version: '{}', board: '{}', uptime: {}s)",
-            info.hostname,
-            info.version,
-            info.board_model,
-            info.uptime_seconds
-        );
-
-        // Preflight safety checks: prevent installing incompatible image types
-        let file_name = self
-            .image_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-        let board_compatible = info.board_model.to_lowercase();
-        if board_compatible.contains("pi5") && file_name.contains("pi4") {
-            return Err(UpgradeError::IncompatibleBoard {
-                target: "pi5".to_string(),
-                image: "pi4".to_string(),
-            });
-        } else if board_compatible.contains("pi4") && file_name.contains("pi5") {
-            return Err(UpgradeError::IncompatibleBoard {
-                target: "pi4".to_string(),
-                image: "pi5".to_string(),
-            });
-        }
-
-        // Check health status before upgrading
-        let health = self.client.system_health().await?;
+    async fn check_health(&self, deadline: Instant) -> Result<()> {
+        let health =
+            run_with_deadline(deadline, "fetch system health", self.client.system_health()).await?;
         if !health.ok {
             let criticals: Vec<String> = health
                 .warnings
@@ -100,52 +133,58 @@ impl UpgradeManager {
                 return Err(UpgradeError::SystemUnhealthy(criticals));
             }
         }
-
-        // 2. Perform upload and installation
-        match self.image_type {
-            ImageType::RaucBundle => self.run_rauc_flow().await?,
-            ImageType::RawFlash => self.run_raw_flow().await?,
-        }
-
-        // 3. Post-reboot checks
-        self.wait_for_reboot(&info.version).await?;
         Ok(())
     }
 
-    async fn run_rauc_flow(&self) -> Result<()> {
-        // Upload
-        let metadata = tokio::fs::metadata(&self.image_path).await?;
-        let ui = std::sync::Arc::new(ProgressUi::new_upload(
-            metadata.len(),
-            "Uploading RAUC bundle...",
-        ));
+    async fn run_rauc_flow(&self, deadline: Instant) -> Result<()> {
+        let image_path = self.image_path.as_ref().ok_or_else(|| {
+            UpgradeError::InvalidArgument("RAUC update requires --file".to_string())
+        })?;
+
+        let metadata = tokio::fs::metadata(image_path).await?;
+        let ui = std::sync::Arc::new(
+            self.reporter
+                .upload_progress(metadata.len(), "Uploading RAUC bundle..."),
+        );
         let ui_clone = ui.clone();
-        self.client
-            .upload_image(&self.image_path, "/api/system/update/upload", move |sent| {
-                ui_clone.set_position(sent);
-            })
-            .await?;
+        run_with_deadline(
+            deadline,
+            "upload RAUC bundle",
+            self.client
+                .upload_image(image_path, "/api/system/update/upload", move |sent| {
+                    ui_clone.set_position(sent);
+                }),
+        )
+        .await?;
         ui.finish_success("Upload completed successfully!");
 
-        // Trigger Install
-        tracing::info!("Triggering installation...");
-        self.client.trigger_install().await?;
+        self.reporter
+            .status("install", "Triggering RAUC installation...");
+        run_with_deadline(
+            deadline,
+            "trigger RAUC installation",
+            self.client.trigger_install(),
+        )
+        .await?;
 
-        // Status Polling
-        let ui_poll = ProgressUi::new_spinner("Starting installation...");
-        let start_time = std::time::Instant::now();
+        let ui_poll = self
+            .reporter
+            .spinner("install", "Starting RAUC installation...");
 
         loop {
-            if start_time.elapsed() > self.timeout {
+            if sleep_until_deadline(deadline, self.poll_interval, "RAUC installation")
+                .await
+                .is_err()
+            {
                 ui_poll.finish_failure("Installation timed out!");
                 return Err(UpgradeError::Timeout(
                     "RAUC installation took too long".into(),
                 ));
             }
 
-            sleep(self.poll_interval).await;
-
-            let status = self.client.update_status().await?;
+            let status =
+                run_with_deadline(deadline, "fetch update status", self.client.update_status())
+                    .await?;
             if status.operation == "installing" {
                 if let Some(prog) = status.progress {
                     ui_poll.update_message(format!(
@@ -167,56 +206,114 @@ impl UpgradeManager {
         Ok(())
     }
 
-    async fn run_raw_flow(&self) -> Result<()> {
-        let metadata = tokio::fs::metadata(&self.image_path).await?;
-        let ui = std::sync::Arc::new(ProgressUi::new_upload(
-            metadata.len(),
-            "Uploading raw system image...",
-        ));
+    async fn run_raw_prepare_flow(
+        &self,
+        old_version: &str,
+        deadline: Instant,
+    ) -> Result<RunOutcome> {
+        let image_path = self.image_path.as_ref().ok_or_else(|| {
+            UpgradeError::InvalidArgument("raw flash upload requires --file".to_string())
+        })?;
+
+        let metadata = tokio::fs::metadata(image_path).await?;
+        let ui = std::sync::Arc::new(
+            self.reporter
+                .upload_progress(metadata.len(), "Uploading raw system image..."),
+        );
         let ui_clone = ui.clone();
-        let challenge = self
-            .client
-            .trigger_flash_raw(&self.image_path, move |sent| {
+        let challenge = run_with_deadline(
+            deadline,
+            "upload raw system image",
+            self.client.trigger_flash_raw(image_path, move |sent| {
                 ui_clone.set_position(sent);
-            })
-            .await?;
+            }),
+        )
+        .await?;
         ui.finish_success("Upload completed successfully!");
 
-        println!("\n=======================================================");
-        println!("⚠️  WARNING: You are about to flash a raw system image.");
-        println!("This will overwrite the inactive root partition completely.");
-        println!("Challenge Code: {}", challenge.challenge);
-        println!("=======================================================\n");
+        self.reporter
+            .raw_flash_challenge(&challenge.challenge, challenge.expires_in_seconds);
 
-        tracing::info!("Confirming raw flash challenge...");
-        self.client.confirm_flash_raw(&challenge.challenge).await?;
-        tracing::info!("Confirmation accepted! System is writing image and rebooting...");
+        if let Some(typed) = self
+            .reporter
+            .prompt_raw_flash_confirmation(&challenge.challenge)
+            .await?
+        {
+            if typed != challenge.challenge {
+                return Err(UpgradeError::RawFlashChallengeMismatch);
+            }
+            self.confirm_raw_flash(&challenge.challenge, old_version, deadline)
+                .await?;
+            return Ok(RunOutcome::Completed);
+        }
 
-        Ok(())
+        Ok(RunOutcome::RawFlashConfirmationRequired {
+            challenge: challenge.challenge,
+            expires_in_seconds: challenge.expires_in_seconds,
+        })
     }
 
-    async fn wait_for_reboot(&self, old_version: &str) -> Result<()> {
-        let ui = ProgressUi::new_spinner("Waiting for device to go offline...");
-        let start_time = std::time::Instant::now();
-        let max_wait = Duration::from_secs(300);
+    async fn run_raw_confirm_flow(&self, old_version: &str, deadline: Instant) -> Result<()> {
+        let challenge = self.raw_confirmation.as_deref().ok_or_else(|| {
+            UpgradeError::InvalidArgument(
+                "raw flash confirmation requires --confirm-raw-flash".to_string(),
+            )
+        })?;
+        self.confirm_raw_flash(challenge, old_version, deadline)
+            .await
+    }
 
-        // Phase 1: Wait for device to go offline (port closed)
-        while start_time.elapsed() < max_wait {
-            sleep(Duration::from_secs(2)).await;
+    async fn confirm_raw_flash(
+        &self,
+        challenge: &str,
+        old_version: &str,
+        deadline: Instant,
+    ) -> Result<()> {
+        self.reporter
+            .status("raw_flash", "Confirming pending raw flash challenge...");
+        run_with_deadline(
+            deadline,
+            "confirm raw flash",
+            self.client.confirm_flash_raw(challenge),
+        )
+        .await?;
+        self.reporter.status(
+            "raw_flash",
+            "Confirmation accepted. Device is writing the image and rebooting...",
+        );
+        self.wait_for_reboot(old_version, deadline).await
+    }
+
+    async fn wait_for_reboot(&self, old_version: &str, deadline: Instant) -> Result<()> {
+        let ui = self
+            .reporter
+            .spinner("reboot", "Waiting for device to go offline...");
+
+        while remaining_duration(deadline).is_some() {
+            if sleep_until_deadline(deadline, Duration::from_secs(2), "device reboot")
+                .await
+                .is_err()
+            {
+                break;
+            }
             if self.client.system_info().await.is_err() {
                 ui.update_message("Device went offline. Waiting for boot...".to_string());
                 break;
             }
         }
 
-        // Phase 2: Wait for device to come back online
         let mut backoff = Duration::from_secs(2);
-        while start_time.elapsed() < max_wait {
-            sleep(backoff).await;
+        while remaining_duration(deadline).is_some() {
+            if sleep_until_deadline(deadline, backoff, "device reboot")
+                .await
+                .is_err()
+            {
+                break;
+            }
             if let Ok(info) = self.client.system_info().await {
                 if info.version != old_version || info.uptime_seconds < 180 {
                     ui.finish_success(&format!(
-                        "Success! Device is back online (Uptime: {}s, Version: v{})",
+                        "Success! Device is back online (uptime: {}s, version: v{})",
                         info.uptime_seconds, info.version
                     ));
                     return Ok(());
@@ -232,5 +329,257 @@ impl UpgradeManager {
         Err(UpgradeError::Timeout(
             "Device did not recover in time".into(),
         ))
+    }
+}
+
+async fn run_with_deadline<T, Fut>(
+    deadline: Instant,
+    operation: &'static str,
+    future: Fut,
+) -> Result<T>
+where
+    Fut: Future<Output = Result<T>>,
+{
+    let remaining = remaining_duration(deadline).ok_or_else(|| timeout_error(operation))?;
+    tokio::time::timeout(remaining, future)
+        .await
+        .unwrap_or_else(|_| Err(timeout_error(operation)))
+}
+
+async fn sleep_until_deadline(
+    deadline: Instant,
+    duration: Duration,
+    operation: &'static str,
+) -> Result<()> {
+    let remaining = remaining_duration(deadline).ok_or_else(|| timeout_error(operation))?;
+    sleep(duration.min(remaining)).await;
+    Ok(())
+}
+
+fn deadline_from_now(timeout: Duration) -> Result<Instant> {
+    Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(|| UpgradeError::InvalidArgument("--timeout-mins is too large".to_string()))
+}
+
+fn remaining_duration(deadline: Instant) -> Option<Duration> {
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|duration| !duration.is_zero())
+}
+
+fn timeout_error(operation: &str) -> UpgradeError {
+    UpgradeError::Timeout(format!("{operation} timed out"))
+}
+
+fn resolve_image_type(
+    image_path: Option<&Path>,
+    force_raw: bool,
+    raw_confirmation: Option<&str>,
+) -> Result<ImageType> {
+    if raw_confirmation.is_some() {
+        return Ok(ImageType::RawFlashConfirm);
+    }
+
+    let image_path = image_path.ok_or_else(|| {
+        UpgradeError::InvalidArgument(
+            "--file is required unless --confirm-raw-flash is used".into(),
+        )
+    })?;
+
+    if force_raw {
+        return Ok(ImageType::RawFlashPrepare);
+    }
+
+    let ext = image_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    if ext.eq_ignore_ascii_case("raucb") {
+        return Ok(ImageType::RaucBundle);
+    }
+
+    Err(UpgradeError::UnsupportedImage {
+        path: image_path.display().to_string(),
+    })
+}
+
+fn validate_board_compatibility(image_path: &Path, board_model: &str) -> Result<()> {
+    let Some(image_board) = image_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(board_from_image_name)
+    else {
+        return Ok(());
+    };
+
+    let Some(target_board) = board_from_model(board_model) else {
+        return Ok(());
+    };
+
+    if image_board == target_board {
+        return Ok(());
+    }
+
+    Err(UpgradeError::IncompatibleBoard {
+        target: target_board.as_str().to_string(),
+        image: image_board.as_str().to_string(),
+    })
+}
+
+fn board_from_image_name(file_name: &str) -> Option<BoardKind> {
+    let file_name = file_name.to_lowercase();
+    if file_name.contains("zero2w") || file_name.contains("zero-2-w") {
+        Some(BoardKind::Zero2w)
+    } else if file_name.contains("pi5") || file_name.contains("pi-5") || file_name.contains("rpi5")
+    {
+        Some(BoardKind::Pi5)
+    } else if file_name.contains("pi4") || file_name.contains("pi-4") || file_name.contains("rpi4")
+    {
+        Some(BoardKind::Pi4)
+    } else if file_name.contains("pi3") || file_name.contains("pi-3") || file_name.contains("rpi3")
+    {
+        Some(BoardKind::Pi3)
+    } else {
+        None
+    }
+}
+
+fn board_from_model(board_model: &str) -> Option<BoardKind> {
+    let board_model = board_model.to_lowercase();
+    if board_model.contains("zero 2") || board_model.contains("zero2") {
+        Some(BoardKind::Zero2w)
+    } else if board_model.contains("pi 5") || board_model.contains("pi5") {
+        Some(BoardKind::Pi5)
+    } else if board_model.contains("pi 4") || board_model.contains("pi4") {
+        Some(BoardKind::Pi4)
+    } else if board_model.contains("pi 3") || board_model.contains("pi3") {
+        Some(BoardKind::Pi3)
+    } else {
+        None
+    }
+}
+
+impl BoardKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pi3 => "pi3",
+            Self::Pi4 => "pi4",
+            Self::Pi5 => "pi5",
+            Self::Zero2w => "zero2w",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::output::{OutputFormat, Reporter};
+
+    fn reporter() -> Reporter {
+        Reporter::new(OutputFormat::Json, true, true)
+    }
+
+    #[test]
+    fn resolves_rauc_bundle_without_raw_flag() {
+        let manager = UpgradeManager::new(
+            "http://127.0.0.1",
+            Some(Path::new("snapdog-os-pi4.raucb")),
+            false,
+            None,
+            Duration::from_secs(60),
+            Duration::from_secs(1),
+            reporter(),
+        )
+        .unwrap();
+        assert_eq!(manager.image_type, ImageType::RaucBundle);
+    }
+
+    #[test]
+    fn resolves_rauc_bundle_case_insensitively() {
+        let manager = UpgradeManager::new(
+            "http://127.0.0.1",
+            Some(Path::new("snapdog-os-pi4.RAUCB")),
+            false,
+            None,
+            Duration::from_secs(60),
+            Duration::from_secs(1),
+            reporter(),
+        )
+        .unwrap();
+        assert_eq!(manager.image_type, ImageType::RaucBundle);
+    }
+
+    #[test]
+    fn rejects_raw_image_without_raw_flag() {
+        let result = UpgradeManager::new(
+            "http://127.0.0.1",
+            Some(Path::new("snapdog-os-pi4.img.gz")),
+            false,
+            None,
+            Duration::from_secs(60),
+            Duration::from_secs(1),
+            reporter(),
+        );
+        let Err(err) = result else {
+            panic!("raw image without --raw should be rejected");
+        };
+        assert!(matches!(err, UpgradeError::UnsupportedImage { .. }));
+    }
+
+    #[test]
+    fn resolves_raw_confirmation_without_file() {
+        let manager = UpgradeManager::new(
+            "http://127.0.0.1",
+            None,
+            true,
+            Some("ABC123".to_string()),
+            Duration::from_secs(60),
+            Duration::from_secs(1),
+            reporter(),
+        )
+        .unwrap();
+        assert_eq!(manager.image_type, ImageType::RawFlashConfirm);
+    }
+
+    #[test]
+    fn detects_board_mismatch() {
+        let err = validate_board_compatibility(
+            Path::new("snapdog-os-pi5-0.3.0.raucb"),
+            "Raspberry Pi 4 Model B",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            UpgradeError::IncompatibleBoard {
+                target,
+                image
+            } if target == "pi4" && image == "pi5"
+        ));
+    }
+
+    #[test]
+    fn accepts_matching_zero2w_board() {
+        validate_board_compatibility(
+            Path::new("snapdog-os-zero2w-0.3.0.raucb"),
+            "Raspberry Pi Zero 2 W Rev 1.0",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn detects_rpi_filename_board_mismatch() {
+        let err = validate_board_compatibility(
+            Path::new("snapdog-os-rpi3-0.3.0.raucb"),
+            "Raspberry Pi 5 Model B",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            UpgradeError::IncompatibleBoard {
+                target,
+                image
+            } if target == "pi5" && image == "pi3"
+        ));
     }
 }

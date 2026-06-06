@@ -9,26 +9,37 @@ pub struct ProgressUi {
 }
 
 impl ProgressUi {
-    pub fn new_upload(total_bytes: u64, message: &'static str) -> Self {
-        let pb = ProgressBar::new(total_bytes);
-        pb.set_style(
-            ProgressStyle::default_bar()
+    pub fn new_upload(total_bytes: u64, message: &'static str, enabled: bool) -> Self {
+        let pb = if enabled {
+            ProgressBar::new(total_bytes)
+        } else {
+            ProgressBar::hidden()
+        };
+        if enabled {
+            if let Ok(style) = ProgressStyle::default_bar()
                 .template("{spinner:.green} {msg} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-                .unwrap()
-                .progress_chars("#>-")
-        );
+            {
+                pb.set_style(style.progress_chars("#>-"));
+            }
+        }
         pb.set_message(message);
         Self { pb }
     }
 
-    pub fn new_spinner(message: &'static str) -> Self {
-        let pb = ProgressBar::new_spinner();
-        pb.enable_steady_tick(Duration::from_millis(80));
-        pb.set_style(
-            ProgressStyle::default_spinner()
+    pub fn new_spinner(message: &'static str, enabled: bool) -> Self {
+        let pb = if enabled {
+            ProgressBar::new_spinner()
+        } else {
+            ProgressBar::hidden()
+        };
+        if enabled {
+            pb.enable_steady_tick(Duration::from_millis(80));
+            if let Ok(style) = ProgressStyle::default_spinner()
                 .template("{spinner:.green} {msg} [{elapsed_precise}]")
-                .unwrap(),
-        );
+            {
+                pb.set_style(style);
+            }
+        }
         pb.set_message(message);
         Self { pb }
     }

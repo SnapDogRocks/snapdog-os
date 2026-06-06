@@ -5,5 +5,6 @@
 
 pub mod client;
 pub mod error;
+pub mod output;
 pub mod progress;
 pub mod update;

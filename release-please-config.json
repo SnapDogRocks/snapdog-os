@@ -6,6 +6,16 @@
       "extra-files": ["VERSION"],
       "changelog-path": "CHANGELOG.md",
       "bump-minor-pre-major": true
+    },
+    "snapdog-ctrl": {
+      "release-type": "rust",
+      "changelog-path": "snapdog-ctrl/CHANGELOG.md",
+      "bump-minor-pre-major": true
+    },
+    "snapdog-update": {
+      "release-type": "rust",
+      "changelog-path": "snapdog-update/CHANGELOG.md",
+      "bump-minor-pre-major": true
     }
   }
 }

@@ -7,7 +7,7 @@ use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitEx
 #[derive(Parser)]
 #[command(
     name = "snapdog-update",
-    version = "0.1.0",
+    version = env!("SNAPDOG_UPDATE_VERSION"),
     author = "Fabian Schmieder",
     about = "Development upgrade client tool for SnapDog OS"
 )]

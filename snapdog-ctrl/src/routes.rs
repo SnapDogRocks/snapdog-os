@@ -330,7 +330,7 @@ mod mock_handlers {
     pub async fn get_update_check() -> Json<UpdateCheckResponse> {
         Json(UpdateCheckResponse {
             available: true,
-            current_version: "0.1.0".into(),
+            current_version: env!("CARGO_PKG_VERSION").into(),
             channel: "stable".into(),
             bundle_url: "https://update.snapdog.cc/os/bundles/pi4.raucb".into(),
         })

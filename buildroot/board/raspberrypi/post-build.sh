@@ -66,6 +66,14 @@ fi
 # First-boot marker: triggers partition resize + format
 touch "$TARGET_DIR/resize-me"
 
+# Write OS version (baked into image, read-only)
+VERSION_FILE="${BR2_EXTERNAL_SNAPDOG_PATH:-.}/VERSION"
+if [ -f "$VERSION_FILE" ]; then
+  cp "$VERSION_FILE" "$TARGET_DIR/etc/snapdog-os.version"
+else
+  echo "unknown" > "$TARGET_DIR/etc/snapdog-os.version"
+fi
+
 # Enable serial console on USB gadget
 mkdir -p "$TARGET_DIR/etc/systemd/system/getty.target.wants"
 ln -sf /usr/lib/systemd/system/serial-getty@.service \

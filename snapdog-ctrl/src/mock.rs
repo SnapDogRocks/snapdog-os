@@ -84,7 +84,7 @@ impl MockState {
         let s = self.inner.lock().await;
         SystemInfo {
             hostname: s.hostname.clone(),
-            version: "0.1.0".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
             channel: s.channel.clone(),
             uptime_seconds: 86400,
             board_model: "Mock SnapDog Board".into(),

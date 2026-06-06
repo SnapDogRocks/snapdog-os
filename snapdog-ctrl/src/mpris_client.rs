@@ -222,3 +222,30 @@ pub async fn seek(offset_us: i64) -> anyhow::Result<()> {
     proxy.call_noreply("Seek", &(offset_us,)).await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use zbus::zvariant::OwnedValue;
+
+    #[test]
+    fn test_parse_props_basic() {
+        let mut props = HashMap::new();
+        props.insert("PlaybackStatus".to_string(), OwnedValue::from("Playing"));
+        props.insert("Volume".to_string(), OwnedValue::from(0.8));
+        props.insert("Position".to_string(), OwnedValue::from(15000000i64));
+        props.insert("CanSeek".to_string(), OwnedValue::from(true));
+        props.insert("CanGoNext".to_string(), OwnedValue::from(true));
+        props.insert("CanGoPrevious".to_string(), OwnedValue::from(false));
+
+        let now_playing = parse_props(&props);
+        assert!(now_playing.playing);
+        assert_eq!(now_playing.volume, 80);
+        assert!(!now_playing.muted);
+        assert_eq!(now_playing.position_ms, 15000);
+        assert!(now_playing.seekable);
+        assert!(now_playing.can_next);
+        assert!(!now_playing.can_prev);
+    }
+}

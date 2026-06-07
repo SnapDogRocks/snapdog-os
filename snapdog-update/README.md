@@ -6,6 +6,12 @@ guarded raw image flash path for recovery or first-install workflows.
 
 ## Usage
 
+Install on macOS with Homebrew:
+
+```bash
+brew install snapdogrocks/tap/snapdog-update
+```
+
 ```bash
 snapdog-update --url http://snapdog.local --file snapdog-os-pi4-0.3.0.raucb
 ```

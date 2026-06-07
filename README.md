@@ -52,7 +52,7 @@ All builds are 64-bit (aarch64). Kernel: Raspberry Pi Linux 6.6 LTS.
 
 ### Raspberry Pi Imager (recommended)
 
-1. Download the latest image from [Releases](https://github.com/SnapDogRocks/snapdog-os/releases) or [updates.snapdog.cc](https://updates.snapdog.cc/os/images/snapdog-os-pi4-beta.img.gz)
+1. Download the latest image for your board from [Releases](https://github.com/SnapDogRocks/snapdog-os/releases) or `https://updates.snapdog.cc/os/images/snapdog-os-<board>-beta.img.gz`
 2. Open [Raspberry Pi Imager](https://www.raspberrypi.com/software/)
 3. Choose **"Use custom"** and select the downloaded `.img.gz` file
 4. Select your SD card and write
@@ -150,7 +150,7 @@ time = "04:00"
 - **Auto-rollback**: If `snapdog-ctrl` fails to start 3 times → previous slot
 - **Auto-update**: Daily check at configured time, install + reboot
 - **Manual**: Upload `.raucb` via web UI or install from URL
-- **Channels**: `stable` (`pi4.raucb`) / `beta` (`pi4-beta.raucb`)
+- **Channels**: `stable` (`snapdog-os-<board>.raucb`) / `beta` (`snapdog-os-<board>-beta.raucb`) for `pi3`, `pi4`, `pi5`, and `zero2w`
 
 ### SoftAP
 
@@ -213,7 +213,7 @@ make setup                         # Download buildroot 2025.02
 # provide an aarch64 snapdog-ctrl binary at ./snapdog-ctrl-binary
 make BOARD=pi4 config               # Configure for Raspberry Pi 4
 make BOARD=pi4 build                # Build SD card image
-make all                           # Build for all board variants
+make all                            # Build pi3, pi4, pi5, and zero2w variants
 ```
 
 Output: `../buildroot-<board>/images/sdcard.img`

@@ -1,8 +1,7 @@
 # snapdog-update Release Flow
 
-This is the proposed release flow for shipping `snapdog-update` as a standalone
-operator binary, aligned with the existing SnapDog client binary and Homebrew tap
-pattern.
+`snapdog-update` ships as a standalone operator binary, aligned with the
+existing SnapDog client binary and Homebrew tap pattern.
 
 ## Goals
 
@@ -13,21 +12,26 @@ pattern.
 
 ## Workflow Shape
 
-1. Use the existing `snapdog-update` release-please package to create versioned
-   releases and tags.
-2. Add a Rust-only build matrix for:
+1. Release Please manages the `snapdog-update` package version and changelog.
+2. Stable binary releases are triggered by tags in the form
+   `snapdog-update-v<version>`.
+3. `.github/workflows/release-snapdog-update.yml` builds a Rust-only matrix for:
    - `x86_64-apple-darwin`
    - `aarch64-apple-darwin`
    - `x86_64-unknown-linux-gnu`
    - `aarch64-unknown-linux-gnu`
-3. Package each build as:
+4. Each build is packaged as:
    - `snapdog-update-${TAG}-${TARGET}.tar.gz`
    - `snapdog-update-${TAG}-${TARGET}.tar.gz.sha256`
-4. Include `snapdog-update`, `README.md`, and `LICENSE` in each archive.
-5. Attach archives, per-archive checksums, and aggregate `SHA256SUMS` to the
+5. Each archive contains `snapdog-update`, `README.md`, and `LICENSE`.
+6. The workflow attaches archives, per-archive checksums, and aggregate `SHA256SUMS` to the
    GitHub Release.
-6. Generate GitHub artifact attestations for the release assets.
-7. Update `SnapDogRocks/homebrew-tap` with `Formula/snapdog-update.rb`.
+7. GitHub artifact attestations are generated for the release assets.
+8. The workflow updates `SnapDogRocks/homebrew-tap` with
+   `Formula/snapdog-update.rb`.
+
+The release job sets `SNAPDOG_UPDATE_VERSION=<version>` during the build so the
+binary reports the package release version instead of the root OS image tag.
 
 ## Homebrew Formula
 
@@ -67,3 +71,8 @@ brew install snapdogrocks/tap/snapdog-update
 
 Linux users can download the matching release archive directly, verify the
 checksum, and install the binary into their preferred tool path.
+
+## Required Secrets
+
+- `HOMEBREW_TAP_TOKEN`: token with write access to
+  `SnapDogRocks/homebrew-tap`.

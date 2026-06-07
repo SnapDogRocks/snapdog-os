@@ -175,10 +175,12 @@ jobs:
 
           sha256sum "$OUT" "$BUNDLE" "$SBOM" > "$CHECKSUMS"
 
-          echo "image=${OUT}" >> "$GITHUB_OUTPUT"
-          echo "bundle=${BUNDLE}" >> "$GITHUB_OUTPUT"
-          echo "sbom=${SBOM}" >> "$GITHUB_OUTPUT"
-          echo "checksums=${CHECKSUMS}" >> "$GITHUB_OUTPUT"
+          {
+            echo "image=${OUT}"
+            echo "bundle=${BUNDLE}"
+            echo "sbom=${SBOM}"
+            echo "checksums=${CHECKSUMS}"
+          } >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -241,7 +243,7 @@ jobs:
             SUFFIX="-beta"
           fi
 
-          for board in pi3 pi4 pi5; do
+          for board in pi3 pi4 pi5 zero2w; do
             IMAGE="artifacts/image-${board}/snapdog-os-${board}-${VERSION}.img.gz"
             BUNDLE="artifacts/image-${board}/snapdog-os-${board}-${VERSION}.raucb"
             SBOM="artifacts/image-${board}/snapdog-os-${board}-${VERSION}-sbom.csv"

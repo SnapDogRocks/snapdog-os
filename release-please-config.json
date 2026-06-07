@@ -14,6 +14,7 @@
     },
     "snapdog-update": {
       "release-type": "rust",
+      "component": "snapdog-update",
       "changelog-path": "snapdog-update/CHANGELOG.md",
       "bump-minor-pre-major": true
     }

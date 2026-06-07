@@ -11,8 +11,10 @@ OLD_FW="26ff205b45dc109b498a70aaf182804ad9dbfea5"
 NEW_FW="6596d332eaadd63e2413e3937715a084f61c39e2"
 
 if [ -f "$FIRMWARE_MK" ] && grep -q "$OLD_FW" "$FIRMWARE_MK" 2>/dev/null; then
-  sed -i "s/$OLD_FW/$NEW_FW/g" "$FIRMWARE_MK" \
-    "$BR/package/brcmfmac_sdio-firmware-rpi/brcmfmac_sdio-firmware-rpi.hash"
+  sed -i "s/$OLD_FW/$NEW_FW/g" "$FIRMWARE_MK"
+  # Clear hash file (we use BR2_DOWNLOAD_FORCE_CHECK_HASHES=n)
+  printf '# Hash not verified (pinned by snapdog-os patch-buildroot)\n' \
+    > "$BR/package/brcmfmac_sdio-firmware-rpi/brcmfmac_sdio-firmware-rpi.hash"
   echo "  [patch] brcmfmac firmware bumped to 2025-05-08"
 elif [ -f "$FIRMWARE_MK" ] && grep -q "$NEW_FW" "$FIRMWARE_MK" 2>/dev/null; then
   echo "  [patch] brcmfmac firmware already at target version (upstream caught up)"

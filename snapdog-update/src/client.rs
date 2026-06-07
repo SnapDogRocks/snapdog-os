@@ -62,8 +62,14 @@ pub struct RaucProgress {
 #[derive(Deserialize, Clone)]
 pub struct SlotStatus {
     pub name: String,
+    #[serde(default)]
+    pub class: String,
     pub device: String,
     pub state: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub booted: bool,
 }
 
 #[derive(Deserialize, Clone)]

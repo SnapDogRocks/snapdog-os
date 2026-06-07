@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 Fabian Schmieder
 
-use crate::client::UpdateClient;
+use crate::client::{SlotStatus, SystemInfo, UpdateClient};
 use crate::error::{Result, UpgradeError};
 use crate::output::Reporter;
 use std::future::Future;
@@ -31,6 +31,17 @@ enum BoardKind {
     Pi4,
     Pi5,
     Zero2w,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+enum RebootExpectation {
+    Rauc {
+        previous_version: String,
+        previous_booted_slot: Option<String>,
+    },
+    RawFlash {
+        previous_version: String,
+    },
 }
 
 pub struct UpgradeManager {
@@ -107,8 +118,16 @@ impl UpgradeManager {
 
         match self.image_type {
             ImageType::RaucBundle => {
+                let previous_booted_slot = self.booted_slot(deadline).await?;
                 self.run_rauc_flow(deadline).await?;
-                self.wait_for_reboot(&info.version, deadline).await?;
+                self.wait_for_reboot(
+                    &RebootExpectation::Rauc {
+                        previous_version: info.version,
+                        previous_booted_slot,
+                    },
+                    deadline,
+                )
+                .await?;
                 Ok(RunOutcome::Completed)
             }
             ImageType::RawFlashPrepare => self.run_raw_prepare_flow(&info.version, deadline).await,
@@ -279,12 +298,32 @@ impl UpgradeManager {
         .await?;
         self.reporter.status(
             "raw_flash",
-            "Confirmation accepted. Device is writing the image and rebooting...",
+            "Confirmation accepted. Waiting for device reboot...",
         );
-        self.wait_for_reboot(old_version, deadline).await
+        self.wait_for_reboot(
+            &RebootExpectation::RawFlash {
+                previous_version: old_version.to_string(),
+            },
+            deadline,
+        )
+        .await
     }
 
-    async fn wait_for_reboot(&self, old_version: &str, deadline: Instant) -> Result<()> {
+    async fn booted_slot(&self, deadline: Instant) -> Result<Option<String>> {
+        let status = run_with_deadline(
+            deadline,
+            "fetch RAUC slot status",
+            self.client.update_status(),
+        )
+        .await?;
+        Ok(booted_slot_name(&status.slots))
+    }
+
+    async fn wait_for_reboot(
+        &self,
+        expectation: &RebootExpectation,
+        deadline: Instant,
+    ) -> Result<()> {
         let ui = self
             .reporter
             .spinner("reboot", "Waiting for device to go offline...");
@@ -311,15 +350,30 @@ impl UpgradeManager {
                 break;
             }
             if let Ok(info) = self.client.system_info().await {
-                if info.version != old_version || info.uptime_seconds < 180 {
+                let current_booted_slot = if expectation.needs_booted_slot() {
+                    run_with_deadline(
+                        deadline,
+                        "fetch RAUC slot status",
+                        self.client.update_status(),
+                    )
+                    .await
+                    .ok()
+                    .and_then(|status| booted_slot_name(&status.slots))
+                } else {
+                    None
+                };
+
+                if let Some(reason) =
+                    expectation.success_reason(&info, current_booted_slot.as_deref())
+                {
                     ui.finish_success(&format!(
-                        "Success! Device is back online (uptime: {}s, version: v{})",
+                        "Success! Device is back online ({reason}; uptime: {}s, version: v{})",
                         info.uptime_seconds, info.version
                     ));
                     return Ok(());
                 }
                 ui.update_message(
-                    "Device is back online, but running old version. Waiting...".to_string(),
+                    expectation.pending_message(&info, current_booted_slot.as_deref()),
                 );
             }
             backoff = (backoff * 2).min(Duration::from_secs(10));
@@ -330,6 +384,80 @@ impl UpgradeManager {
             "Device did not recover in time".into(),
         ))
     }
+}
+
+impl RebootExpectation {
+    const fn needs_booted_slot(&self) -> bool {
+        matches!(self, Self::Rauc { .. })
+    }
+
+    fn success_reason(
+        &self,
+        info: &SystemInfo,
+        current_booted_slot: Option<&str>,
+    ) -> Option<String> {
+        match self {
+            Self::Rauc {
+                previous_version,
+                previous_booted_slot,
+            } => {
+                if info.version != *previous_version {
+                    return Some(format!(
+                        "version changed from v{previous_version} to v{}",
+                        info.version
+                    ));
+                }
+
+                if let (Some(previous), Some(current)) =
+                    (previous_booted_slot.as_deref(), current_booted_slot)
+                {
+                    if previous != current {
+                        return Some(format!("booted slot changed from {previous} to {current}"));
+                    }
+                }
+
+                None
+            }
+            Self::RawFlash { previous_version } => {
+                if info.version != *previous_version {
+                    Some(format!(
+                        "version changed from v{previous_version} to v{}",
+                        info.version
+                    ))
+                } else if info.uptime_seconds < 180 {
+                    Some("device rebooted".to_string())
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    fn pending_message(&self, info: &SystemInfo, current_booted_slot: Option<&str>) -> String {
+        match self {
+            Self::Rauc {
+                previous_version,
+                previous_booted_slot,
+            } => format!(
+                "Device is online, but update is not verified yet (version: v{}, previous: v{}, booted slot: {}, previous slot: {}). Waiting...",
+                info.version,
+                previous_version,
+                current_booted_slot.unwrap_or("unknown"),
+                previous_booted_slot.as_deref().unwrap_or("unknown")
+            ),
+            Self::RawFlash { previous_version } => format!(
+                "Device is online, but reboot is not verified yet (version: v{}, previous: v{}, uptime: {}s). Waiting...",
+                info.version, previous_version, info.uptime_seconds
+            ),
+        }
+    }
+}
+
+fn booted_slot_name(slots: &[SlotStatus]) -> Option<String> {
+    slots
+        .iter()
+        .find(|slot| slot.booted)
+        .map(|slot| slot.name.clone())
 }
 
 async fn run_with_deadline<T, Fut>(
@@ -480,6 +608,26 @@ mod tests {
         Reporter::new(OutputFormat::Json, true, true)
     }
 
+    fn system_info(version: &str, uptime_seconds: u64) -> SystemInfo {
+        SystemInfo {
+            hostname: "snapdog-test".to_string(),
+            version: version.to_string(),
+            board_model: "Raspberry Pi 4 Model B".to_string(),
+            uptime_seconds,
+        }
+    }
+
+    fn slot(name: &str, booted: bool) -> SlotStatus {
+        SlotStatus {
+            name: name.to_string(),
+            class: "rootfs".to_string(),
+            device: format!("/dev/{name}"),
+            state: "good".to_string(),
+            version: "1.0.0".to_string(),
+            booted,
+        }
+    }
+
     #[test]
     fn resolves_rauc_bundle_without_raw_flag() {
         let manager = UpgradeManager::new(
@@ -581,5 +729,58 @@ mod tests {
                 image
             } if target == "pi5" && image == "pi3"
         ));
+    }
+
+    #[test]
+    fn finds_booted_slot() {
+        assert_eq!(
+            booted_slot_name(&[slot("rootfs.0", false), slot("rootfs.1", true)]),
+            Some("rootfs.1".to_string())
+        );
+    }
+
+    #[test]
+    fn rauc_reboot_success_accepts_version_change() {
+        let expectation = RebootExpectation::Rauc {
+            previous_version: "1.0.0".to_string(),
+            previous_booted_slot: Some("rootfs.0".to_string()),
+        };
+
+        let reason = expectation.success_reason(&system_info("1.1.0", 42), Some("rootfs.0"));
+        assert!(reason.is_some_and(|r| r.contains("version changed")));
+    }
+
+    #[test]
+    fn rauc_reboot_success_accepts_slot_change_with_same_version() {
+        let expectation = RebootExpectation::Rauc {
+            previous_version: "1.0.0".to_string(),
+            previous_booted_slot: Some("rootfs.0".to_string()),
+        };
+
+        let reason = expectation.success_reason(&system_info("1.0.0", 42), Some("rootfs.1"));
+        assert!(reason.is_some_and(|r| r.contains("booted slot changed")));
+    }
+
+    #[test]
+    fn rauc_reboot_does_not_accept_recent_uptime_alone() {
+        let expectation = RebootExpectation::Rauc {
+            previous_version: "1.0.0".to_string(),
+            previous_booted_slot: Some("rootfs.0".to_string()),
+        };
+
+        assert_eq!(
+            expectation.success_reason(&system_info("1.0.0", 42), Some("rootfs.0")),
+            None
+        );
+    }
+
+    #[test]
+    fn raw_flash_reboot_accepts_recent_uptime() {
+        let expectation = RebootExpectation::RawFlash {
+            previous_version: "1.0.0".to_string(),
+        };
+
+        let reason = expectation.success_reason(&system_info("1.0.0", 42), None);
+        assert!(reason.is_some_and(|r| r == "device rebooted"));
     }
 }

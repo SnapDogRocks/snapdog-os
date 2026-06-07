@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1](https://github.com/SnapDogRocks/snapdog-os/compare/v0.4.0...v0.4.1) (2026-06-07)
+
+
+### Bug Fixes
+
+* **ci:** add zero2w defconfig mapping + clear firmware hash file ([826ed50](https://github.com/SnapDogRocks/snapdog-os/commit/826ed50d684084a2135dc964b70335de32e44952))
+* **ci:** use windows-latest + windows-11-arm for snapdog-update builds ([59fc91e](https://github.com/SnapDogRocks/snapdog-os/commit/59fc91ee4613e7075735bb6b7339940dd6948635))
+
 ## [0.4.0](https://github.com/SnapDogRocks/snapdog-os/compare/v0.3.0...v0.4.0) (2026-06-07)
 
 

@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.4.0](https://github.com/SnapDogRocks/snapdog-os/compare/v0.3.0...v0.4.0) (2026-06-07)
+
+
+### Features
+
+* add Raspberry Pi Zero 2 W support ([a9fa8d5](https://github.com/SnapDogRocks/snapdog-os/commit/a9fa8d5214e04ab1bebb77945ebd67e6766dcd6a))
+* **build:** completely rename SNAPDOG_PI_VERSION to SNAPDOG_BOARD in RAUC config and workflows ([49c9dbc](https://github.com/SnapDogRocks/snapdog-os/commit/49c9dbc9aac9b11cccd04ce255a52092a0ed88cf))
+* **build:** refactor build configs and script paths to be board-agnostic ([3c5bef9](https://github.com/SnapDogRocks/snapdog-os/commit/3c5bef9bd901ae4db7f903497d2a6c7c303180db))
+* **ctrl:** Now Playing mini-player with MPRIS2 D-Bus integration ([c2757f5](https://github.com/SnapDogRocks/snapdog-os/commit/c2757f5f3bd73b7d77f68572576fb4815cae7777))
+* **kernel:** append real-time scheduler optimizations and HZ settings to kernel fragment ([34fe818](https://github.com/SnapDogRocks/snapdog-os/commit/34fe818db97f6f44ae9676703405c2996fb0e4d8))
+* **settings:** export/import device settings as tar.gz ([f031922](https://github.com/SnapDogRocks/snapdog-os/commit/f03192269e910e23167592f6a1b2e9cada1ba46a))
+* **softap:** derive unique SSID from WiFi MAC address ([f4163e1](https://github.com/SnapDogRocks/snapdog-os/commit/f4163e190e83df7fdb40bc34e00d3b8b7b8384ec))
+* **tuning:** add accessible hover-and-tap tooltips for tuning options ([d800c2a](https://github.com/SnapDogRocks/snapdog-os/commit/d800c2aa00682da1b98740bbbe4728c3d2abb5f4))
+* **tuning:** implement device-agnostic hardware tuning HAL ([a5dc600](https://github.com/SnapDogRocks/snapdog-os/commit/a5dc6009913843a8947514cf3a4c8e3fa541c621))
+* **tuning:** write full RT scheduling overrides in systemd drop-in ([9e4333f](https://github.com/SnapDogRocks/snapdog-os/commit/9e4333ff5099d6ca3c692b49a5dae53c69135db1))
+* **update:** add build script for compile-time git versioning ([460fd2b](https://github.com/SnapDogRocks/snapdog-os/commit/460fd2b6f2494bc133957e0ad774b1168cb41df7))
+* **update:** harden update CLI for operators ([78a0c1e](https://github.com/SnapDogRocks/snapdog-os/commit/78a0c1e07c90208237a77b7e6cbb0dc891a7ffaa))
+* **update:** implement developer firmware upgrade tool (snapdog-update) ([0527b5e](https://github.com/SnapDogRocks/snapdog-os/commit/0527b5e205bab43f0d5f61779c327731ba6ce07b))
+
+
+### Bug Fixes
+
+* enable raspi-wifi package (hostapd/dnsmasq/wpa_supplicant missing from image) ([f463d11](https://github.com/SnapDogRocks/snapdog-os/commit/f463d11653eb26dfcab6558fc38593864bc588d1))
+* **network:** kernel panic in brcmfmac P2P during AP start ([953dbc8](https://github.com/SnapDogRocks/snapdog-os/commit/953dbc8a925b4caee6c198dfdc4e9da686616fb6))
+* **network:** validate setup SSID derivation ([25141aa](https://github.com/SnapDogRocks/snapdog-os/commit/25141aa8256230d36db837a4701b46a10fc367a4))
+* replace all metaneutrons references with SnapDogRocks org ([431bf49](https://github.com/SnapDogRocks/snapdog-os/commit/431bf49df7aa5435fd5286572501536f556bfc2b))
+* resolve clippy warnings for closures and map_or in config_txt.rs ([7a10f25](https://github.com/SnapDogRocks/snapdog-os/commit/7a10f2533fb720690ba8f6d6f41ff4498c7b622f))
+* resolve mpris_client compilation and clippy errors in release builds ([aa5a5d2](https://github.com/SnapDogRocks/snapdog-os/commit/aa5a5d2884a33012830828275ec37969509385ae))
+* **tuning:** make config.txt parsing robust to spacing, inline comments, and arguments ([703ccf0](https://github.com/SnapDogRocks/snapdog-os/commit/703ccf0869945ed4705d3c17ad5ceb1909373ebb))
+* **tuning:** resolve clippy compiler and lint warnings ([b95844f](https://github.com/SnapDogRocks/snapdog-os/commit/b95844f9f1b7f9175e369ebcdbeafe0afa0a70b5))
+* update snapdog client/server download URL to SnapDogRocks org ([207d9c7](https://github.com/SnapDogRocks/snapdog-os/commit/207d9c7cad7aaf49ced46c572958e344ab65b825))
+* **update:** extend raw flash challenge ttl ([0ecd2e5](https://github.com/SnapDogRocks/snapdog-os/commit/0ecd2e554b49ae52f1b391d974fbe26fef7eb91e))
+* **update:** harden reboot verification ([f99b6d7](https://github.com/SnapDogRocks/snapdog-os/commit/f99b6d765ab4411ae04563d983aacbeaa0064a5e))
+* write OS version to /etc/snapdog-os.version during build ([bca0208](https://github.com/SnapDogRocks/snapdog-os/commit/bca0208087e2495d72cd05f358e4def07a783295))
+
 ## [0.3.0](https://github.com/SnapDogRocks/snapdog-os/compare/v0.2.0...v0.3.0) (2026-05-30)
 
 

@@ -349,7 +349,7 @@ jobs:
             tar czf "${ARCHIVE}.tar.gz" "$ARCHIVE"
             sha256sum "${ARCHIVE}.tar.gz" > "${ARCHIVE}.tar.gz.sha256"
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: snapdog-update-${{ matrix.target }}
           path: |
@@ -365,7 +365,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: snapdog-update-*
           path: artifacts

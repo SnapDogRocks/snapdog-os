@@ -99,15 +99,19 @@ jobs:
 
   build-image:
     name: Build image (${{ matrix.board }})
-    runs-on: [self-hosted, linux, x64, buildroot]
+    runs-on: ubuntu-24.04
     needs: [release-please, build-ctrl]
+    timeout-minutes: 360
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         board: [pi3, pi4, pi5, zero2w]
     env:
-      BR2_DL_DIR: /dl
-      BR2_CCACHE_DIR: /ccache
+      BR2_DL_DIR: ${{ github.workspace }}/.buildroot-cache/dl
+      BR2_CCACHE_DIR: ${{ github.workspace }}/.buildroot-cache/ccache/${{ matrix.board }}
+      CCACHE_COMPRESS: "1"
+      CCACHE_MAXSIZE: 4G
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
@@ -115,9 +119,80 @@ jobs:
         with:
           name: snapdog-ctrl-binary
 
+      - name: Free runner disk space
+        run: |
+          set -euo pipefail
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          docker system prune -af || true
+          df -h /
+
+      - name: Install image build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc \
+            bison \
+            build-essential \
+            ca-certificates \
+            cpio \
+            e2fsprogs \
+            fdisk \
+            file \
+            flex \
+            gettext \
+            git \
+            jq \
+            libarchive-tools \
+            libssl-dev \
+            locales \
+            make \
+            mtools \
+            openssl \
+            parted \
+            patch \
+            perl \
+            python3 \
+            rauc \
+            rsync \
+            unzip \
+            wget \
+            xz-utils \
+            zstd
+
+      - name: Restore Buildroot source cache
+        id: cache-buildroot-src
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ../buildroot-src
+          key: buildroot-src-${{ runner.os }}-${{ env.BUILDROOT_VERSION }}-${{ hashFiles('buildroot/scripts/patch-buildroot') }}
+
+      - name: Restore Buildroot download cache
+        id: cache-buildroot-dl
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.BR2_DL_DIR }}
+          key: buildroot-dl-${{ runner.os }}-${{ env.BUILDROOT_VERSION }}-${{ matrix.board }}-${{ hashFiles('buildroot/**/*.mk', 'buildroot/**/*.hash', 'buildroot/configs/override.conf', 'buildroot/scripts/patch-buildroot') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            buildroot-dl-${{ runner.os }}-${{ env.BUILDROOT_VERSION }}-${{ matrix.board }}-${{ hashFiles('buildroot/**/*.mk', 'buildroot/**/*.hash', 'buildroot/configs/override.conf', 'buildroot/scripts/patch-buildroot') }}-
+            buildroot-dl-${{ runner.os }}-${{ env.BUILDROOT_VERSION }}-${{ matrix.board }}-
+            buildroot-dl-${{ runner.os }}-${{ env.BUILDROOT_VERSION }}-
+
+      - name: Restore Buildroot compiler cache
+        id: cache-buildroot-ccache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.BR2_CCACHE_DIR }}
+          key: buildroot-ccache-${{ runner.os }}-${{ env.BUILDROOT_VERSION }}-${{ matrix.board }}-${{ hashFiles('buildroot/**/*.mk', 'buildroot/**/*.hash', 'buildroot/configs/override.conf', 'buildroot/kernel.fragment', 'buildroot/scripts/patch-buildroot') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            buildroot-ccache-${{ runner.os }}-${{ env.BUILDROOT_VERSION }}-${{ matrix.board }}-${{ hashFiles('buildroot/**/*.mk', 'buildroot/**/*.hash', 'buildroot/configs/override.conf', 'buildroot/kernel.fragment', 'buildroot/scripts/patch-buildroot') }}-
+            buildroot-ccache-${{ runner.os }}-${{ env.BUILDROOT_VERSION }}-${{ matrix.board }}-
+
       - name: Determine version
         id: version
         run: |
+          set -euo pipefail
           if [ "${{ needs.release-please.outputs.release_created }}" = "true" ]; then
             echo "version=${{ needs.release-please.outputs.version }}" >> "$GITHUB_OUTPUT"
             echo "channel=stable" >> "$GITHUB_OUTPUT"
@@ -129,26 +204,40 @@ jobs:
 
       - name: Setup buildroot
         run: |
-          ln -sfn /srv/${{ matrix.board }} ../buildroot-${{ matrix.board }}
+          set -euo pipefail
+          mkdir -p "$BR2_DL_DIR" "$BR2_CCACHE_DIR" "../buildroot-${{ matrix.board }}"
           make setup
 
       - name: Build
         run: |
+          set -euo pipefail
           chmod 755 snapdog-ctrl-binary
           make BOARD=${{ matrix.board }} VERSION="${{ steps.version.outputs.version }}" config
           make BOARD=${{ matrix.board }} VERSION="${{ steps.version.outputs.version }}" build
 
       - name: Generate Buildroot legal manifest
         run: |
+          set -euo pipefail
           cd ../buildroot
           make O="${{ github.workspace }}/../buildroot-${{ matrix.board }}" \
             BR2_EXTERNAL="${{ github.workspace }}/buildroot" \
             SNAPDOG_BOARD="${{ matrix.board }}" \
             legal-info
 
+      - name: Report Buildroot cache usage
+        if: always()
+        run: |
+          set -euo pipefail
+          du -sh "$BR2_DL_DIR" "$BR2_CCACHE_DIR" 2>/dev/null || true
+          if [ -x "../buildroot-${{ matrix.board }}/host/bin/ccache" ]; then
+            "../buildroot-${{ matrix.board }}/host/bin/ccache" -s || true
+          fi
+
       - name: Package
         id: package
         run: |
+          set -euo pipefail
+          test -n "${{ secrets.RAUC_CA_KEY_PEM }}" || { echo "Missing RAUC_CA_KEY_PEM secret" >&2; exit 1; }
           VERSION="${{ steps.version.outputs.version }}"
           IMG="../buildroot-${{ matrix.board }}/images/sdcard.img"
           OUT="snapdog-os-${{ matrix.board }}-${VERSION}.img.gz"
@@ -181,6 +270,29 @@ jobs:
             echo "sbom=${SBOM}"
             echo "checksums=${CHECKSUMS}"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Trim Buildroot compiler cache
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -x "../buildroot-${{ matrix.board }}/host/bin/ccache" ]; then
+            "../buildroot-${{ matrix.board }}/host/bin/ccache" -M "$CCACHE_MAXSIZE" || true
+            "../buildroot-${{ matrix.board }}/host/bin/ccache" -c || true
+          fi
+
+      - name: Save Buildroot download cache
+        if: success() && steps.cache-buildroot-dl.outputs.cache-primary-key != ''
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.BR2_DL_DIR }}
+          key: ${{ steps.cache-buildroot-dl.outputs.cache-primary-key }}
+
+      - name: Save Buildroot compiler cache
+        if: success() && steps.cache-buildroot-ccache.outputs.cache-primary-key != ''
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.BR2_CCACHE_DIR }}
+          key: ${{ steps.cache-buildroot-ccache.outputs.cache-primary-key }}
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -331,21 +443,24 @@ jobs:
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
       - name: Build
         run: cargo build --release --manifest-path snapdog-update/Cargo.toml --target ${{ matrix.target }}
       - name: Package
         shell: bash
+        env:
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
+          TARGET: ${{ matrix.target }}
         run: |
-          TAG=${{ needs.release-please.outputs.tag_name }}
-          ARCHIVE="snapdog-update-${TAG}-${{ matrix.target }}"
+          set -euo pipefail
+          ARCHIVE="snapdog-update-${TAG_NAME}-${TARGET}"
           mkdir "$ARCHIVE"
-          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
-            cp "snapdog-update/target/${{ matrix.target }}/release/snapdog-update.exe" "$ARCHIVE/"
+          if [[ "$TARGET" == *"windows"* ]]; then
+            cp "snapdog-update/target/${TARGET}/release/snapdog-update.exe" "$ARCHIVE/"
             7z a "${ARCHIVE}.zip" "$ARCHIVE"
             sha256sum "${ARCHIVE}.zip" > "${ARCHIVE}.zip.sha256"
           else
-            cp "snapdog-update/target/${{ matrix.target }}/release/snapdog-update" "$ARCHIVE/"
+            cp "snapdog-update/target/${TARGET}/release/snapdog-update" "$ARCHIVE/"
             tar czf "${ARCHIVE}.tar.gz" "$ARCHIVE"
             sha256sum "${ARCHIVE}.tar.gz" > "${ARCHIVE}.tar.gz.sha256"
           fi

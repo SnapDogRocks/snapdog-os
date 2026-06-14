@@ -126,16 +126,43 @@ pub struct ZoneConfig {
 
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct KnxGroupObjects {
-    pub volume: Option<String>,
-    pub volume_status: Option<String>,
-    pub mute: Option<String>,
-    pub mute_status: Option<String>,
     pub play: Option<String>,
     pub pause: Option<String>,
+    pub stop: Option<String>,
     pub track_next: Option<String>,
     pub track_previous: Option<String>,
-    pub track_title: Option<String>,
-    pub track_artist: Option<String>,
+    pub control_status: Option<String>,
+    pub volume: Option<String>,
+    pub volume_status: Option<String>,
+    pub volume_dim: Option<String>,
+    pub mute: Option<String>,
+    pub mute_status: Option<String>,
+    pub mute_toggle: Option<String>,
+    pub track_title_status: Option<String>,
+    pub track_artist_status: Option<String>,
+    pub track_album_status: Option<String>,
+    pub track_progress_status: Option<String>,
+    pub track_playing_status: Option<String>,
+    pub track_repeat: Option<String>,
+    pub track_repeat_status: Option<String>,
+    pub track_repeat_toggle: Option<String>,
+    pub playlist: Option<String>,
+    pub playlist_status: Option<String>,
+    pub playlist_next: Option<String>,
+    pub playlist_previous: Option<String>,
+    pub shuffle: Option<String>,
+    pub shuffle_status: Option<String>,
+    pub shuffle_toggle: Option<String>,
+    pub repeat: Option<String>,
+    pub repeat_status: Option<String>,
+    pub repeat_toggle: Option<String>,
+    pub presence: Option<String>,
+    pub presence_enable: Option<String>,
+    pub presence_enable_status: Option<String>,
+    pub presence_timeout: Option<String>,
+    pub presence_timeout_status: Option<String>,
+    pub presence_timer_status: Option<String>,
+    pub presence_source_override: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -152,8 +179,15 @@ pub struct ClientEntry {
 pub struct ClientKnxGOs {
     pub volume: Option<String>,
     pub volume_status: Option<String>,
+    pub volume_dim: Option<String>,
     pub mute: Option<String>,
     pub mute_status: Option<String>,
+    pub mute_toggle: Option<String>,
+    pub latency: Option<String>,
+    pub latency_status: Option<String>,
+    pub zone: Option<String>,
+    pub zone_status: Option<String>,
+    pub connected_status: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -259,10 +293,17 @@ pub fn validate(config: &ServerConfig) -> Result<()> {
 
     // Validate KNX GAs
     if let Some(knx) = &config.knx {
+        anyhow::ensure!(
+            ["client", "device"].contains(&knx.role.as_str()),
+            "Invalid KNX role"
+        );
         if knx.role == "client" {
-            if let Some(url) = &knx.url {
-                anyhow::ensure!(!url.is_empty(), "KNX gateway URL required in client mode");
-            }
+            let url = knx.url.as_deref().unwrap_or_default().trim();
+            anyhow::ensure!(!url.is_empty(), "KNX gateway URL required in client mode");
+            anyhow::ensure!(
+                !url.contains('\n') && !url.contains('\r'),
+                "KNX gateway URL must be a single line"
+            );
         }
     }
 
@@ -273,11 +314,17 @@ pub fn validate(config: &ServerConfig) -> Result<()> {
 
     for zone in &config.zones {
         anyhow::ensure!(!zone.name.is_empty(), "Zone name required");
+        if let Some(knx) = &zone.knx {
+            validate_zone_knx(&zone.name, knx)?;
+        }
     }
 
     for client in &config.clients {
         anyhow::ensure!(!client.name.is_empty(), "Client name required");
         anyhow::ensure!(!client.mac.is_empty(), "Client MAC required");
+        if let Some(knx) = &client.knx {
+            validate_client_knx(&client.name, knx)?;
+        }
     }
 
     Ok(())
@@ -750,111 +797,391 @@ fn set_optional_section(doc: &mut DocumentMut, key: &str, table: Option<Table>) 
     }
 }
 
+#[cfg(test)]
+const ZONE_KNX_KEYS: &[&str] = &[
+    "play",
+    "pause",
+    "stop",
+    "track_next",
+    "track_previous",
+    "control_status",
+    "volume",
+    "volume_status",
+    "volume_dim",
+    "mute",
+    "mute_status",
+    "mute_toggle",
+    "track_title_status",
+    "track_artist_status",
+    "track_album_status",
+    "track_progress_status",
+    "track_playing_status",
+    "track_repeat",
+    "track_repeat_status",
+    "track_repeat_toggle",
+    "playlist",
+    "playlist_status",
+    "playlist_next",
+    "playlist_previous",
+    "shuffle",
+    "shuffle_status",
+    "shuffle_toggle",
+    "repeat",
+    "repeat_status",
+    "repeat_toggle",
+    "presence",
+    "presence_enable",
+    "presence_enable_status",
+    "presence_timeout",
+    "presence_timeout_status",
+    "presence_timer_status",
+    "presence_source_override",
+];
+
+#[cfg(test)]
+const CLIENT_KNX_KEYS: &[&str] = &[
+    "volume",
+    "volume_status",
+    "volume_dim",
+    "mute",
+    "mute_status",
+    "mute_toggle",
+    "latency",
+    "latency_status",
+    "zone",
+    "zone_status",
+    "connected_status",
+];
+
 fn parse_zone_knx(table: &Table) -> KnxGroupObjects {
     KnxGroupObjects {
-        volume: table
-            .get("volume")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        volume_status: table
-            .get("volume_status")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        mute: table.get("mute").and_then(|v| v.as_str()).map(String::from),
-        mute_status: table
-            .get("mute_status")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        play: table.get("play").and_then(|v| v.as_str()).map(String::from),
-        pause: table
-            .get("pause")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        track_next: table
-            .get("track_next")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        track_previous: table
-            .get("track_previous")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        track_title: table
-            .get("track_title")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        track_artist: table
-            .get("track_artist")
-            .and_then(|v| v.as_str())
-            .map(String::from),
+        play: get_optional_str(table, "play"),
+        pause: get_optional_str(table, "pause"),
+        stop: get_optional_str(table, "stop"),
+        track_next: get_optional_str(table, "track_next"),
+        track_previous: get_optional_str(table, "track_previous"),
+        control_status: get_optional_str(table, "control_status"),
+        volume: get_optional_str(table, "volume"),
+        volume_status: get_optional_str(table, "volume_status"),
+        volume_dim: get_optional_str(table, "volume_dim"),
+        mute: get_optional_str(table, "mute"),
+        mute_status: get_optional_str(table, "mute_status"),
+        mute_toggle: get_optional_str(table, "mute_toggle"),
+        track_title_status: get_optional_str_alias(table, "track_title_status", "track_title"),
+        track_artist_status: get_optional_str_alias(table, "track_artist_status", "track_artist"),
+        track_album_status: get_optional_str(table, "track_album_status"),
+        track_progress_status: get_optional_str(table, "track_progress_status"),
+        track_playing_status: get_optional_str(table, "track_playing_status"),
+        track_repeat: get_optional_str(table, "track_repeat"),
+        track_repeat_status: get_optional_str(table, "track_repeat_status"),
+        track_repeat_toggle: get_optional_str(table, "track_repeat_toggle"),
+        playlist: get_optional_str(table, "playlist"),
+        playlist_status: get_optional_str(table, "playlist_status"),
+        playlist_next: get_optional_str(table, "playlist_next"),
+        playlist_previous: get_optional_str(table, "playlist_previous"),
+        shuffle: get_optional_str(table, "shuffle"),
+        shuffle_status: get_optional_str(table, "shuffle_status"),
+        shuffle_toggle: get_optional_str(table, "shuffle_toggle"),
+        repeat: get_optional_str(table, "repeat"),
+        repeat_status: get_optional_str(table, "repeat_status"),
+        repeat_toggle: get_optional_str(table, "repeat_toggle"),
+        presence: get_optional_str(table, "presence"),
+        presence_enable: get_optional_str(table, "presence_enable"),
+        presence_enable_status: get_optional_str(table, "presence_enable_status"),
+        presence_timeout: get_optional_str(table, "presence_timeout"),
+        presence_timeout_status: get_optional_str(table, "presence_timeout_status"),
+        presence_timer_status: get_optional_str(table, "presence_timer_status"),
+        presence_source_override: get_optional_str(table, "presence_source_override"),
     }
 }
 
 fn parse_client_knx(table: &Table) -> ClientKnxGOs {
     ClientKnxGOs {
-        volume: table
-            .get("volume")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        volume_status: table
-            .get("volume_status")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        mute: table.get("mute").and_then(|v| v.as_str()).map(String::from),
-        mute_status: table
-            .get("mute_status")
-            .and_then(|v| v.as_str())
-            .map(String::from),
+        volume: get_optional_str(table, "volume"),
+        volume_status: get_optional_str(table, "volume_status"),
+        volume_dim: get_optional_str(table, "volume_dim"),
+        mute: get_optional_str(table, "mute"),
+        mute_status: get_optional_str(table, "mute_status"),
+        mute_toggle: get_optional_str(table, "mute_toggle"),
+        latency: get_optional_str(table, "latency"),
+        latency_status: get_optional_str(table, "latency_status"),
+        zone: get_optional_str(table, "zone"),
+        zone_status: get_optional_str(table, "zone_status"),
+        connected_status: get_optional_str(table, "connected_status"),
     }
 }
 
 fn build_knx_go_table(knx: &KnxGroupObjects) -> Table {
     let mut t = Table::new();
-    if let Some(v) = &knx.volume {
-        t["volume"] = toml_edit::value(v);
-    }
-    if let Some(v) = &knx.volume_status {
-        t["volume_status"] = toml_edit::value(v);
-    }
-    if let Some(v) = &knx.mute {
-        t["mute"] = toml_edit::value(v);
-    }
-    if let Some(v) = &knx.mute_status {
-        t["mute_status"] = toml_edit::value(v);
-    }
-    if let Some(v) = &knx.play {
-        t["play"] = toml_edit::value(v);
-    }
-    if let Some(v) = &knx.pause {
-        t["pause"] = toml_edit::value(v);
-    }
-    if let Some(v) = &knx.track_next {
-        t["track_next"] = toml_edit::value(v);
-    }
-    if let Some(v) = &knx.track_previous {
-        t["track_previous"] = toml_edit::value(v);
-    }
-    if let Some(v) = &knx.track_title {
-        t["track_title"] = toml_edit::value(v);
-    }
-    if let Some(v) = &knx.track_artist {
-        t["track_artist"] = toml_edit::value(v);
+    for (key, value) in zone_knx_values(knx) {
+        insert_knx_value(&mut t, key, value);
     }
     t
 }
 
 fn build_client_knx_table(knx: &ClientKnxGOs) -> Table {
     let mut t = Table::new();
-    if let Some(v) = &knx.volume {
-        t["volume"] = toml_edit::value(v);
-    }
-    if let Some(v) = &knx.volume_status {
-        t["volume_status"] = toml_edit::value(v);
-    }
-    if let Some(v) = &knx.mute {
-        t["mute"] = toml_edit::value(v);
-    }
-    if let Some(v) = &knx.mute_status {
-        t["mute_status"] = toml_edit::value(v);
+    for (key, value) in client_knx_values(knx) {
+        insert_knx_value(&mut t, key, value);
     }
     t
+}
+
+fn get_optional_str(table: &Table, key: &str) -> Option<String> {
+    table.get(key).and_then(|v| v.as_str()).map(String::from)
+}
+
+fn get_optional_str_alias(table: &Table, key: &str, legacy_key: &str) -> Option<String> {
+    get_optional_str(table, key).or_else(|| get_optional_str(table, legacy_key))
+}
+
+fn insert_knx_value(table: &mut Table, key: &str, value: Option<&str>) {
+    if let Some(value) = value {
+        let value = value.trim();
+        if !value.is_empty() {
+            table[key] = toml_edit::value(value);
+        }
+    }
+}
+
+fn zone_knx_values(knx: &KnxGroupObjects) -> Vec<(&'static str, Option<&str>)> {
+    vec![
+        ("play", knx.play.as_deref()),
+        ("pause", knx.pause.as_deref()),
+        ("stop", knx.stop.as_deref()),
+        ("track_next", knx.track_next.as_deref()),
+        ("track_previous", knx.track_previous.as_deref()),
+        ("control_status", knx.control_status.as_deref()),
+        ("volume", knx.volume.as_deref()),
+        ("volume_status", knx.volume_status.as_deref()),
+        ("volume_dim", knx.volume_dim.as_deref()),
+        ("mute", knx.mute.as_deref()),
+        ("mute_status", knx.mute_status.as_deref()),
+        ("mute_toggle", knx.mute_toggle.as_deref()),
+        ("track_title_status", knx.track_title_status.as_deref()),
+        ("track_artist_status", knx.track_artist_status.as_deref()),
+        ("track_album_status", knx.track_album_status.as_deref()),
+        (
+            "track_progress_status",
+            knx.track_progress_status.as_deref(),
+        ),
+        ("track_playing_status", knx.track_playing_status.as_deref()),
+        ("track_repeat", knx.track_repeat.as_deref()),
+        ("track_repeat_status", knx.track_repeat_status.as_deref()),
+        ("track_repeat_toggle", knx.track_repeat_toggle.as_deref()),
+        ("playlist", knx.playlist.as_deref()),
+        ("playlist_status", knx.playlist_status.as_deref()),
+        ("playlist_next", knx.playlist_next.as_deref()),
+        ("playlist_previous", knx.playlist_previous.as_deref()),
+        ("shuffle", knx.shuffle.as_deref()),
+        ("shuffle_status", knx.shuffle_status.as_deref()),
+        ("shuffle_toggle", knx.shuffle_toggle.as_deref()),
+        ("repeat", knx.repeat.as_deref()),
+        ("repeat_status", knx.repeat_status.as_deref()),
+        ("repeat_toggle", knx.repeat_toggle.as_deref()),
+        ("presence", knx.presence.as_deref()),
+        ("presence_enable", knx.presence_enable.as_deref()),
+        (
+            "presence_enable_status",
+            knx.presence_enable_status.as_deref(),
+        ),
+        ("presence_timeout", knx.presence_timeout.as_deref()),
+        (
+            "presence_timeout_status",
+            knx.presence_timeout_status.as_deref(),
+        ),
+        (
+            "presence_timer_status",
+            knx.presence_timer_status.as_deref(),
+        ),
+        (
+            "presence_source_override",
+            knx.presence_source_override.as_deref(),
+        ),
+    ]
+}
+
+fn client_knx_values(knx: &ClientKnxGOs) -> Vec<(&'static str, Option<&str>)> {
+    vec![
+        ("volume", knx.volume.as_deref()),
+        ("volume_status", knx.volume_status.as_deref()),
+        ("volume_dim", knx.volume_dim.as_deref()),
+        ("mute", knx.mute.as_deref()),
+        ("mute_status", knx.mute_status.as_deref()),
+        ("mute_toggle", knx.mute_toggle.as_deref()),
+        ("latency", knx.latency.as_deref()),
+        ("latency_status", knx.latency_status.as_deref()),
+        ("zone", knx.zone.as_deref()),
+        ("zone_status", knx.zone_status.as_deref()),
+        ("connected_status", knx.connected_status.as_deref()),
+    ]
+}
+
+fn validate_zone_knx(name: &str, knx: &KnxGroupObjects) -> Result<()> {
+    for (key, value) in zone_knx_values(knx) {
+        validate_optional_knx_group_address(&format!("zone '{name}' KNX {key}"), value)?;
+    }
+    Ok(())
+}
+
+fn validate_client_knx(name: &str, knx: &ClientKnxGOs) -> Result<()> {
+    for (key, value) in client_knx_values(knx) {
+        validate_optional_knx_group_address(&format!("client '{name}' KNX {key}"), value)?;
+    }
+    Ok(())
+}
+
+fn validate_optional_knx_group_address(label: &str, value: Option<&str>) -> Result<()> {
+    if let Some(value) = value {
+        let value = value.trim();
+        if !value.is_empty() {
+            validate_knx_group_address(label, value)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_knx_group_address(label: &str, value: &str) -> Result<()> {
+    let parts: Vec<&str> = value.split('/').collect();
+    anyhow::ensure!(
+        parts.len() == 3,
+        "{label} must use main/middle/sub format (0-31/0-7/0-255)"
+    );
+    parse_group_address_part(label, "main", parts[0], 31)?;
+    parse_group_address_part(label, "middle", parts[1], 7)?;
+    parse_group_address_part(label, "sub", parts[2], 255)?;
+    Ok(())
+}
+
+fn parse_group_address_part(label: &str, part_name: &str, value: &str, max: u16) -> Result<u16> {
+    anyhow::ensure!(
+        !value.is_empty() && value.chars().all(|c| c.is_ascii_digit()),
+        "{label} has an invalid {part_name} group address part"
+    );
+    let parsed = value
+        .parse::<u16>()
+        .with_context(|| format!("{label} has an invalid {part_name} group address part"))?;
+    anyhow::ensure!(
+        parsed <= max,
+        "{label} has a {part_name} group address part outside 0-{max}"
+    );
+    Ok(parsed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_and_writes_all_zone_knx_group_addresses() {
+        let mut source = Table::new();
+        for (index, key) in ZONE_KNX_KEYS.iter().enumerate() {
+            source[*key] = toml_edit::value(format!("1/{}/{}", index % 8, index));
+        }
+
+        let parsed = parse_zone_knx(&source);
+        let built = build_knx_go_table(&parsed);
+
+        for key in ZONE_KNX_KEYS {
+            assert_eq!(
+                built.get(*key).and_then(|v| v.as_str()),
+                source.get(*key).and_then(|v| v.as_str()),
+                "{key}"
+            );
+        }
+    }
+
+    #[test]
+    fn parses_and_writes_all_client_knx_group_addresses() {
+        let mut source = Table::new();
+        for (index, key) in CLIENT_KNX_KEYS.iter().enumerate() {
+            source[*key] = toml_edit::value(format!("2/{}/{}", index % 8, index));
+        }
+
+        let parsed = parse_client_knx(&source);
+        let built = build_client_knx_table(&parsed);
+
+        for key in CLIENT_KNX_KEYS {
+            assert_eq!(
+                built.get(*key).and_then(|v| v.as_str()),
+                source.get(*key).and_then(|v| v.as_str()),
+                "{key}"
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_legacy_track_title_and_artist_keys() {
+        let mut source = Table::new();
+        source["track_title"] = toml_edit::value("1/2/3");
+        source["track_artist"] = toml_edit::value("1/2/4");
+
+        let parsed = parse_zone_knx(&source);
+
+        assert_eq!(parsed.track_title_status.as_deref(), Some("1/2/3"));
+        assert_eq!(parsed.track_artist_status.as_deref(), Some("1/2/4"));
+    }
+
+    #[test]
+    fn writes_knx_group_addresses_in_full_config_toml() {
+        let mut doc = DocumentMut::new();
+        let config = ServerConfig {
+            name: "SnapDog".into(),
+            knx: Some(KnxConfig {
+                role: "device".into(),
+                url: None,
+            }),
+            zones: vec![ZoneConfig {
+                name: "Living".into(),
+                icon: "speaker".into(),
+                knx: Some(KnxGroupObjects {
+                    play: Some("1/2/3".into()),
+                    presence_source_override: Some("1/2/4".into()),
+                    ..Default::default()
+                }),
+            }],
+            clients: vec![ClientEntry {
+                name: "Kitchen".into(),
+                mac: "aa:bb:cc:dd:ee:ff".into(),
+                zone: "Living".into(),
+                icon: "speaker".into(),
+                max_volume: 100,
+                knx: Some(ClientKnxGOs {
+                    latency_status: Some("2/1/9".into()),
+                    connected_status: Some("2/1/10".into()),
+                    ..Default::default()
+                }),
+            }],
+            ..ServerConfig::default()
+        };
+
+        apply_config(&mut doc, &config);
+        let output = doc.to_string();
+        let reparsed_doc: DocumentMut = output.parse().unwrap();
+        let reparsed = parse_document(&reparsed_doc);
+
+        assert_eq!(
+            reparsed.zones[0]
+                .knx
+                .as_ref()
+                .and_then(|knx| knx.presence_source_override.as_deref()),
+            Some("1/2/4")
+        );
+        assert_eq!(
+            reparsed.clients[0]
+                .knx
+                .as_ref()
+                .and_then(|knx| knx.connected_status.as_deref()),
+            Some("2/1/10")
+        );
+    }
+
+    #[test]
+    fn validates_knx_group_address_ranges() {
+        assert!(validate_knx_group_address("test", "31/7/255").is_ok());
+        assert!(validate_knx_group_address("test", "32/0/0").is_err());
+        assert!(validate_knx_group_address("test", "1/8/0").is_err());
+        assert!(validate_knx_group_address("test", "1/0/256").is_err());
+        assert!(validate_knx_group_address("test", "1/2").is_err());
+    }
 }

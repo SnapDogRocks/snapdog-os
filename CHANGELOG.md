@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/SnapDogRocks/snapdog-os/compare/v0.4.1...v0.5.0) (2026-06-14)
+
+
+### Features
+
+* **ctrl:** expand KNX zone group addresses in config generator ([65b23a3](https://github.com/SnapDogRocks/snapdog-os/commit/65b23a3a81cece4743e0408d14879be5989bf985))
+* **webui:** expand settings UI with KNX addresses and styling improvements ([ac25040](https://github.com/SnapDogRocks/snapdog-os/commit/ac25040442edfa96652c53ddf313779d8d3a82cb))
+
+
+### Bug Fixes
+
+* **ci:** pin upload/download-artifact to v7/v8 in snapdog-update jobs ([1ff0853](https://github.com/SnapDogRocks/snapdog-os/commit/1ff085326929db041ce7ef7c0c5c05f1bf295cb5))
+
 ## [0.4.1](https://github.com/SnapDogRocks/snapdog-os/compare/v0.4.0...v0.4.1) (2026-06-07)
 
 

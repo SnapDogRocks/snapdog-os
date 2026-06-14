@@ -118,11 +118,133 @@ const DEFAULT_SERVER_CONFIG: ServerConfig = {
   airplay: null,
   mqtt: null,
   knx: null,
-  zones: [{ name: "Default", icon: "🔊" }],
+  zones: [{ name: "Default", icon: "🔊", knx: null }],
   clients: [],
   radio: [],
   system: { log_level: "info" },
 };
+
+type ZoneKnxKey = Extract<keyof NonNullable<ServerConfig["zones"][number]["knx"]>, string>;
+type ClientKnxKey = Extract<keyof NonNullable<ServerConfig["clients"][number]["knx"]>, string>;
+
+type KnxField<Key extends string = string> = {
+  key: Key;
+  label: string;
+  dpt: string;
+  direction: string;
+};
+
+const ZONE_KNX_FIELDS = [
+  { key: "play", label: "Play", dpt: "1.001", direction: "→ KNX" },
+  { key: "pause", label: "Pause", dpt: "1.001", direction: "→ KNX" },
+  { key: "stop", label: "Stop", dpt: "1.001", direction: "→ KNX" },
+  { key: "track_next", label: "Next Track", dpt: "1.001", direction: "→ KNX" },
+  { key: "track_previous", label: "Previous Track", dpt: "1.001", direction: "→ KNX" },
+  { key: "control_status", label: "Playback Status", dpt: "1.001", direction: "← KNX" },
+  { key: "volume", label: "Volume", dpt: "5.001", direction: "↔ KNX" },
+  { key: "volume_status", label: "Volume Status", dpt: "5.001", direction: "→ KNX" },
+  { key: "volume_dim", label: "Volume Dim", dpt: "3.007", direction: "← KNX" },
+  { key: "mute", label: "Mute", dpt: "1.001", direction: "↔ KNX" },
+  { key: "mute_status", label: "Mute Status", dpt: "1.001", direction: "→ KNX" },
+  { key: "mute_toggle", label: "Mute Toggle", dpt: "1.001", direction: "← KNX" },
+  { key: "track_title_status", label: "Track Title", dpt: "16.001", direction: "→ KNX" },
+  { key: "track_artist_status", label: "Track Artist", dpt: "16.001", direction: "→ KNX" },
+  { key: "track_album_status", label: "Track Album", dpt: "16.001", direction: "→ KNX" },
+  { key: "track_progress_status", label: "Track Progress", dpt: "5.001", direction: "→ KNX" },
+  { key: "track_playing_status", label: "Track Playing", dpt: "1.001", direction: "→ KNX" },
+  { key: "track_repeat", label: "Track Repeat", dpt: "1.001", direction: "← KNX" },
+  { key: "track_repeat_status", label: "Track Repeat Status", dpt: "1.001", direction: "→ KNX" },
+  { key: "track_repeat_toggle", label: "Track Repeat Toggle", dpt: "1.001", direction: "← KNX" },
+  { key: "playlist", label: "Playlist", dpt: "5.010", direction: "← KNX" },
+  { key: "playlist_status", label: "Playlist Status", dpt: "5.010", direction: "→ KNX" },
+  { key: "playlist_next", label: "Playlist Next", dpt: "1.001", direction: "← KNX" },
+  { key: "playlist_previous", label: "Playlist Previous", dpt: "1.001", direction: "← KNX" },
+  { key: "shuffle", label: "Shuffle", dpt: "1.001", direction: "← KNX" },
+  { key: "shuffle_status", label: "Shuffle Status", dpt: "1.001", direction: "→ KNX" },
+  { key: "shuffle_toggle", label: "Shuffle Toggle", dpt: "1.001", direction: "← KNX" },
+  { key: "repeat", label: "Playlist Repeat", dpt: "1.001", direction: "← KNX" },
+  { key: "repeat_status", label: "Playlist Repeat Status", dpt: "1.001", direction: "→ KNX" },
+  { key: "repeat_toggle", label: "Playlist Repeat Toggle", dpt: "1.001", direction: "← KNX" },
+  { key: "presence", label: "Presence", dpt: "1.001", direction: "← KNX" },
+  { key: "presence_enable", label: "Presence Enable", dpt: "1.001", direction: "← KNX" },
+  { key: "presence_enable_status", label: "Presence Enable Status", dpt: "1.001", direction: "→ KNX" },
+  { key: "presence_timeout", label: "Presence Timeout", dpt: "7.005", direction: "← KNX" },
+  { key: "presence_timeout_status", label: "Presence Timeout Status", dpt: "7.005", direction: "→ KNX" },
+  { key: "presence_timer_status", label: "Presence Timer", dpt: "1.001", direction: "→ KNX" },
+  { key: "presence_source_override", label: "Presence Source Override", dpt: "1.001", direction: "← KNX" },
+] as const satisfies readonly KnxField<ZoneKnxKey>[];
+
+const CLIENT_KNX_FIELDS = [
+  { key: "volume", label: "Volume", dpt: "5.001", direction: "↔ KNX" },
+  { key: "volume_status", label: "Volume Status", dpt: "5.001", direction: "→ KNX" },
+  { key: "volume_dim", label: "Volume Dim", dpt: "3.007", direction: "← KNX" },
+  { key: "mute", label: "Mute", dpt: "1.001", direction: "↔ KNX" },
+  { key: "mute_status", label: "Mute Status", dpt: "1.001", direction: "→ KNX" },
+  { key: "mute_toggle", label: "Mute Toggle", dpt: "1.001", direction: "← KNX" },
+  { key: "latency", label: "Latency", dpt: "7.005", direction: "← KNX" },
+  { key: "latency_status", label: "Latency Status", dpt: "7.005", direction: "→ KNX" },
+  { key: "zone", label: "Zone", dpt: "5.010", direction: "← KNX" },
+  { key: "zone_status", label: "Zone Status", dpt: "5.010", direction: "→ KNX" },
+  { key: "connected_status", label: "Connected Status", dpt: "1.001", direction: "→ KNX" },
+] as const satisfies readonly KnxField<ClientKnxKey>[];
+
+function isValidKnxGroupAddress(value: string | null | undefined) {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) return true;
+  const parts = trimmed.split("/");
+  if (parts.length !== 3) return false;
+  const limits = [31, 7, 255];
+  return parts.every((part, index) => {
+    if (!/^\d+$/.test(part)) return false;
+    const numeric = Number(part);
+    return Number.isInteger(numeric) && numeric >= 0 && numeric <= limits[index];
+  });
+}
+
+function normalizeKnxValue(value: string) {
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+function compactKnxValues<T extends object>(values: T) {
+  const entries = Object.entries(values as Record<string, string | null | undefined>)
+    .map(([key, value]) => [key, typeof value === "string" ? value.trim() : ""] as const)
+    .filter(([, value]) => value !== "");
+  return entries.length > 0 ? Object.fromEntries(entries) as T : null;
+}
+
+type ServerTranslator = (key: string, values?: Record<string, string | number>) => string;
+
+function collectServerValidationErrors(config: ServerConfig, t: ServerTranslator) {
+  const errors: string[] = [];
+  if (config.knx?.role === "client" && !(config.knx.url ?? "").trim()) {
+    errors.push(t("knxGatewayRequired"));
+  }
+
+  const addKnxErrors = (
+    target: string,
+    fields: readonly KnxField[],
+    values: object | null
+  ) => {
+    if (!values) return;
+    const valueBag = values as Record<string, string | null | undefined>;
+    for (const field of fields) {
+      const value = valueBag[field.key];
+      if (value && !isValidKnxGroupAddress(value)) {
+        errors.push(t("knxInvalidGaFor", { target, field: field.label }));
+      }
+    }
+  };
+
+  for (const [index, zone] of config.zones.entries()) {
+    addKnxErrors(zone.name || `${t("zone")} ${index + 1}`, ZONE_KNX_FIELDS, zone.knx);
+  }
+  for (const [index, client] of config.clients.entries()) {
+    addKnxErrors(client.name || `${t("clientName")} ${index + 1}`, CLIENT_KNX_FIELDS, client.knx);
+  }
+
+  return errors;
+}
 
 // ── Dashboard Tab ─────────────────────────────────────────────
 
@@ -146,13 +268,13 @@ function DashboardTab() {
 
   return (
     <Card title={t("title")} id={cardId}>
-      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-3 text-sm">
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-3 text-sm">
         <dt className="text-muted-foreground">{t("hostname")}</dt>
         <dd className="font-medium">{info.hostname || "—"}</dd>
         <dt className="text-muted-foreground">{t("version")}</dt>
-        <dd className="font-mono text-xs">
-          <span>{info.version || "—"}</span>
-          <div className="mt-1 text-[10px] text-muted-foreground">
+        <dd className="min-w-0 font-mono text-xs">
+          <span className="block">{info.version || "—"}</span>
+          <div className="mt-1 max-w-full break-all text-[10px] leading-relaxed text-muted-foreground">
             Client {info.components.client} · Server {info.components.server} · Ctrl {info.components.ctrl} · Kernel {info.components.kernel}
           </div>
         </dd>
@@ -1732,6 +1854,8 @@ function ServerTab() {
   const [config, setConfig] = useState<ServerConfig | null>(null);
   const [subTab, setSubTab] = useState<ServerSubTab>("audio");
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const cardId = useId();
 
   useEffect(() => {
@@ -1754,9 +1878,19 @@ function ServerTab() {
 
   const save = async () => {
     if (!config) return;
-    await api.setServer(config);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    const errors = collectServerValidationErrors(config, t);
+    setValidationErrors(errors);
+    setSaveError(null);
+    if (errors.length > 0) return;
+
+    try {
+      await api.setServer(config);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (error) {
+      setSaved(false);
+      setSaveError(error instanceof Error ? error.message : t("saveFailed"));
+    }
   };
 
   const SUB_TABS: { id: ServerSubTab; label: string }[] = [
@@ -1816,6 +1950,17 @@ function ServerTab() {
             {subTab === "sources" && <ServerSourcesSubTab config={config} setConfig={setConfig} />}
             {subTab === "zones" && <ServerZonesSubTab config={config} setConfig={setConfig} />}
             {subTab === "integrations" && <ServerIntegrationsSubTab config={config} setConfig={setConfig} />}
+
+            {(validationErrors.length > 0 || saveError) && (
+              <div className="rounded-2xl border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">
+                <p className="font-medium">{saveError ?? t("validationFailed")}</p>
+                {validationErrors.length > 0 && (
+                  <ul className="mt-1 space-y-0.5">
+                    {validationErrors.slice(0, 6).map((error) => <li key={error}>{error}</li>)}
+                  </ul>
+                )}
+              </div>
+            )}
 
             <div className="flex items-center gap-3 border-t border-border pt-3">
               <Button size="sm" onClick={save}>{t("save")}</Button>
@@ -2079,13 +2224,18 @@ function ServerSourcesSubTab({ config, setConfig }: { config: ServerConfig; setC
 function ServerZonesSubTab({ config, setConfig }: { config: ServerConfig; setConfig: (c: ServerConfig) => void }) {
   const t = useTranslations("server");
 
-  const addZone = () => { const c = structuredClone(config); c.zones.push({ name: "", icon: "🔊" }); setConfig(c); };
+  const addZone = () => { const c = structuredClone(config); c.zones.push({ name: "", icon: "🔊", knx: null }); setConfig(c); };
   const removeZone = (i: number) => { const c = structuredClone(config); c.zones.splice(i, 1); setConfig(c); };
-  const updateZone = (i: number, key: string, value: string) => { const c = structuredClone(config); (c.zones[i] as Record<string, string>)[key] = value; setConfig(c); };
+  const updateZone = (i: number, key: "name" | "icon", value: string) => { const c = structuredClone(config); c.zones[i][key] = value; setConfig(c); };
 
-  const addClient = () => { const c = structuredClone(config); c.clients.push({ name: "", mac: "", zone: config.zones[0]?.name ?? "", icon: "🔊", max_volume: 100 }); setConfig(c); };
+  const addClient = () => { const c = structuredClone(config); c.clients.push({ name: "", mac: "", zone: config.zones[0]?.name ?? "", icon: "🔊", max_volume: 100, knx: null }); setConfig(c); };
   const removeClient = (i: number) => { const c = structuredClone(config); c.clients.splice(i, 1); setConfig(c); };
-  const updateClient = (i: number, key: string, value: string | number) => { const c = structuredClone(config); (c.clients[i] as Record<string, string | number>)[key] = value; setConfig(c); };
+  const updateClient = (i: number, key: "name" | "mac" | "zone" | "icon" | "max_volume", value: string | number) => {
+    const c = structuredClone(config);
+    if (key === "max_volume") c.clients[i].max_volume = Number(value);
+    else c.clients[i][key] = String(value);
+    setConfig(c);
+  };
 
   return (
     <div className="space-y-4">
@@ -2126,6 +2276,93 @@ function ServerZonesSubTab({ config, setConfig }: { config: ServerConfig; setCon
   );
 }
 
+function getConfiguredKnxCount(values: object | null) {
+  if (!values) return 0;
+  return Object.values(values as Record<string, string | null | undefined>).filter((value) => typeof value === "string" && value.trim() !== "").length;
+}
+
+function KnxAddressInput({ field, value, onChange }: { field: KnxField; value: string; onChange: (value: string | null) => void }) {
+  const t = useTranslations("server");
+  const id = useId();
+  const invalid = !isValidKnxGroupAddress(value);
+
+  return (
+    <div className="rounded-2xl bg-background/70 p-2.5 ring-1 ring-border/60">
+      <label htmlFor={id} className="mb-1.5 flex min-w-0 items-start justify-between gap-2">
+        <span className="min-w-0">
+          <span className="block truncate text-xs font-medium">{field.label}</span>
+          <span className="block truncate font-mono text-[10px] text-muted-foreground">{field.key}</span>
+        </span>
+        <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+          {field.direction} · DPT {field.dpt}
+        </span>
+      </label>
+      <Input
+        id={id}
+        className="h-8 rounded-2xl font-mono text-xs"
+        placeholder="1/2/3"
+        value={value}
+        onChange={(event) => onChange(normalizeKnxValue(event.target.value))}
+        aria-invalid={invalid}
+        aria-describedby={invalid ? `${id}-error` : undefined}
+      />
+      {invalid && (
+        <p id={`${id}-error`} className="mt-1 text-[11px] text-destructive" role="alert">
+          {t("knxInvalidGa")}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function KnxAddressGrid({ fields, values, onChange }: { fields: readonly KnxField[]; values: object | null; onChange: (key: string, value: string | null) => void }) {
+  const valueBag = (values ?? {}) as Record<string, string | null | undefined>;
+
+  return (
+    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+      {fields.map((field) => (
+        <KnxAddressInput
+          key={field.key}
+          field={field}
+          value={valueBag[field.key] ?? ""}
+          onChange={(value) => onChange(field.key, value)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function KnxObjectSection({
+  title,
+  configured,
+  total,
+  defaultOpen,
+  children,
+}: {
+  title: string;
+  configured: number;
+  total: number;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <details open={defaultOpen || undefined} className="group rounded-2xl border border-border/70 bg-muted/25">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl px-3 py-2 text-sm font-medium [&::-webkit-details-marker]:hidden">
+        <span className="truncate">{title}</span>
+        <span className="flex shrink-0 items-center gap-2">
+          <span className="rounded-full bg-background/80 px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
+            {configured}/{total}
+          </span>
+          <span className="text-muted-foreground transition-transform group-open:rotate-180" aria-hidden="true">⌄</span>
+        </span>
+      </summary>
+      <div className="px-3 pb-3">
+        {children}
+      </div>
+    </details>
+  );
+}
+
 function ServerIntegrationsSubTab({ config, setConfig }: { config: ServerConfig; setConfig: (c: ServerConfig) => void }) {
   const t = useTranslations("server");
   const mqttBrokerId = useId();
@@ -2148,7 +2385,7 @@ function ServerIntegrationsSubTab({ config, setConfig }: { config: ServerConfig;
 
   const toggleKnx = (on: boolean) => {
     const c = structuredClone(config);
-    c.knx = on ? { role: "client", url: null, gos: [] } : null;
+    c.knx = on ? { role: "client", url: null } : null;
     setConfig(c);
   };
   const updateKnx = (key: string, value: string | null) => {
@@ -2157,24 +2394,23 @@ function ServerIntegrationsSubTab({ config, setConfig }: { config: ServerConfig;
     setConfig(c);
   };
 
-  const addGo = () => {
+  const updateZoneKnx = (index: number, key: ZoneKnxKey, value: string | null) => {
     const c = structuredClone(config);
-    if (c.knx) { if (!c.knx.gos) c.knx.gos = []; c.knx.gos.push({ target: "", function: "", ga: "" }); }
+    const zone = c.zones[index];
+    const knx = { ...(zone.knx ?? {}) };
+    (knx as Record<string, string | null>)[key] = value;
+    zone.knx = compactKnxValues(knx);
     setConfig(c);
   };
-  const removeGo = (i: number) => {
+  const updateClientKnx = (index: number, key: ClientKnxKey, value: string | null) => {
     const c = structuredClone(config);
-    if (c.knx?.gos) c.knx.gos.splice(i, 1);
+    const client = c.clients[index];
+    const knx = { ...(client.knx ?? {}) };
+    (knx as Record<string, string | null>)[key] = value;
+    client.knx = compactKnxValues(knx);
     setConfig(c);
   };
-  const updateGo = (i: number, key: string, value: string) => {
-    const c = structuredClone(config);
-    if (c.knx?.gos) (c.knx.gos[i] as Record<string, string>)[key] = value;
-    setConfig(c);
-  };
-
-  const knxFunctions = ["play", "pause", "next", "prev", "volume", "mute", "source"];
-  const targets = [...config.zones.map((z) => z.name), ...config.clients.map((cl) => cl.name)];
+  const gatewayInvalid = config.knx?.role === "client" && !(config.knx.url ?? "").trim();
 
   return (
     <div className="space-y-4">
@@ -2225,36 +2461,74 @@ function ServerIntegrationsSubTab({ config, setConfig }: { config: ServerConfig;
           <Switch checked={config.knx !== null} onCheckedChange={toggleKnx} aria-label={t("knx")} />
         </div>
         {config.knx && (
-          <div className="space-y-2 pl-2 border-l-2 border-border">
-            <Field label={t("knxMode")} htmlFor={knxModeId}>
-              <Select id={knxModeId} value={config.knx.role} onChange={(e) => updateKnx("role", e.target.value)}>
-                <option value="client">{t("knxClient")}</option>
-                <option value="device">{t("knxDevice")}</option>
-              </Select>
-            </Field>
-            {config.knx.role === "client" && (
-              <>
-                <Field label={t("gatewayUrl")} htmlFor={knxUrlId}><Input id={knxUrlId} value={config.knx.url ?? ""} onChange={(e) => updateKnx("url", e.target.value || null)} /></Field>
-                <div className="space-y-2">
-                  <span className="text-xs font-medium text-muted-foreground">{t("knxGos")}</span>
-                  {(config.knx.gos ?? []).map((go, i) => (
-                    <div key={i} className="flex items-center gap-2">
-                      <Select className="w-28" value={go.target} onChange={(e) => updateGo(i, "target", e.target.value)} aria-label={`${t("target")} ${i + 1}`}>
-                        <option value="">—</option>
-                        {targets.map((tgt) => <option key={tgt} value={tgt}>{tgt}</option>)}
-                      </Select>
-                      <Select className="w-24" value={go.function} onChange={(e) => updateGo(i, "function", e.target.value)} aria-label={`${t("function")} ${i + 1}`}>
-                        <option value="">—</option>
-                        {knxFunctions.map((f) => <option key={f} value={f}>{f}</option>)}
-                      </Select>
-                      <Input className="w-20" placeholder="x/x/x" value={go.ga} onChange={(e) => updateGo(i, "ga", e.target.value)} aria-label={`${t("ga")} ${i + 1}`} />
-                      <Button variant="outline" size="icon-xs" onClick={() => removeGo(i)} aria-label="Remove">×</Button>
-                    </div>
-                  ))}
-                  <Button variant="outline" size="xs" onClick={addGo}>{t("addGo")}</Button>
-                </div>
-              </>
-            )}
+          <div className="space-y-4 pl-2 border-l-2 border-border">
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Field label={t("knxMode")} htmlFor={knxModeId}>
+                <Select id={knxModeId} value={config.knx.role} onChange={(e) => {
+                  const role = e.target.value as "client" | "device";
+                  const c = structuredClone(config);
+                  if (c.knx) {
+                    c.knx.role = role;
+                    if (role === "device") c.knx.url = null;
+                  }
+                  setConfig(c);
+                }}>
+                  <option value="client">{t("knxClient")}</option>
+                  <option value="device">{t("knxDevice")}</option>
+                </Select>
+              </Field>
+              {config.knx.role === "client" && (
+                <Field label={t("gatewayUrl")} htmlFor={knxUrlId}>
+                  <Input
+                    id={knxUrlId}
+                    value={config.knx.url ?? ""}
+                    onChange={(e) => updateKnx("url", e.target.value || null)}
+                    aria-invalid={gatewayInvalid}
+                    aria-describedby={gatewayInvalid ? `${knxUrlId}-error` : undefined}
+                  />
+                  {gatewayInvalid && <p id={`${knxUrlId}-error`} className="text-xs text-destructive" role="alert">{t("knxGatewayRequired")}</p>}
+                </Field>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <span className="text-xs font-medium text-muted-foreground">{t("knxZoneObjects")}</span>
+              {config.zones.length === 0 && <p className="text-xs text-muted-foreground">{t("knxNoZones")}</p>}
+              {config.zones.map((zone, index) => (
+                <KnxObjectSection
+                  key={`${zone.name}-${index}`}
+                  title={`${zone.icon || "🔊"} ${zone.name || t("zoneName")}`}
+                  configured={getConfiguredKnxCount(zone.knx)}
+                  total={ZONE_KNX_FIELDS.length}
+                  defaultOpen={index === 0}
+                >
+                  <KnxAddressGrid
+                    fields={ZONE_KNX_FIELDS}
+                    values={zone.knx}
+                    onChange={(key, value) => updateZoneKnx(index, key as ZoneKnxKey, value)}
+                  />
+                </KnxObjectSection>
+              ))}
+            </div>
+
+            <div className="space-y-2">
+              <span className="text-xs font-medium text-muted-foreground">{t("knxClientObjects")}</span>
+              {config.clients.length === 0 && <p className="text-xs text-muted-foreground">{t("knxNoClients")}</p>}
+              {config.clients.map((client, index) => (
+                <KnxObjectSection
+                  key={`${client.mac}-${client.name}-${index}`}
+                  title={`${client.icon || "🔊"} ${client.name || t("clientName")}`}
+                  configured={getConfiguredKnxCount(client.knx)}
+                  total={CLIENT_KNX_FIELDS.length}
+                >
+                  <KnxAddressGrid
+                    fields={CLIENT_KNX_FIELDS}
+                    values={client.knx}
+                    onChange={(key, value) => updateClientKnx(index, key as ClientKnxKey, value)}
+                  />
+                </KnxObjectSection>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -2436,10 +2710,10 @@ function SetupPage() {
         {t("skipToContent")}
       </a>
       <HealthBanner />
-      <main id="main-content" className="mx-auto w-full max-w-2xl px-4 py-6">
-        <header className="mb-6 flex items-center gap-3">
+      <header className="border-b border-border">
+        <div className="mx-auto flex w-full max-w-2xl items-center gap-3 px-4 py-3">
           <img src="/icon.svg" alt="" className="size-10" aria-hidden="true" />
-          <h1 className="flex-1 text-xl font-bold">{t("heading")}</h1>
+          <h1 className="min-w-0 flex-1 truncate font-heading text-xl font-bold">{t("heading")}</h1>
           <AboutButton />
           <Select
             value={locale}
@@ -2451,9 +2725,11 @@ function SetupPage() {
               <option key={l} value={l}>{l.toUpperCase()}</option>
             ))}
           </Select>
-        </header>
+        </div>
+      </header>
+      <main id="main-content" className="mx-auto w-full max-w-2xl px-4 py-6">
         <nav aria-label={t("navigation")}>
-          <div className="mb-6 flex gap-1 overflow-x-auto rounded-xl bg-muted p-1" role="tablist" aria-label={t("navigation")}>
+          <div className="mb-6 flex gap-1 overflow-x-auto rounded-lg bg-muted p-0.5" role="tablist" aria-label={t("navigation")}>
             {TABS.map((id) => (
               <button
                 key={id}
@@ -2463,9 +2739,9 @@ function SetupPage() {
                 aria-selected={tab === id}
                 aria-controls={`panel-${id}`}
                 tabIndex={tab === id ? 0 : -1}
-                className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                   tab === id
-                    ? "bg-card text-foreground shadow-sm"
+                    ? "bg-background text-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
                 onClick={() => setTab(id)}

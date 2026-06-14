@@ -19,13 +19,15 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
   const res = await fetch(url, { headers, ...options });
+  const text = await res.text();
   if (res.status === 401) {
     clearToken();
     window.dispatchEvent(new Event("snapdog-auth-expired"));
     throw new Error("Unauthorized");
   }
-  if (!res.ok) throw new Error(`API error: ${res.status} ${res.statusText}`);
-  return res.json();
+  if (!res.ok) throw new Error(text || `API error: ${res.status} ${res.statusText}`);
+  if (!text) return undefined as T;
+  return JSON.parse(text) as T;
 }
 
 // ── Types ─────────────────────────────────────────────────────
@@ -123,6 +125,60 @@ export interface UpdateStatus {
   rolled_back: boolean;
 }
 
+export interface ZoneKnxGos {
+  play?: string | null;
+  pause?: string | null;
+  stop?: string | null;
+  track_next?: string | null;
+  track_previous?: string | null;
+  control_status?: string | null;
+  volume?: string | null;
+  volume_status?: string | null;
+  volume_dim?: string | null;
+  mute?: string | null;
+  mute_status?: string | null;
+  mute_toggle?: string | null;
+  track_title_status?: string | null;
+  track_artist_status?: string | null;
+  track_album_status?: string | null;
+  track_progress_status?: string | null;
+  track_playing_status?: string | null;
+  track_repeat?: string | null;
+  track_repeat_status?: string | null;
+  track_repeat_toggle?: string | null;
+  playlist?: string | null;
+  playlist_status?: string | null;
+  playlist_next?: string | null;
+  playlist_previous?: string | null;
+  shuffle?: string | null;
+  shuffle_status?: string | null;
+  shuffle_toggle?: string | null;
+  repeat?: string | null;
+  repeat_status?: string | null;
+  repeat_toggle?: string | null;
+  presence?: string | null;
+  presence_enable?: string | null;
+  presence_enable_status?: string | null;
+  presence_timeout?: string | null;
+  presence_timeout_status?: string | null;
+  presence_timer_status?: string | null;
+  presence_source_override?: string | null;
+}
+
+export interface ClientKnxGos {
+  volume?: string | null;
+  volume_status?: string | null;
+  volume_dim?: string | null;
+  mute?: string | null;
+  mute_status?: string | null;
+  mute_toggle?: string | null;
+  latency?: string | null;
+  latency_status?: string | null;
+  zone?: string | null;
+  zone_status?: string | null;
+  connected_status?: string | null;
+}
+
 export interface ServerConfig {
   name: string;
   http: { api_keys: string[] };
@@ -132,9 +188,9 @@ export interface ServerConfig {
   spotify: { name: string; bitrate: number } | null;
   airplay: { password: string | null; mode: string } | null;
   mqtt: { broker: string; username: string | null; password: string | null; base_topic: string } | null;
-  knx: { role: string; url: string | null; gos?: { target: string; function: string; ga: string }[] } | null;
-  zones: { name: string; icon: string }[];
-  clients: { name: string; mac: string; zone: string; icon: string; max_volume: number }[];
+  knx: { role: "client" | "device"; url: string | null } | null;
+  zones: { name: string; icon: string; knx: ZoneKnxGos | null }[];
+  clients: { name: string; mac: string; zone: string; icon: string; max_volume: number; knx: ClientKnxGos | null }[];
   radio: { name: string; url: string; cover: string | null }[];
   system: { log_level: string };
 }

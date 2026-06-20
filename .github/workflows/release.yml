@@ -539,3 +539,29 @@ jobs:
           git add Formula/snapdog-update.rb
           git diff --cached --quiet || git commit -m "Update snapdog-update to ${VERSION}"
           git push
+
+  trigger-web-redeploy:
+    name: Redeploy snapdog-web
+    needs: [release-please, publish]
+    # OS-only. In release-please manifest mode the root package (".") exposes
+    # the UNPREFIXED `release_created` output, so this fires only when the OS
+    # distro itself releases — not when snapdog-ctrl / snapdog-update release on
+    # their own (those use `<path>--release_created`; the aggregate would be the
+    # plural `releases_created`, which we deliberately do not use here).
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Vercel deploy hook
+        env:
+          DEPLOY_HOOK: ${{ secrets.VERCEL_SNAPDOG_WEB_DEPLOY_HOOK }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DEPLOY_HOOK:-}" ]; then
+            echo "::error::VERCEL_SNAPDOG_WEB_DEPLOY_HOOK secret is not set"
+            exit 1
+          fi
+          # snapdog-web (static Astro on Vercel) bakes the latest release tag into
+          # the landing-page version badge at build time, so it needs a rebuild
+          # after each stable release to pick up the new version.
+          echo "Triggering snapdog-web rebuild for ${{ needs.release-please.outputs.tag_name }}…"
+          curl -fsS --retry 3 --retry-delay 5 -X POST "$DEPLOY_HOOK"

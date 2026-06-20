@@ -12,9 +12,13 @@ NEW_FW="6596d332eaadd63e2413e3937715a084f61c39e2"
 
 if [ -f "$FIRMWARE_MK" ] && grep -q "$OLD_FW" "$FIRMWARE_MK" 2>/dev/null; then
   sed -i "s/$OLD_FW/$NEW_FW/g" "$FIRMWARE_MK"
-  # Clear hash file (we use BR2_DOWNLOAD_FORCE_CHECK_HASHES=n)
-  printf '# Hash not verified (pinned by snapdog-os patch-buildroot)\n' \
-    > "$BR/package/brcmfmac_sdio-firmware-rpi/brcmfmac_sdio-firmware-rpi.hash"
+  # Remove the hash file. The firmware is pinned by git commit (SITE/VERSION
+  # above), so we don't verify a tarball hash for the bumped version.
+  # NOTE: buildroot >= 2025.02 treats a *present but empty* .hash file as a hard
+  # error ("No hash found", check-hash exit 3) regardless of
+  # BR2_DOWNLOAD_FORCE_CHECK_HASHES — only a *missing* file degrades to a
+  # warning. So the file must be deleted, not blanked with a comment.
+  rm -f "$BR/package/brcmfmac_sdio-firmware-rpi/brcmfmac_sdio-firmware-rpi.hash"
   echo "  [patch] brcmfmac firmware bumped to 2025-05-08"
 elif [ -f "$FIRMWARE_MK" ] && grep -q "$NEW_FW" "$FIRMWARE_MK" 2>/dev/null; then
   echo "  [patch] brcmfmac firmware already at target version (upstream caught up)"

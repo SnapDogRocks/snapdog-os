@@ -193,11 +193,14 @@ jobs:
         id: version
         run: |
           set -euo pipefail
+          # Version is single-sourced from the release-please manifest (SSOT):
+          #   release  -> exact release-please version (e.g. 0.5.0)
+          #   beta     -> last released version + beta build number (e.g. 0.5.0-beta.99)
           if [ "${{ needs.release-please.outputs.release_created }}" = "true" ]; then
             echo "version=${{ needs.release-please.outputs.version }}" >> "$GITHUB_OUTPUT"
-            echo "channel=stable" >> "$GITHUB_OUTPUT"
+            echo "channel=release" >> "$GITHUB_OUTPUT"
           else
-            BASE=$(cat VERSION)
+            BASE=$(jq -r '."."' .release-please-manifest.json)
             echo "version=${BASE}-beta.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
             echo "channel=beta" >> "$GITHUB_OUTPUT"
           fi
@@ -347,14 +350,20 @@ jobs:
           test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "Missing R2_SECRET_ACCESS_KEY"; exit 1; }
           test -n "${AWS_ENDPOINT_URL:-}" || { echo "Missing R2_ENDPOINT_URL"; exit 1; }
 
+          # Two channels, single-sourced from the release-please manifest (SSOT):
+          #   release  -> exact release-please version, served under the "release" pointer
+          #   beta     -> last released version + beta build number, "beta" pointer
+          # The channels are independent: a release never overwrites the beta pointer.
           if [ "${{ needs.release-please.outputs.release_created }}" = "true" ]; then
             VERSION="${{ needs.release-please.outputs.version }}"
-            SUFFIX=""
+            CHANNEL="release"
           else
-            VERSION="$(cat VERSION)-beta.${{ github.run_number }}"
-            SUFFIX="-beta"
+            BASE=$(jq -r '."."' .release-please-manifest.json)
+            VERSION="${BASE}-beta.${{ github.run_number }}"
+            CHANNEL="beta"
           fi
 
+          IMAGES_JSON='{}'
           for board in pi3 pi4 pi5 zero2w; do
             IMAGE="artifacts/image-${board}/snapdog-os-${board}-${VERSION}.img.gz"
             BUNDLE="artifacts/image-${board}/snapdog-os-${board}-${VERSION}.raucb"
@@ -378,24 +387,36 @@ jobs:
               --cache-control "public, max-age=31536000, immutable" \
               --endpoint-url "$AWS_ENDPOINT_URL"
 
-            # Flat "latest" bundle (overwritten each release, short cache)
-            aws s3 cp "$BUNDLE" "s3://${R2_BUCKET}/os/bundles/snapdog-os-${board}${SUFFIX}.raucb" \
+            # Rolling channel pointer (overwritten each build, short cache)
+            aws s3 cp "$BUNDLE" "s3://${R2_BUCKET}/os/bundles/snapdog-os-${board}-${CHANNEL}.raucb" \
               --cache-control "public, max-age=300" \
               --endpoint-url "$AWS_ENDPOINT_URL"
-            aws s3 cp "$IMAGE" "s3://${R2_BUCKET}/os/images/snapdog-os-${board}${SUFFIX}.img.gz" \
+            aws s3 cp "$IMAGE" "s3://${R2_BUCKET}/os/images/snapdog-os-${board}-${CHANNEL}.img.gz" \
               --cache-control "public, max-age=300" \
               --endpoint-url "$AWS_ENDPOINT_URL"
 
-            # Stable release also overwrites the beta pointer
-            if [ -z "$SUFFIX" ]; then
-              aws s3 cp "$BUNDLE" "s3://${R2_BUCKET}/os/bundles/snapdog-os-${board}-beta.raucb" \
-                --cache-control "public, max-age=300" \
-                --endpoint-url "$AWS_ENDPOINT_URL"
-              aws s3 cp "$IMAGE" "s3://${R2_BUCKET}/os/images/snapdog-os-${board}-beta.img.gz" \
-                --cache-control "public, max-age=300" \
-                --endpoint-url "$AWS_ENDPOINT_URL"
-            fi
+            SHA=$(sha256sum "$IMAGE" | awk '{print $1}')
+            IMAGES_JSON=$(printf '%s' "$IMAGES_JSON" | jq \
+              --arg b "$board" \
+              --arg f "snapdog-os-${board}-${CHANNEL}.img.gz" \
+              --arg s "$SHA" \
+              '.[$b] = {image: $f, sha256: $s}')
           done
+
+          # Channel manifest the website reads (SSOT for badge + download).
+          jq -n \
+            --arg channel "$CHANNEL" \
+            --arg version "$VERSION" \
+            --arg commit "${GITHUB_SHA}" \
+            --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --argjson boards "$IMAGES_JSON" \
+            '{channel: $channel, version: $version, commit: $commit, date: $date, boards: $boards}' \
+            > latest.json
+          cat latest.json
+          aws s3 cp latest.json "s3://${R2_BUCKET}/os/images/latest-${CHANNEL}.json" \
+            --cache-control "public, max-age=60" \
+            --content-type "application/json" \
+            --endpoint-url "$AWS_ENDPOINT_URL"
 
       - name: Attach artifacts to GitHub Release
         if: needs.release-please.outputs.release_created == 'true'

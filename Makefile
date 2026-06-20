@@ -1,5 +1,7 @@
 BOARD ?= pi4
-VERSION := $(shell cat VERSION)
+# Single source of truth: the release-please manifest (root package ".").
+# CI overrides VERSION= explicitly; this is the default for local builds.
+VERSION := $(shell jq -r '."."' .release-please-manifest.json 2>/dev/null || sed -n 's/.*"\.":[[:space:]]*"\([^"]*\)".*/\1/p' .release-please-manifest.json)
 SNAPDOG_CTRL_BINARY ?= snapdog-ctrl-binary
 SNAPDOG_ROOT_DEV ?= /dev/mmcblk0p
 BRDIR := ../buildroot-$(BOARD)

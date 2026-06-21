@@ -16,7 +16,6 @@ mkdir -p "$TARGET_DIR/etc/default"
 mkdir -p "$TARGET_DIR/etc/snapdog"
 mkdir -p "$TARGET_DIR/etc/wpa_supplicant"
 mkdir -p "$TARGET_DIR/etc/hostapd"
-mkdir -p "$TARGET_DIR/etc/dnsmasq.d"
 mkdir -p "$TARGET_DIR/etc/systemd/resolved.conf.d"
 mkdir -p "$TARGET_DIR/etc/systemd/system/updater.timer.d"
 mkdir -p "$TARGET_DIR/root"
@@ -36,9 +35,6 @@ ln -sf /data/wpa_supplicant "$TARGET_DIR/etc/wpa_supplicant"
 
 rm -f "$TARGET_DIR/etc/hostapd/hostapd.conf"
 ln -sf /data/hostapd/hostapd.conf "$TARGET_DIR/etc/hostapd/hostapd.conf"
-
-rm -f "$TARGET_DIR/etc/dnsmasq.d/snapdog-ap.conf"
-ln -sf /data/dnsmasq.d/snapdog-ap.conf "$TARGET_DIR/etc/dnsmasq.d/snapdog-ap.conf"
 
 rm -f "$TARGET_DIR/etc/systemd/resolved.conf.d/snapdog.conf"
 ln -sf /data/systemd/resolved.conf.d/snapdog.conf "$TARGET_DIR/etc/systemd/resolved.conf.d/snapdog.conf"

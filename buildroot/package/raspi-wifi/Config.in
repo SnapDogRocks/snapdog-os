@@ -3,9 +3,8 @@ config BR2_PACKAGE_RASPI_WIFI
 	help
 	  WiFi support with temporary AP for initial setup.
 
-	# Temp-AP
-	select BR2_PACKAGE_DNSMASQ
-	select BR2_PACKAGE_DNSMASQ_DHCP
+	# Temp-AP (DHCP server + captive DNS are handled by systemd-networkd and
+	# snapdog-ctrl respectively; only hostapd is needed for the radio)
 	select BR2_PACKAGE_HOSTAPD
 	select BR2_PACKAGE_HOSTAPD_DRIVER_NL80211
 	select BR2_PACKAGE_HOSTAPD_HAS_WIFI_DRIVERS

@@ -5,7 +5,6 @@ use anyhow::{Context, Result};
 use tokio::process::Command;
 
 const HOSTAPD_CONF: &str = "/etc/hostapd/hostapd.conf";
-const DNSMASQ_CONF: &str = "/etc/dnsmasq.d/snapdog-ap.conf";
 pub const ETH_NETWORK_PATH: &str = "/etc/systemd/network/10-ethernet.network";
 // 15- sorts before 20-wifi, so while present it takes precedence on the wlan iface.
 const AP_NETWORK: &str = "/etc/systemd/network/15-ap.network";
@@ -79,32 +78,27 @@ pub async fn start_ap(password: &str) -> Result<()> {
 
     // networkd owns addressing: it brings the interface up, assigns the static AP
     // address and runs the DHCP server. No raw `ip` calls.
-    // ConfigureWithoutCarrier so networkd assigns the IP / starts the DHCP server
-    // even before hostapd brings the AP (and thus carrier) up.
+    // networkd owns addressing on the AP interface too: static address, built-in
+    // DHCP server, and the RFC 8910 captive-portal URL (DHCP option 114) for
+    // modern clients. ConfigureWithoutCarrier so it applies before hostapd brings
+    // the radio (and thus carrier) up.
     let ap_network = format!(
         "[Match]\nName={iface}\n\n\
          [Network]\nAddress=10.11.12.13/24\nDHCPServer=yes\nConfigureWithoutCarrier=yes\n\n\
-         [DHCPServer]\nPoolOffset=100\nPoolSize=100\nEmitDNS=yes\nDNS=10.11.12.13\n"
+         [DHCPServer]\nPoolOffset=100\nPoolSize=100\nEmitDNS=yes\nDNS=10.11.12.13\n\
+         SendOption=114:string:http://10.11.12.13/\n"
     );
     write_config(AP_NETWORK, &ap_network).await?;
-
-    // dnsmasq is kept ONLY as a wildcard DNS responder for the captive portal
-    // (resolves every name to the device) — networkd has no equivalent. DHCP is
-    // disabled here; networkd's DHCPServer handles leases.
-    let dnsmasq = format!(
-        "interface={iface}\nbind-interfaces\nno-dhcp-interface={iface}\n\
-         address=/#/10.11.12.13\n"
-    );
-    write_config(DNSMASQ_CONF, &dnsmasq).await?;
 
     // Apply the AP config without a full networkd restart.
     run("networkctl", &["reload"]).await?;
     run("networkctl", &["reconfigure", &iface]).await?;
 
-    // Stop wpa_supplicant client, start hostapd (radio) + dnsmasq (captive DNS).
+    // Stop the wpa_supplicant client, start hostapd (radio). The captive-portal
+    // wildcard DNS (every name -> 10.11.12.13) is served in-process, see captive_dns.
     let _ = run("systemctl", &["stop", &format!("wpa_supplicant@{iface}")]).await;
     run("systemctl", &["start", "hostapd"]).await?;
-    run("systemctl", &["start", "dnsmasq"]).await?;
+    crate::captive_dns::start().await;
 
     Ok(())
 }
@@ -114,7 +108,7 @@ pub async fn stop_ap() -> Result<()> {
     let iface = detect_wifi_interface().await;
     tracing::info!("Stopping AP mode on interface {iface}, switching to client");
     let _ = run("systemctl", &["stop", "hostapd"]).await;
-    let _ = run("systemctl", &["stop", "dnsmasq"]).await;
+    crate::captive_dns::stop();
     // Drop the AP config so the client config (20-wifi.network) applies again,
     // then reconfigure the interface without a full networkd restart.
     let _ = tokio::fs::remove_file(AP_NETWORK).await;
@@ -261,7 +255,7 @@ pub async fn configure_ethernet(static_ip: Option<&StaticConfig>) -> Result<()> 
 
 /// Configure systemd-resolved (disable stub resolver).
 pub async fn configure_resolved() -> Result<()> {
-    // Stop resolved entirely — dnsmasq takes over DNS in AP mode
+    // Stop resolved so the in-process captive DNS responder can bind :53 in AP mode
     run("systemctl", &["stop", "systemd-resolved"]).await?;
     Ok(())
 }

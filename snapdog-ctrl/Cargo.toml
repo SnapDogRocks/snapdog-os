@@ -64,6 +64,9 @@ flate2 = "1"
 # D-Bus (RAUC OTA)
 zbus = "5.16.0"
 
+# DNS (in-process captive-portal catch-all responder)
+hickory-proto = "0.25"
+
 [lints.rust]
 unsafe_code = "forbid"
 

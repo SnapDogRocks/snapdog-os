@@ -4,6 +4,8 @@
 mod auth;
 #[cfg(not(debug_assertions))]
 mod auto_update;
+#[cfg_attr(debug_assertions, allow(dead_code))]
+mod captive_dns;
 mod config_txt;
 mod mdns;
 #[cfg(debug_assertions)]

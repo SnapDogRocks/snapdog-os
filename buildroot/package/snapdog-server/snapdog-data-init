@@ -23,3 +23,17 @@ mkdir -p "$DATA/ssh"
 [ -f "$DATA/snapdog-os.channel" ] || echo "stable" > "$DATA/snapdog-os.channel"
 [ -f "$DATA/snapdog-os.auto-update" ] || printf 'enabled=true\ninterval=daily\ntime=03:00\n' > "$DATA/snapdog-os.auto-update"
 [ -f "$DATA/hostname" ] || echo "snapdog" > "$DATA/hostname"
+
+# Default wired networking: DHCP on any ethernet interface (end0 on Pi4, eth0 on
+# Pi3, enx* USB adapters). Seeded here — before systemd-networkd starts — so the
+# device gets an IP on first boot independently of snapdog-ctrl. snapdog-ctrl may
+# overwrite this file later when a static IP is configured.
+if [ ! -f "$DATA/systemd/network/10-ethernet.network" ]; then
+  cat > "$DATA/systemd/network/10-ethernet.network" <<'EOF'
+[Match]
+Name=en* eth*
+
+[Network]
+DHCP=yes
+EOF
+fi

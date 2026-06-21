@@ -79,9 +79,11 @@ pub async fn start_ap(password: &str) -> Result<()> {
 
     // networkd owns addressing: it brings the interface up, assigns the static AP
     // address and runs the DHCP server. No raw `ip` calls.
+    // ConfigureWithoutCarrier so networkd assigns the IP / starts the DHCP server
+    // even before hostapd brings the AP (and thus carrier) up.
     let ap_network = format!(
         "[Match]\nName={iface}\n\n\
-         [Network]\nAddress=10.11.12.13/24\nDHCPServer=yes\n\n\
+         [Network]\nAddress=10.11.12.13/24\nDHCPServer=yes\nConfigureWithoutCarrier=yes\n\n\
          [DHCPServer]\nPoolOffset=100\nPoolSize=100\nEmitDNS=yes\nDNS=10.11.12.13\n"
     );
     write_config(AP_NETWORK, &ap_network).await?;

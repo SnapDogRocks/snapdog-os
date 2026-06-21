@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 Fabian Schmieder
 
+use std::net::Ipv4Addr;
+
 use anyhow::{Context, Result};
 use tokio::process::Command;
 
@@ -9,6 +11,16 @@ pub const ETH_NETWORK_PATH: &str = "/etc/systemd/network/10-ethernet.network";
 // 15- sorts before 20-wifi, so while present it takes precedence on the wlan iface.
 const AP_NETWORK: &str = "/etc/systemd/network/15-ap.network";
 const WIFI_NETWORK: &str = "/etc/systemd/network/20-wifi.network";
+
+// ── Setup-AP profile (single source of truth) ──
+/// Static address the device serves in setup-AP mode: gateway, DNS, and the host
+/// every captive-portal probe resolves to (see `captive_dns`).
+pub const AP_IP: Ipv4Addr = Ipv4Addr::new(10, 11, 12, 13);
+/// Subnet prefix length for the AP network.
+const AP_PREFIX: u8 = 24;
+/// DHCP pool inside the AP subnet: first-host offset and number of leases.
+const AP_DHCP_POOL_OFFSET: u32 = 100;
+const AP_DHCP_POOL_SIZE: u32 = 100;
 
 fn wpa_conf_path(iface: &str) -> String {
     format!("/etc/wpa_supplicant/wpa_supplicant-{iface}.conf")
@@ -84,9 +96,9 @@ pub async fn start_ap(password: &str) -> Result<()> {
     // the radio (and thus carrier) up.
     let ap_network = format!(
         "[Match]\nName={iface}\n\n\
-         [Network]\nAddress=10.11.12.13/24\nDHCPServer=yes\nConfigureWithoutCarrier=yes\n\n\
-         [DHCPServer]\nPoolOffset=100\nPoolSize=100\nEmitDNS=yes\nDNS=10.11.12.13\n\
-         SendOption=114:string:http://10.11.12.13/\n"
+         [Network]\nAddress={AP_IP}/{AP_PREFIX}\nDHCPServer=yes\nConfigureWithoutCarrier=yes\n\n\
+         [DHCPServer]\nPoolOffset={AP_DHCP_POOL_OFFSET}\nPoolSize={AP_DHCP_POOL_SIZE}\nEmitDNS=yes\nDNS={AP_IP}\n\
+         SendOption=114:string:http://{AP_IP}/\n"
     );
     write_config(AP_NETWORK, &ap_network).await?;
 
@@ -95,7 +107,7 @@ pub async fn start_ap(password: &str) -> Result<()> {
     run("networkctl", &["reconfigure", &iface]).await?;
 
     // Stop the wpa_supplicant client, start hostapd (radio). The captive-portal
-    // wildcard DNS (every name -> 10.11.12.13) is served in-process, see captive_dns.
+    // wildcard DNS (every name -> AP_IP) is served in-process, see captive_dns.
     let _ = run("systemctl", &["stop", &format!("wpa_supplicant@{iface}")]).await;
     run("systemctl", &["start", "hostapd"]).await?;
     crate::captive_dns::start().await;

@@ -3,23 +3,28 @@
 
 //! In-process catch-all DNS responder for AP / captive-portal mode.
 //!
-//! Answers every A query with the device's AP address (`10.11.12.13`) so a
+//! Answers every A query with the device's AP address (`network::AP_IP`) so a
 //! phone's captive-portal detection resolves any probe domain to the device and
 //! opens the setup UI. This replaces dnsmasq's wildcard DNS; addressing and DHCP
 //! leases are owned by systemd-networkd. It runs only while the setup AP is up.
+//!
+//! The responder is hand-rolled (no DNS library): it reads the first question,
+//! echoes it, and appends a single compressed A answer. Anything it cannot parse
+//! is dropped. That is all a captive portal needs, and it keeps the dependency
+//! and CVE surface at zero.
 
-use std::net::Ipv4Addr;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use hickory_proto::op::{Message, MessageType, ResponseCode};
-use hickory_proto::rr::rdata::A;
-use hickory_proto::rr::{RData, Record, RecordType};
 use tokio::net::UdpSocket;
 use tokio::task::JoinHandle;
 
-const AP_IP: Ipv4Addr = Ipv4Addr::new(10, 11, 12, 13);
-const TTL: u32 = 10;
+use crate::network::AP_IP;
+
+/// Short TTL — clients should not cache the captive answer for long.
+const TTL_SECS: u32 = 10;
+/// DNS header length in bytes.
+const HEADER_LEN: usize = 12;
 
 static TASK: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 
@@ -28,8 +33,8 @@ static TASK: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 pub async fn start() {
     stop();
 
-    // networkd assigns the AP address asynchronously after `reconfigure`, so the
-    // address may not be up the instant we try to bind — retry briefly.
+    // networkd assigns the AP address asynchronously after `reconfigure`, so it
+    // may not be up the instant we try to bind — retry briefly.
     let mut socket = None;
     for _ in 0..15u8 {
         if let Ok(s) = UdpSocket::bind((AP_IP, 53)).await {
@@ -49,7 +54,7 @@ pub async fn start() {
         loop {
             match socket.recv_from(&mut buf).await {
                 Ok((len, peer)) => {
-                    if let Some(reply) = answer(&buf[..len]) {
+                    if let Some(reply) = build_response(&buf[..len]) {
                         let _ = socket.send_to(&reply, peer).await;
                     }
                 }
@@ -71,30 +76,59 @@ pub fn stop() {
     }
 }
 
-/// Build a response that points every A query at the AP address. Non-A queries
-/// get NODATA so clients fall back to IPv4.
-fn answer(query: &[u8]) -> Option<Vec<u8>> {
-    let request = Message::from_vec(query).ok()?;
-
-    let mut response = Message::new();
-    response.set_id(request.id());
-    response.set_message_type(MessageType::Response);
-    response.set_op_code(request.op_code());
-    response.set_recursion_desired(request.recursion_desired());
-    response.set_recursion_available(true);
-    response.set_authoritative(true);
-    response.set_response_code(ResponseCode::NoError);
-
-    for q in request.queries() {
-        response.add_query(q.clone());
-        if q.query_type() == RecordType::A {
-            response.add_answer(Record::from_rdata(
-                q.name().clone(),
-                TTL,
-                RData::A(A(AP_IP)),
-            ));
-        }
+/// Build a response pointing every A query at the AP address. Returns `None` for
+/// anything that is not a parseable standard query carrying a question.
+fn build_response(query: &[u8]) -> Option<Vec<u8>> {
+    if query.len() < HEADER_LEN {
+        return None;
+    }
+    if u16::from_be_bytes([query[4], query[5]]) == 0 {
+        return None; // no question
     }
 
-    response.to_vec().ok()
+    // Walk the first question's QNAME (length-prefixed labels until a zero byte).
+    let mut pos = HEADER_LEN;
+    loop {
+        let len = usize::from(*query.get(pos)?);
+        if len == 0 {
+            pos += 1;
+            break;
+        }
+        if len >= 0xC0 {
+            return None; // compression pointer in the question — not handled
+        }
+        pos += 1 + len;
+    }
+    let qtype = u16::from_be_bytes([*query.get(pos)?, *query.get(pos + 1)?]);
+    let question_end = pos + 4; // QTYPE (2) + QCLASS (2)
+    if query.len() < question_end {
+        return None;
+    }
+
+    let is_a = qtype == 1; // A record
+    let mut resp = Vec::with_capacity(question_end + 16);
+
+    // Header.
+    resp.extend_from_slice(&query[0..2]); // echo transaction ID
+    resp.push(0x80 | (query[2] & 0x79) | 0x04); // QR=1, opcode + RD echoed, AA=1
+    resp.push(0x80); // RA=1, RCODE=NoError
+    resp.extend_from_slice(&1u16.to_be_bytes()); // QDCOUNT
+    resp.extend_from_slice(&u16::from(is_a).to_be_bytes()); // ANCOUNT
+    resp.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT
+    resp.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT
+
+    // Question, echoed verbatim.
+    resp.extend_from_slice(&query[HEADER_LEN..question_end]);
+
+    // One A answer for every name (NODATA for non-A, so clients fall back).
+    if is_a {
+        resp.extend_from_slice(&[0xC0, 0x0C]); // NAME = pointer to the question
+        resp.extend_from_slice(&1u16.to_be_bytes()); // TYPE = A
+        resp.extend_from_slice(&1u16.to_be_bytes()); // CLASS = IN
+        resp.extend_from_slice(&TTL_SECS.to_be_bytes());
+        resp.extend_from_slice(&4u16.to_be_bytes()); // RDLENGTH
+        resp.extend_from_slice(&AP_IP.octets());
+    }
+
+    Some(resp)
 }

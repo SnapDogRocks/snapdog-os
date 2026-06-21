@@ -1084,8 +1084,8 @@ mod tests {
 
         for key in ZONE_KNX_KEYS {
             assert_eq!(
-                built.get(*key).and_then(|v| v.as_str()),
-                source.get(*key).and_then(|v| v.as_str()),
+                built.get(key).and_then(|v| v.as_str()),
+                source.get(key).and_then(|v| v.as_str()),
                 "{key}"
             );
         }
@@ -1103,8 +1103,8 @@ mod tests {
 
         for key in CLIENT_KNX_KEYS {
             assert_eq!(
-                built.get(*key).and_then(|v| v.as_str()),
-                source.get(*key).and_then(|v| v.as_str()),
+                built.get(key).and_then(|v| v.as_str()),
+                source.get(key).and_then(|v| v.as_str()),
                 "{key}"
             );
         }

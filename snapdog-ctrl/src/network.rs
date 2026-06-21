@@ -7,6 +7,8 @@ use tokio::process::Command;
 const HOSTAPD_CONF: &str = "/etc/hostapd/hostapd.conf";
 const DNSMASQ_CONF: &str = "/etc/dnsmasq.d/snapdog-ap.conf";
 pub const ETH_NETWORK_PATH: &str = "/etc/systemd/network/10-ethernet.network";
+// 15- sorts before 20-wifi, so while present it takes precedence on the wlan iface.
+const AP_NETWORK: &str = "/etc/systemd/network/15-ap.network";
 const WIFI_NETWORK: &str = "/etc/systemd/network/20-wifi.network";
 
 fn wpa_conf_path(iface: &str) -> String {
@@ -75,20 +77,29 @@ pub async fn start_ap(password: &str) -> Result<()> {
     );
     write_config(HOSTAPD_CONF, &hostapd).await?;
 
-    // Write dnsmasq config for DHCP on AP
+    // networkd owns addressing: it brings the interface up, assigns the static AP
+    // address and runs the DHCP server. No raw `ip` calls.
+    let ap_network = format!(
+        "[Match]\nName={iface}\n\n\
+         [Network]\nAddress=10.11.12.13/24\nDHCPServer=yes\n\n\
+         [DHCPServer]\nPoolOffset=100\nPoolSize=100\nEmitDNS=yes\nDNS=10.11.12.13\n"
+    );
+    write_config(AP_NETWORK, &ap_network).await?;
+
+    // dnsmasq is kept ONLY as a wildcard DNS responder for the captive portal
+    // (resolves every name to the device) — networkd has no equivalent. DHCP is
+    // disabled here; networkd's DHCPServer handles leases.
     let dnsmasq = format!(
-        "interface={iface}\nbind-interfaces\n\
-         dhcp-range=10.11.12.100,10.11.12.200,255.255.255.0,24h\n\
+        "interface={iface}\nbind-interfaces\nno-dhcp-interface={iface}\n\
          address=/#/10.11.12.13\n"
     );
     write_config(DNSMASQ_CONF, &dnsmasq).await?;
 
-    // Assign static IP to interface for AP mode
-    run("ip", &["addr", "flush", "dev", &iface]).await?;
-    run("ip", &["addr", "add", "10.11.12.13/24", "dev", &iface]).await?;
-    run("ip", &["link", "set", &iface, "up"]).await?;
+    // Apply the AP config without a full networkd restart.
+    run("networkctl", &["reload"]).await?;
+    run("networkctl", &["reconfigure", &iface]).await?;
 
-    // Stop wpa_supplicant, start hostapd + dnsmasq
+    // Stop wpa_supplicant client, start hostapd (radio) + dnsmasq (captive DNS).
     let _ = run("systemctl", &["stop", &format!("wpa_supplicant@{iface}")]).await;
     run("systemctl", &["start", "hostapd"]).await?;
     run("systemctl", &["start", "dnsmasq"]).await?;
@@ -102,10 +113,13 @@ pub async fn stop_ap() -> Result<()> {
     tracing::info!("Stopping AP mode on interface {iface}, switching to client");
     let _ = run("systemctl", &["stop", "hostapd"]).await;
     let _ = run("systemctl", &["stop", "dnsmasq"]).await;
-    run("ip", &["addr", "flush", "dev", &iface]).await?;
+    // Drop the AP config so the client config (20-wifi.network) applies again,
+    // then reconfigure the interface without a full networkd restart.
+    let _ = tokio::fs::remove_file(AP_NETWORK).await;
+    run("networkctl", &["reload"]).await?;
+    run("networkctl", &["reconfigure", &iface]).await?;
     run("systemctl", &["start", "systemd-resolved"]).await?;
     run("systemctl", &["start", &format!("wpa_supplicant@{iface}")]).await?;
-    run("systemctl", &["restart", "systemd-networkd"]).await?;
     Ok(())
 }
 
@@ -220,7 +234,8 @@ pub async fn configure_ethernet(static_ip: Option<&StaticConfig>) -> Result<()> 
         validate_static_config(config)?;
     }
 
-    let ifaces = detect_ethernet_interfaces().await.join(" ");
+    let iface_list = detect_ethernet_interfaces().await;
+    let ifaces = iface_list.join(" ");
     let network = static_ip.map_or_else(
         || format!("[Match]\nName={ifaces}\n\n[Network]\nDHCP=yes\n"),
         |s| {
@@ -234,7 +249,11 @@ pub async fn configure_ethernet(static_ip: Option<&StaticConfig>) -> Result<()> 
         },
     );
     write_config(ETH_NETWORK_PATH, &network).await?;
-    run("systemctl", &["restart", "systemd-networkd"]).await?;
+    // Apply without a full networkd restart (won't disturb other interfaces).
+    run("networkctl", &["reload"]).await?;
+    for iface in &iface_list {
+        run("networkctl", &["reconfigure", iface]).await?;
+    }
     Ok(())
 }
 

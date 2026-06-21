@@ -744,6 +744,7 @@ pub async fn factory_reset() -> Result<()> {
     .await;
     let _ = tokio::fs::remove_file("/data/wpa_supplicant/wpa_supplicant-wlan0.conf").await;
     let _ = tokio::fs::remove_file("/data/systemd/network/10-ethernet.network").await;
+    let _ = tokio::fs::remove_file("/data/systemd/network/15-ap.network").await;
     let _ = tokio::fs::remove_file("/data/systemd/network/20-wifi.network").await;
     let _ = tokio::fs::remove_file("/data/default/snapdog-client").await;
     let _ = tokio::fs::remove_file("/data/hostname").await;

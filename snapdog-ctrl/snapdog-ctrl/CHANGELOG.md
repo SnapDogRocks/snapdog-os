@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.0](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.5.0...snapdog-ctrl-v0.6.0) (2026-06-21)
+
+
+### Features
+
+* **network:** in-process captive DNS + DHCP option 114, drop dnsmasq ([1438904](https://github.com/SnapDogRocks/snapdog-os/commit/143890477991a21f50d1f5219953df295e991fde))
+
+
+### Bug Fixes
+
+* **network:** ConfigureWithoutCarrier on AP so networkd assigns IP before hostapd ([32a9143](https://github.com/SnapDogRocks/snapdog-os/commit/32a91431056e84a08fcc17f0fe6b0b70cb1a2f6b))
+* **server_config:** drop redundant deref in KNX test asserts ([f94b486](https://github.com/SnapDogRocks/snapdog-os/commit/f94b486055cd8448af21d07ca406afb8e7d588db))
+* **webui:** bump hono to 4.12.26 and js-yaml to 4.2.0 ([0fbc71e](https://github.com/SnapDogRocks/snapdog-os/commit/0fbc71ee133488661f8a0eb1216e508980481f0f))
+
 ## [0.5.0](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.4.0...snapdog-ctrl-v0.5.0) (2026-06-14)
 
 

@@ -35,13 +35,43 @@ jobs:
     outputs:
       release_created: ${{ steps.rp.outputs.release_created }}
       tag_name: ${{ steps.rp.outputs.tag_name }}
-      version: ${{ steps.rp.outputs.version }}
+      version: ${{ steps.ver.outputs.version }}
+      channel: ${{ steps.ver.outputs.channel }}
     steps:
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: rp
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # Single point where version + channel are decided (consumed by build-image
+      # and publish). On a release: the exact release-please version. On a beta:
+      # the *pending* release version (what the open release-please PR will cut)
+      # so betas read e.g. 0.6.0-beta.N — not the last release. SemVer-correct:
+      # 0.6.0-beta.N < 0.6.0 and both > 0.5.0.
+      - name: Compute version and channel
+        id: ver
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.rp.outputs.release_created }}" = "true" ]; then
+            echo "version=${{ steps.rp.outputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "channel=release" >> "$GITHUB_OUTPUT"
+          else
+            repo="${{ github.repository }}"
+            file=".release-please-manifest.json"
+            # Pending version from the open release-please branch; fall back to the
+            # current manifest on the default branch when nothing is pending.
+            next=$(gh api "repos/${repo}/contents/${file}?ref=release-please--branches--main" \
+              -H "Accept: application/vnd.github.raw" 2>/dev/null | jq -r '."."' 2>/dev/null || true)
+            if [ -z "$next" ] || [ "$next" = "null" ]; then
+              next=$(gh api "repos/${repo}/contents/${file}" \
+                -H "Accept: application/vnd.github.raw" | jq -r '."."')
+            fi
+            echo "version=${next}-beta.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+            echo "channel=beta" >> "$GITHUB_OUTPUT"
+          fi
 
   build-ctrl:
     name: Build snapdog-ctrl
@@ -189,22 +219,6 @@ jobs:
             buildroot-ccache-${{ runner.os }}-${{ env.BUILDROOT_VERSION }}-${{ matrix.board }}-${{ hashFiles('buildroot/**/*.mk', 'buildroot/**/*.hash', 'buildroot/configs/override.conf', 'buildroot/kernel.fragment', 'buildroot/scripts/patch-buildroot') }}-
             buildroot-ccache-${{ runner.os }}-${{ env.BUILDROOT_VERSION }}-${{ matrix.board }}-
 
-      - name: Determine version
-        id: version
-        run: |
-          set -euo pipefail
-          # Version is single-sourced from the release-please manifest (SSOT):
-          #   release  -> exact release-please version (e.g. 0.5.0)
-          #   beta     -> last released version + beta build number (e.g. 0.5.0-beta.99)
-          if [ "${{ needs.release-please.outputs.release_created }}" = "true" ]; then
-            echo "version=${{ needs.release-please.outputs.version }}" >> "$GITHUB_OUTPUT"
-            echo "channel=release" >> "$GITHUB_OUTPUT"
-          else
-            BASE=$(jq -r '."."' .release-please-manifest.json)
-            echo "version=${BASE}-beta.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-            echo "channel=beta" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Setup buildroot
         run: |
           set -euo pipefail
@@ -215,8 +229,8 @@ jobs:
         run: |
           set -euo pipefail
           chmod 755 snapdog-ctrl-binary
-          make BOARD=${{ matrix.board }} VERSION="${{ steps.version.outputs.version }}" config
-          make BOARD=${{ matrix.board }} VERSION="${{ steps.version.outputs.version }}" build
+          make BOARD=${{ matrix.board }} VERSION="${{ needs.release-please.outputs.version }}" config
+          make BOARD=${{ matrix.board }} VERSION="${{ needs.release-please.outputs.version }}" build
 
       - name: Generate Buildroot legal manifest
         run: |
@@ -241,7 +255,7 @@ jobs:
         run: |
           set -euo pipefail
           test -n "${{ secrets.RAUC_CA_KEY_PEM }}" || { echo "Missing RAUC_CA_KEY_PEM secret" >&2; exit 1; }
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ needs.release-please.outputs.version }}"
           IMG="../buildroot-${{ matrix.board }}/images/sdcard.img"
           OUT="snapdog-os-${{ matrix.board }}-${VERSION}.img.gz"
           BUNDLE="snapdog-os-${{ matrix.board }}-${VERSION}.raucb"
@@ -350,18 +364,10 @@ jobs:
           test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "Missing R2_SECRET_ACCESS_KEY"; exit 1; }
           test -n "${AWS_ENDPOINT_URL:-}" || { echo "Missing R2_ENDPOINT_URL"; exit 1; }
 
-          # Two channels, single-sourced from the release-please manifest (SSOT):
-          #   release  -> exact release-please version, served under the "release" pointer
-          #   beta     -> last released version + beta build number, "beta" pointer
+          # Version + channel are decided once in the release-please job (SSOT).
           # The channels are independent: a release never overwrites the beta pointer.
-          if [ "${{ needs.release-please.outputs.release_created }}" = "true" ]; then
-            VERSION="${{ needs.release-please.outputs.version }}"
-            CHANNEL="release"
-          else
-            BASE=$(jq -r '."."' .release-please-manifest.json)
-            VERSION="${BASE}-beta.${{ github.run_number }}"
-            CHANNEL="beta"
-          fi
+          VERSION="${{ needs.release-please.outputs.version }}"
+          CHANNEL="${{ needs.release-please.outputs.channel }}"
 
           IMAGES_JSON='{}'
           for board in pi3 pi4 pi5 zero2w; do

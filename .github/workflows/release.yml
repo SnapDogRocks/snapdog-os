@@ -163,14 +163,14 @@ jobs:
 
       - name: Restore Buildroot source cache
         id: cache-buildroot-src
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
         with:
           path: ../buildroot-src
           key: buildroot-src-${{ runner.os }}-${{ env.BUILDROOT_VERSION }}-${{ hashFiles('buildroot/scripts/patch-buildroot') }}
 
       - name: Restore Buildroot download cache
         id: cache-buildroot-dl
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/restore@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
         with:
           path: ${{ env.BR2_DL_DIR }}
           key: buildroot-dl-${{ runner.os }}-${{ env.BUILDROOT_VERSION }}-${{ matrix.board }}-${{ hashFiles('buildroot/**/*.mk', 'buildroot/**/*.hash', 'buildroot/configs/override.conf', 'buildroot/scripts/patch-buildroot') }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -181,7 +181,7 @@ jobs:
 
       - name: Restore Buildroot compiler cache
         id: cache-buildroot-ccache
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/restore@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
         with:
           path: ${{ env.BR2_CCACHE_DIR }}
           key: buildroot-ccache-${{ runner.os }}-${{ env.BUILDROOT_VERSION }}-${{ matrix.board }}-${{ hashFiles('buildroot/**/*.mk', 'buildroot/**/*.hash', 'buildroot/configs/override.conf', 'buildroot/kernel.fragment', 'buildroot/scripts/patch-buildroot') }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -285,14 +285,14 @@ jobs:
 
       - name: Save Buildroot download cache
         if: success() && steps.cache-buildroot-dl.outputs.cache-primary-key != ''
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/save@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
         with:
           path: ${{ env.BR2_DL_DIR }}
           key: ${{ steps.cache-buildroot-dl.outputs.cache-primary-key }}
 
       - name: Save Buildroot compiler cache
         if: success() && steps.cache-buildroot-ccache.outputs.cache-primary-key != ''
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/save@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
         with:
           path: ${{ env.BR2_CCACHE_DIR }}
           key: ${{ steps.cache-buildroot-ccache.outputs.cache-primary-key }}

@@ -53,6 +53,7 @@ awk -v symbols="$SYMBOLS" '
 
 cat "$CLEAN_CONFIG" > "$CONFIG"
 cat "$OVERRIDES" >> "$CONFIG"
+echo "" >> "$CONFIG"
 
 for symbol in "$@"; do
   printf '%s=y\n' "$symbol" >> "$CONFIG"

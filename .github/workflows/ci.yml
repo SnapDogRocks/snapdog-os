@@ -1,15 +1,6 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - "**.md"
-      - "LICENSE"
-      - "docs/**"
-      - "assets/**"
-      - ".githooks/**"
-      - ".github/dependabot.yml"
   pull_request:
     branches: [main]
 

@@ -41,8 +41,23 @@ jobs:
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: rp
         with:
+          token: ${{ secrets.TAP_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      - name: Approve release PR
+        if: ${{ steps.rp.outputs.pr }}
+        run: gh pr review --approve "$PR_URL"
+        env:
+          PR_URL: ${{ fromJson(steps.rp.outputs.pr).html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge for release PR
+        if: ${{ steps.rp.outputs.pr }}
+        run: gh pr merge --auto --squash --delete-branch "$PR_URL"
+        env:
+          PR_URL: ${{ fromJson(steps.rp.outputs.pr).html_url }}
+          GH_TOKEN: ${{ secrets.TAP_TOKEN }}
 
       # Single point where version + channel are decided (consumed by build-image
       # and publish). On a release: the exact release-please version. On a beta:

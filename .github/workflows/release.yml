@@ -45,19 +45,21 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-      - name: Approve release PR
+      - name: Approve and enable auto-merge for release PR
         if: ${{ steps.rp.outputs.pr }}
-        run: gh pr review --approve "$PR_URL"
         env:
-          PR_URL: ${{ fromJson(steps.rp.outputs.pr).html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Enable auto-merge for release PR
-        if: ${{ steps.rp.outputs.pr }}
-        run: gh pr merge --auto --squash --delete-branch "$PR_URL"
-        env:
-          PR_URL: ${{ fromJson(steps.rp.outputs.pr).html_url }}
+          PR_JSON: ${{ steps.rp.outputs.pr }}
           GH_TOKEN: ${{ secrets.TAP_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PR_URL=$(echo "$PR_JSON" | jq -r .html_url)
+          if [ -n "$PR_URL" ] && [ "$PR_URL" != "null" ]; then
+            echo "Approving PR: $PR_URL"
+            GH_TOKEN="$GITHUB_TOKEN" gh pr review --approve "$PR_URL"
+            echo "Enabling auto-merge for PR: $PR_URL"
+            GH_TOKEN="$GH_TOKEN" gh pr merge --auto --squash --delete-branch "$PR_URL"
+          fi
 
       # Single point where version + channel are decided (consumed by build-image
       # and publish). On a release: the exact release-please version. On a beta:

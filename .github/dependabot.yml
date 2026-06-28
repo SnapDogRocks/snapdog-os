@@ -3,29 +3,79 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: daily
+    target-branch: main
     open-pull-requests-limit: 5
+    labels:
+      - dependencies
     groups:
-      actions:
-        patterns: ["*"]
+      actions-dependencies:
+        update-types:
+          - minor
+          - patch
 
   - package-ecosystem: cargo
     directory: /snapdog-ctrl
     schedule:
-      interval: weekly
+      interval: daily
+    target-branch: main
+    versioning-strategy: increase
     open-pull-requests-limit: 5
+    labels:
+      - dependencies
     groups:
-      rust-deps:
-        patterns: ["*"]
+      prod-dependencies:
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
+      dev-dependencies:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: cargo
+    directory: /snapdog-update
+    schedule:
+      interval: daily
+    target-branch: main
+    versioning-strategy: increase
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    groups:
+      prod-dependencies:
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
+      dev-dependencies:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
 
   - package-ecosystem: npm
     directory: /snapdog-ctrl/webui
     schedule:
-      interval: weekly
+      interval: daily
+    target-branch: main
+    versioning-strategy: increase
     open-pull-requests-limit: 5
+    labels:
+      - dependencies
     ignore:
       - dependency-name: "eslint"
         versions: [">=10"]
     groups:
-      npm-deps:
-        patterns: ["*"]
+      prod-dependencies:
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
+      dev-dependencies:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch

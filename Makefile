@@ -39,7 +39,7 @@ config: ## Configure for $(BOARD)
 	@if [ "$(BOARD)" = "pi5" ]; then cd $(BRSRC) && make raspberrypi5_defconfig; \
 	elif [ "$(BOARD)" = "pi4" ]; then cd $(BRSRC) && make raspberrypi4_64_defconfig; \
 	elif [ "$(BOARD)" = "pi3" ]; then cd $(BRSRC) && make raspberrypi3_64_defconfig; \
-	elif [ "$(BOARD)" = "zero2w" ]; then cd $(BRSRC) && make raspberrypizero2w_defconfig; \
+	elif [ "$(BOARD)" = "zero2w" ]; then cd $(BRSRC) && make raspberrypizero2w_64_defconfig; \
 	else \
 		if [ -f "$(BRSRC)/configs/$(BOARD)_defconfig" ]; then \
 			cd $(BRSRC) && make $(BOARD)_defconfig; \

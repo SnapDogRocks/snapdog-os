@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.6.1](https://github.com/SnapDogRocks/snapdog-os/compare/v0.6.0...v0.6.1) (2026-07-03)
+
+
+### Bug Fixes
+
+* **build:** ensure newline when applying config overrides to prevent symbol corruption ([727ba38](https://github.com/SnapDogRocks/snapdog-os/commit/727ba381d32f7d1909e522cc8c9ee8f3a772cfef))
+* **buildroot:** correct malformed snapdog-client.hash for 0.21.1 ([9929806](https://github.com/SnapDogRocks/snapdog-os/commit/9929806fe3ad17e68ddcf90824a73a3af569b81b))
+* **buildroot:** update snapdog-client archive hash to v0.20.0 to prevent build failure ([bb62698](https://github.com/SnapDogRocks/snapdog-os/commit/bb62698c46c38020d1bcee408e7fefb69855117e))
+* **buildroot:** use 64-bit defconfig for raspberry pi zero 2 w ([044d5a1](https://github.com/SnapDogRocks/snapdog-os/commit/044d5a1a225f80a164e49eadb17653a97c40d478))
+
 ## [0.6.0](https://github.com/SnapDogRocks/snapdog-os/compare/v0.5.0...v0.6.0) (2026-06-21)
 
 

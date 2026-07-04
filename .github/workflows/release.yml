@@ -45,20 +45,23 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-      - name: Approve and enable auto-merge for release PR
+      - name: Enable auto-merge for release PR
         if: ${{ steps.rp.outputs.pr }}
         env:
           PR_JSON: ${{ steps.rp.outputs.pr }}
           GH_TOKEN: ${{ secrets.TAP_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          PR_URL=$(echo "$PR_JSON" | jq -r .html_url)
-          if [ -n "$PR_URL" ] && [ "$PR_URL" != "null" ]; then
-            echo "Approving PR: $PR_URL"
-            GH_TOKEN="$GITHUB_TOKEN" gh pr review --approve "$PR_URL"
-            echo "Enabling auto-merge for PR: $PR_URL"
-            GH_TOKEN="$GH_TOKEN" gh pr merge --auto --squash --delete-branch "$PR_URL"
+          # release-please-action's `pr` output is a PullRequest object with
+          # `.number` — it has NO `.html_url`. The old `.html_url` lookup returned
+          # "null", so this block was silently skipped (step stayed green) and
+          # auto-merge was never enabled → release PRs lingered until merged by hand.
+          # No `gh pr review --approve`: main requires no approval, and the release
+          # PR is bot-authored so a bot self-approve would error and fail the step.
+          PR_NUMBER=$(echo "$PR_JSON" | jq -r .number)
+          if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ]; then
+            echo "Enabling auto-merge for release PR #${PR_NUMBER}"
+            gh pr merge --auto --squash --delete-branch "$PR_NUMBER"
           fi
 
       # Single point where version + channel are decided (consumed by build-image

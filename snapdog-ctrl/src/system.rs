@@ -855,14 +855,26 @@ pub async fn check_update() -> UpdateCheckResponse {
         .await
         .is_ok_and(|o| o.status.success());
 
+    // RAUC verifies the bundle signature against the device keyring at install
+    // time (`rauc install` refuses an unsigned or untrusted bundle), so when the
+    // keyring is present the update is guaranteed to be cryptographically
+    // verified before it is applied.
+    let signature_verified = tokio::fs::metadata("/etc/rauc/ca.cert.pem").await.is_ok();
+
     UpdateCheckResponse {
         available,
+        installable: available && signature_verified,
         current_version: if current.is_empty() {
             "unknown".into()
         } else {
             current
         },
+        // The channel bundle URL is version-less, so the remote version is not
+        // known without downloading the bundle; left empty (UI hides the arrow).
+        latest_version: String::new(),
         channel: config.channel,
+        is_downgrade: false,
+        signature_verified,
         bundle_url: url,
     }
 }

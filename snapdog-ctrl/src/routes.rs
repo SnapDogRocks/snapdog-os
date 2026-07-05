@@ -330,8 +330,12 @@ mod mock_handlers {
     pub async fn get_update_check() -> Json<UpdateCheckResponse> {
         Json(UpdateCheckResponse {
             available: true,
+            installable: true,
             current_version: env!("CARGO_PKG_VERSION").into(),
+            latest_version: "9.9.9".into(),
             channel: "stable".into(),
+            is_downgrade: false,
+            signature_verified: true,
             bundle_url: "https://update.snapdog.cc/os/bundles/pi4.raucb".into(),
         })
     }
@@ -758,11 +762,18 @@ async fn post_reboot() -> StatusCode {
     StatusCode::ACCEPTED
 }
 
+// Serialized API DTO consumed by the web UI — the boolean fields mirror the
+// TypeScript `UpdateCheck` shape, so they can't be collapsed into an enum.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Serialize)]
 pub struct UpdateCheckResponse {
     pub available: bool,
+    pub installable: bool,
     pub current_version: String,
+    pub latest_version: String,
     pub channel: String,
+    pub is_downgrade: bool,
+    pub signature_verified: bool,
     pub bundle_url: String,
 }
 

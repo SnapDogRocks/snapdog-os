@@ -1181,6 +1181,7 @@ function UpdateTab() {
   const [channel, setChannel] = useState("stable");
   const [phase, setPhase] = useState<"idle" | "downloading" | "verifying" | "installing" | "rebooting" | "reconnecting" | "done" | "failed">("idle");
   const [rolledBack, setRolledBack] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const channelId = useId();
   const cardId = useId();
 
@@ -1203,7 +1204,6 @@ function UpdateTab() {
   }, []);
 
   const performUpdate = useCallback(() => {
-    if (!window.confirm(t("updateConfirm"))) return;
     setPhase("downloading");
     api.triggerUpdate().catch(() => { setPhase("failed"); });
     setTimeout(() => setPhase("verifying"), 3000);
@@ -1222,7 +1222,7 @@ function UpdateTab() {
         } catch { /* still rebooting */ }
       }, 3000);
     }, 10000);
-  }, [t, update]);
+  }, [update]);
 
   const triggerFileSelect = useCallback(() => {
     fileInputRef.current?.click();
@@ -1302,14 +1302,22 @@ function UpdateTab() {
 
         {phase === "idle" && (
           <>
-            {update?.available ? (
+            {confirming ? (
+              <div className="flex flex-col gap-3 rounded-lg bg-primary/10 p-4" role="alertdialog" aria-label={t("updateConfirm")}>
+                <p className="text-sm font-medium">{t("updateConfirm")}</p>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={() => { setConfirming(false); performUpdate(); }}>{t("confirmInstall")}</Button>
+                  <Button variant="outline" size="sm" onClick={() => setConfirming(false)}>{t("cancel")}</Button>
+                </div>
+              </div>
+            ) : update?.available ? (
               <div className="flex flex-col gap-3 rounded-lg bg-primary/10 p-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium">{t("updateAvailable")}</p>
-                    <p className="text-xs text-muted-foreground">{update.current_version} → {update.latest_version}</p>
+                    <p className="text-xs text-muted-foreground">{update.current_version}{update.latest_version ? ` → ${update.latest_version}` : ""}</p>
                   </div>
-                  <Button size="sm" onClick={performUpdate}>{t("installUpdate")}</Button>
+                  <Button size="sm" onClick={() => setConfirming(true)}>{t("installUpdate")}</Button>
                 </div>
                 <div className="text-xs font-semibold flex items-center gap-1 border-t border-primary/20 pt-2 text-green-600 dark:text-green-400">
                   {update.signature_verified ? t("signatureVerified") : t("signatureUnverified")}
@@ -1320,9 +1328,9 @@ function UpdateTab() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium">{t("downgradeAvailable")}</p>
-                    <p className="text-xs text-muted-foreground">{update.current_version} → {update.latest_version}</p>
+                    <p className="text-xs text-muted-foreground">{update.current_version}{update.latest_version ? ` → ${update.latest_version}` : ""}</p>
                   </div>
-                  <Button variant="outline" size="sm" onClick={performUpdate}>{t("installVersion")}</Button>
+                  <Button variant="outline" size="sm" onClick={() => setConfirming(true)}>{t("installVersion")}</Button>
                 </div>
                 <div className="text-xs font-semibold flex items-center gap-1 border-t border-border pt-2 text-green-600 dark:text-green-400">
                   {update.signature_verified ? t("signatureVerified") : t("signatureUnverified")}

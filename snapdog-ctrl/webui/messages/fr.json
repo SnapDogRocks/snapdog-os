@@ -178,7 +178,9 @@
     "manualProceed": "Proceed & Upload Image",
     "manualUploadButton": "Choose Update File...",
     "manualUploading": "Uploading system image...",
-    "uploadError": "Upload failed. Please ensure the file is correct and not corrupted."
+    "uploadError": "Upload failed. Please ensure the file is correct and not corrupted.",
+    "confirmInstall": "Oui, installer & redémarrer",
+    "cancel": "Annuler"
   },
   "server": {
     "title": "Serveur",

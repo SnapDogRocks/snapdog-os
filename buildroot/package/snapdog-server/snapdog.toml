@@ -19,3 +19,8 @@ group_volume_mode = "relative"
 unknown_clients = "accept"
 mdns_name = "SnapDog"
 managed = true
+
+[[zone]]
+name = "Default Zone"
+icon = "🔊"
+

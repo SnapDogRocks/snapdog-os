@@ -353,9 +353,9 @@ group_volume_mode = "relative"
 unknown_clients = "accept"
 mdns_name = "SnapDog"
 
-[subsonic.cache]
-path = "/tmp/snapdog-cache"
-max_size_mb = 512
+[[zone]]
+name = "Default Zone"
+icon = "🔊"
 "#
     .to_string()
 }

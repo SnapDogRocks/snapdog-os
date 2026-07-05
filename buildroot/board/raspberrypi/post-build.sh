@@ -48,6 +48,9 @@ ln -sf /data/snapdog-os.channel "$TARGET_DIR/etc/snapdog-os.channel"
 rm -f "$TARGET_DIR/etc/snapdog-os.auto-update"
 ln -sf /data/snapdog-os.auto-update "$TARGET_DIR/etc/snapdog-os.auto-update"
 
+rm -f "$TARGET_DIR/etc/localtime"
+ln -sf /data/localtime "$TARGET_DIR/etc/localtime"
+
 rm -f "$TARGET_DIR/etc/hostname"
 ln -sf /data/hostname "$TARGET_DIR/etc/hostname"
 

@@ -28,6 +28,7 @@ if [ ! -f "$DATA/snapdog-os.channel" ]; then
 fi
 [ -f "$DATA/snapdog-os.auto-update" ] || printf 'enabled=true\ninterval=daily\ntime=03:00\n' > "$DATA/snapdog-os.auto-update"
 [ -f "$DATA/hostname" ] || echo "snapdog" > "$DATA/hostname"
+[ -L "$DATA/localtime" ] || [ -f "$DATA/localtime" ] || ln -sf /usr/share/zoneinfo/UTC "$DATA/localtime"
 
 # Default wired networking: DHCP on any ethernet interface (end0 on Pi4, eth0 on
 # Pi3, enx* USB adapters). Seeded here — before systemd-networkd starts — so the

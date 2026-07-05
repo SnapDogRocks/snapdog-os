@@ -850,7 +850,16 @@ pub async fn get_timezone() -> TimezoneInfo {
 }
 
 pub async fn set_timezone(tz: &str) -> Result<()> {
-    run_cmd("timedatectl", &["set-timezone", tz]).await
+    let path = std::path::Path::new("/data/localtime");
+    if path.exists() || path.is_symlink() {
+        tokio::fs::remove_file(path).await.ok();
+        let target = format!("/usr/share/zoneinfo/{}", tz);
+        tokio::fs::symlink(target, path)
+            .await
+            .context("failed to update /data/localtime timezone symlink")
+    } else {
+        run_cmd("timedatectl", &["set-timezone", tz]).await
+    }
 }
 
 // --- Soundcards ---
@@ -1038,7 +1047,7 @@ pub async fn set_service(name: &str, enabled: bool) -> Result<()> {
     atomic_write(CTRL_CONFIG, &doc.to_string()).await?;
 
     if enabled {
-        run_cmd("systemctl", &["unmask", unit]).await?;
+        let _ = run_cmd("systemctl", &["unmask", unit]).await;
         run_cmd("systemctl", &["start", unit]).await?;
     } else {
         run_cmd("systemctl", &["stop", unit]).await?;

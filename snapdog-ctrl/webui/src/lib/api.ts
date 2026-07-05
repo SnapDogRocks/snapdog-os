@@ -95,13 +95,18 @@ export interface AudioConfig {
   available_overlays: DacOverlay[];
 }
 
+export interface Soundcard {
+  device: string;
+  name: string;
+}
+
 export interface ClientConfig {
   server_url: string;
   host_id: string;
   soundcard: string;
   mixer: string;
   latency: number;
-  available_soundcards?: string[];
+  available_soundcards?: Soundcard[];
 }
 
 export interface SshConfig {

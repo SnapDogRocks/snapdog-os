@@ -63,6 +63,7 @@
     "save": "Save",
     "soundcard": "Soundcard",
     "defaultSoundcard": "Default",
+    "customSoundcard": "Custom…",
     "mixerSoftware": "Software (digital)",
     "mixerHardware": "Hardware (DAC)",
     "mixerNone": "None (server controls)",

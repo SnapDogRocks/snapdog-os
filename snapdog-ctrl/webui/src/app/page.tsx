@@ -15,6 +15,7 @@ import {
   type WifiNetwork,
   type AudioConfig,
   type ClientConfig,
+  type Soundcard,
   type SshConfig,
   type ServerConfig,
   type ServerStatus,
@@ -593,7 +594,8 @@ function AudioTab() {
 function ClientTab() {
   const t = useTranslations("client");
   const [config, setConfig] = useState<ClientConfig>({ server_url: "", host_id: "", soundcard: "default", mixer: "", latency: 0 });
-  const [soundcards, setSoundcards] = useState<string[]>([]);
+  const [soundcards, setSoundcards] = useState<Soundcard[]>([]);
+  const [manualCustomSoundcard, setManualCustomSoundcard] = useState(false);
   const [servers, setServers] = useState<{ name: string; host: string; port: number }[]>([]);
   const [scanning, setScanning] = useState(true);
   const [manualHost, setManualHost] = useState("");
@@ -603,7 +605,13 @@ function ClientTab() {
   const [serverRunning, setServerRunning] = useState(false);
   const [connectionMode, setConnectionMode] = useState<"auto" | "manual">("auto");
   const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "failed">("idle");
-  
+
+  // Soundcard picker: a dropdown of detected cards, with a "Custom…" escape.
+  // Custom mode auto-engages when a saved value isn't "default" or a listed card.
+  const soundcardKnown =
+    config.soundcard === "default" || soundcards.some((sc) => sc.device === config.soundcard);
+  const soundcardCustom = manualCustomSoundcard || (!soundcardKnown && config.soundcard !== "");
+
   const hostIdFieldId = useId();
   const soundcardId = useId();
   const mixerId = useId();
@@ -982,13 +990,32 @@ function ClientTab() {
             </Field>
             
             <Field label={t("soundcard")} htmlFor={soundcardId}>
-              {soundcards.length > 0 ? (
-                <Select id={soundcardId} value={config.soundcard} onChange={(e) => setConfig({ ...config, soundcard: e.target.value })}>
-                  <option value="default">{t("defaultSoundcard")}</option>
-                  {soundcards.map((sc, i) => (<option key={i} value={`hw:${i}`}>{sc}</option>))}
-                </Select>
-              ) : (
-                <Input id={soundcardId} value={config.soundcard} onChange={(e) => setConfig({ ...config, soundcard: e.target.value })} placeholder="default" />
+              <Select
+                id={soundcardId}
+                value={soundcardCustom ? "__custom__" : config.soundcard}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === "__custom__") {
+                    setManualCustomSoundcard(true);
+                  } else {
+                    setManualCustomSoundcard(false);
+                    setConfig({ ...config, soundcard: v });
+                  }
+                }}
+              >
+                <option value="default">{t("defaultSoundcard")}</option>
+                {soundcards.map((sc) => (
+                  <option key={sc.device} value={sc.device}>{sc.name} ({sc.device})</option>
+                ))}
+                <option value="__custom__">{t("customSoundcard")}</option>
+              </Select>
+              {soundcardCustom && (
+                <Input
+                  className="mt-2"
+                  value={config.soundcard === "default" ? "" : config.soundcard}
+                  onChange={(e) => setConfig({ ...config, soundcard: e.target.value })}
+                  placeholder="hw:0"
+                />
               )}
             </Field>
             

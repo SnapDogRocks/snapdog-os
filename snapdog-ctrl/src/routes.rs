@@ -1153,6 +1153,15 @@ async fn put_audio(
 
 // --- Client ---
 
+/// An ALSA playback device offered in the client soundcard dropdown.
+#[derive(Serialize, Clone)]
+pub struct Soundcard {
+    /// ALSA device string passed to `--soundcard` (e.g. `hw:0`).
+    pub device: String,
+    /// Human-readable card name for the dropdown label.
+    pub name: String,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ClientConfig {
     pub server_url: String,
@@ -1165,7 +1174,7 @@ pub struct ClientConfig {
     #[serde(skip_deserializing)]
     pub running: bool,
     #[serde(skip_deserializing)]
-    pub available_soundcards: Vec<String>,
+    pub available_soundcards: Vec<Soundcard>,
 }
 
 async fn get_client() -> Json<ClientConfig> {

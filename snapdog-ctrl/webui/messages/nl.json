@@ -63,6 +63,7 @@
     "save": "Opslaan",
     "soundcard": "Geluidskaart",
     "defaultSoundcard": "Standaard",
+    "customSoundcard": "Aangepast…",
     "mixerSoftware": "Software (digitaal)",
     "mixerHardware": "Hardware (DAC)",
     "mixerNone": "Geen (server regelt)",

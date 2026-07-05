@@ -171,6 +171,12 @@ async fn build_app() -> Router {
                     break;
                 }
             }
+        } else if wifi_configured {
+            // WiFi is configured but we never entered (and left) AP mode, so
+            // nothing has started the supplicant yet — bring the client up.
+            if let Err(e) = network::start_wifi_client().await {
+                tracing::error!("Failed to start WiFi client: {e}");
+            }
         }
     });
 

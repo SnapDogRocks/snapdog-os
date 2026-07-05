@@ -6,7 +6,7 @@
 #
 ################################################################################
 
-SNAPDOG_SERVER_VERSION = 0.22.1
+SNAPDOG_SERVER_VERSION = 0.23.0
 SNAPDOG_SERVER_SOURCE = snapdog-v$(SNAPDOG_SERVER_VERSION)-aarch64-unknown-linux-gnu.tar.gz
 SNAPDOG_SERVER_SITE = https://github.com/SnapDogRocks/snapdog/releases/download/v$(SNAPDOG_SERVER_VERSION)
 SNAPDOG_SERVER_LICENSE = GPL-3.0-only

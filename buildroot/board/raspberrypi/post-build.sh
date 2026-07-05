@@ -81,6 +81,23 @@ ln -sf /usr/lib/systemd/system/serial-getty@.service \
 # Mask wait-online (no service needs network-online.target; AP mode is intentionally offline)
 ln -sf /dev/null "$TARGET_DIR/etc/systemd/system/systemd-networkd-wait-online.service"
 
-# Disable services managed by snapdog-ctrl (it starts them based on config)
-ln -sf /dev/null "$TARGET_DIR/etc/systemd/system/sshd.service"
-ln -sf /dev/null "$TARGET_DIR/etc/systemd/system/ssh-access.target"
+# SSH on a read-only rootfs: it cannot be mask/unmasked at runtime, and sshd's
+# ExecStartPre `ssh-keygen -A` cannot write host keys to read-only /etc/ssh.
+# So gate sshd on a writable flag (/data/ssh.enabled) that snapdog-ctrl toggles,
+# and keep host keys on writable /data (persisted across reflash). Off by
+# default: with no flag, ConditionPathExists skips the unit even if it is pulled
+# in at boot.
+mkdir -p "$TARGET_DIR/etc/systemd/system/sshd.service.d"
+cat > "$TARGET_DIR/etc/systemd/system/sshd.service.d/10-snapdog.conf" <<'SSHD_DROPIN'
+[Unit]
+ConditionPathExists=/data/ssh.enabled
+
+[Service]
+# Generate and load host keys from writable /data (vendor ExecStartPre writes to
+# read-only /etc/ssh and fails). `ssh-keygen -A -f /data` emits /data/etc/ssh/*.
+ExecStartPre=
+ExecStartPre=/bin/mkdir -p /data/etc/ssh
+ExecStartPre=/usr/bin/ssh-keygen -A -f /data
+ExecStart=
+ExecStart=/usr/sbin/sshd -D -e -h /data/etc/ssh/ssh_host_rsa_key -h /data/etc/ssh/ssh_host_ecdsa_key -h /data/etc/ssh/ssh_host_ed25519_key
+SSHD_DROPIN

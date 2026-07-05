@@ -19,7 +19,13 @@ mkdir -p "$DATA/ssh"
 
 # Write defaults if not already present
 [ -f "$DATA/default/snapdog-client" ] || echo 'SNAPDOG_CLIENT_ARGS=""' > "$DATA/default/snapdog-client"
-[ -f "$DATA/snapdog-os.channel" ] || echo "stable" > "$DATA/snapdog-os.channel"
+if [ ! -f "$DATA/snapdog-os.channel" ]; then
+  if grep -q "beta" /etc/snapdog-os.version 2>/dev/null; then
+    echo "beta" > "$DATA/snapdog-os.channel"
+  else
+    echo "stable" > "$DATA/snapdog-os.channel"
+  fi
+fi
 [ -f "$DATA/snapdog-os.auto-update" ] || printf 'enabled=true\ninterval=daily\ntime=03:00\n' > "$DATA/snapdog-os.auto-update"
 [ -f "$DATA/hostname" ] || echo "snapdog" > "$DATA/hostname"
 

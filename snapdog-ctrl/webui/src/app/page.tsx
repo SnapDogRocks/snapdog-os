@@ -1182,6 +1182,8 @@ function UpdateTab() {
   const [phase, setPhase] = useState<"idle" | "downloading" | "verifying" | "installing" | "rebooting" | "reconnecting" | "done" | "failed">("idle");
   const [rolledBack, setRolledBack] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const channelId = useId();
   const cardId = useId();
 
@@ -1204,25 +1206,49 @@ function UpdateTab() {
   }, []);
 
   const performUpdate = useCallback(() => {
-    setPhase("downloading");
-    api.triggerUpdate().catch(() => { setPhase("failed"); });
-    setTimeout(() => setPhase("verifying"), 3000);
-    setTimeout(() => setPhase("installing"), 6000);
-    setTimeout(() => {
-      setPhase("rebooting");
-      const startTime = Date.now();
-      const poll = setInterval(async () => {
-        if (Date.now() - startTime > 120000) { clearInterval(poll); setPhase("failed"); return; }
-        try {
-          setPhase("reconnecting");
-          const sys = await api.getSystem();
+    setPhase("installing");
+    setProgress(null);
+    setErrorMsg(null);
+    let sawInstalling = false;
+    let resolvedOk = false;
+    const started = Date.now();
+    // Drive the UI from the real RAUC operation (GET /update/status), not timers.
+    const poll = setInterval(async () => {
+      if (Date.now() - started > 20 * 60 * 1000) {
+        clearInterval(poll);
+        setErrorMsg(t("updateTimeout"));
+        setPhase("failed");
+        return;
+      }
+      try {
+        const s = await api.getUpdateStatus();
+        if (s.last_error) {
           clearInterval(poll);
-          if (update && sys.version === update.current_version) { setRolledBack(true); setPhase("failed"); }
-          else { setPhase("done"); }
-        } catch { /* still rebooting */ }
-      }, 3000);
-    }, 10000);
-  }, [update]);
+          setErrorMsg(s.last_error);
+          setPhase("failed");
+        } else if (s.operation === "installing") {
+          sawInstalling = true;
+          setProgress(s.progress?.percentage ?? null);
+        } else if (s.operation === "idle" && (sawInstalling || (resolvedOk && Date.now() - started > 8000))) {
+          // Installed to the inactive slot; user activates it via "Reboot now".
+          clearInterval(poll);
+          setPhase("done");
+        }
+      } catch {
+        /* device busy mid-install — keep polling */
+      }
+    }, 1500);
+    // Kick off the install; a start failure (bad bundle, unreachable) rejects here.
+    api.triggerUpdate()
+      .then(() => {
+        resolvedOk = true;
+      })
+      .catch((e: unknown) => {
+        clearInterval(poll);
+        setErrorMsg(e instanceof Error ? e.message : String(e));
+        setPhase("failed");
+      });
+  }, [t]);
 
   const triggerFileSelect = useCallback(() => {
     fileInputRef.current?.click();
@@ -1282,7 +1308,7 @@ function UpdateTab() {
         )}
 
         {phase !== "idle" && phase !== "done" && phase !== "failed" && (
-          <UpdatePhaseIndicator label={t(`phase_${phase}`)} />
+          <UpdatePhaseIndicator label={`${t(`phase_${phase}`)}${progress != null ? ` — ${progress}%` : ""}`} />
         )}
         {phase === "done" && (
           <div className="rounded-lg bg-green-500/10 p-4 text-sm space-y-3" role="status">
@@ -1295,8 +1321,9 @@ function UpdateTab() {
           </div>
         )}
         {phase === "failed" && !rolledBack && (
-          <div className="rounded-lg bg-destructive/10 p-4 text-sm" role="alert">
+          <div className="rounded-lg bg-destructive/10 p-4 text-sm space-y-1" role="alert">
             <p className="font-medium text-destructive">{t("updateFailed")}</p>
+            {errorMsg && <p className="text-xs text-muted-foreground break-words">{errorMsg}</p>}
           </div>
         )}
 

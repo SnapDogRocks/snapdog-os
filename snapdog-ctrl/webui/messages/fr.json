@@ -180,7 +180,8 @@
     "manualUploading": "Uploading system image...",
     "uploadError": "Upload failed. Please ensure the file is correct and not corrupted.",
     "confirmInstall": "Oui, installer & redémarrer",
-    "cancel": "Annuler"
+    "cancel": "Annuler",
+    "updateTimeout": "Délai de mise à jour dépassé"
   },
   "server": {
     "title": "Serveur",

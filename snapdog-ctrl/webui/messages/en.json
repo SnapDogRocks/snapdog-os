@@ -175,7 +175,8 @@
     "manualUploading": "Uploading system image...",
     "uploadError": "Upload failed. Please ensure the file is correct and not corrupted.",
     "confirmInstall": "Yes, install & reboot",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "updateTimeout": "Update timed out"
   },
   "server": {
     "title": "Server",

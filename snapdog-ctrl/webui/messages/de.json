@@ -180,7 +180,8 @@
     "manualUploading": "System-Image wird hochgeladen...",
     "uploadError": "Upload failed. Bitte stellen Sie sicher, dass die Datei korrekt und nicht beschädigt ist.",
     "confirmInstall": "Ja, installieren & neu starten",
-    "cancel": "Abbrechen"
+    "cancel": "Abbrechen",
+    "updateTimeout": "Zeitüberschreitung beim Update"
   },
   "server": {
     "title": "Server",

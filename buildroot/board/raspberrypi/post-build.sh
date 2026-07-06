@@ -14,7 +14,9 @@ mkdir -p "$TARGET_DIR/var/empty"
 # Ensure parent directories exist
 mkdir -p "$TARGET_DIR/etc/default"
 mkdir -p "$TARGET_DIR/etc/snapdog"
-mkdir -p "$TARGET_DIR/etc/wpa_supplicant"
+# NB: /etc/wpa_supplicant is intentionally not created here — it is replaced by a
+# symlink to /data below. Creating it would break idempotent (incremental)
+# rebuilds: `mkdir -p` fails on the already-existing dangling symlink under set -e.
 mkdir -p "$TARGET_DIR/etc/hostapd"
 mkdir -p "$TARGET_DIR/etc/systemd/resolved.conf.d"
 mkdir -p "$TARGET_DIR/etc/systemd/system/updater.timer.d"

@@ -250,6 +250,17 @@ impl UpdateClient {
         Ok(())
     }
 
+    /// Reboot the device (into the freshly-installed slot after an install).
+    pub async fn reboot(&self) -> Result<()> {
+        let url = format!("{}/api/system/reboot", self.base_url);
+        self.send_empty(
+            self.client.post(&url).headers(self.headers()?),
+            "trigger reboot",
+        )
+        .await?;
+        Ok(())
+    }
+
     pub async fn update_status(&self) -> Result<UpdateStatus> {
         let url = format!("{}/api/system/update/status", self.base_url);
         let status = self

@@ -201,9 +201,23 @@ impl UpgradeManager {
                 ));
             }
 
-            let status =
-                run_with_deadline(deadline, "fetch update status", self.client.update_status())
-                    .await?;
+            // The status endpoint can hiccup while rauc is busy writing the slot
+            // (a slow or momentarily-malformed response). A transient poll error
+            // must NOT abort the update — keep polling; the deadline is enforced
+            // by sleep_until_deadline at the top of the loop.
+            let status = match run_with_deadline(
+                deadline,
+                "fetch update status",
+                self.client.update_status(),
+            )
+            .await
+            {
+                Ok(status) => status,
+                Err(e) => {
+                    ui_poll.update_message(format!("status poll failed (retrying): {e}"));
+                    continue;
+                }
+            };
             if status.operation == "installing" {
                 if let Some(prog) = status.progress {
                     ui_poll.update_message(format!(
@@ -216,6 +230,10 @@ impl UpgradeManager {
                     ui_poll.finish_failure("Installation failed!");
                     return Err(UpgradeError::Failed(status.last_error));
                 }
+                // The install is done but the device does not reboot on its own —
+                // trigger it so it boots into the freshly-installed slot. The
+                // connection drops as it goes down, so ignore the transport result.
+                let _ = self.client.reboot().await;
                 ui_poll.finish_success("Installation complete! System is rebooting...");
                 break;
             } else {

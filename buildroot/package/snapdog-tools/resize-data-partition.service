@@ -1,14 +1,25 @@
 [Unit]
-Description=Resize persistent data partition
-# Must run BEFORE /data is mounted (fstab LABEL=data auto-mounts it): repartitioning
-# a live mount flips the ext4 read-only and mkfs refuses on a mounted device.
-After=systemd-fsck@.service boot.mount systemd-remount-fs.service systemd-sysusers.service
-Before=data.mount local-fs.target network.target
+Description=Grow /data to fill the storage on first boot
+Documentation=man:sfdisk(8) man:resize2fs(8)
+# Run AFTER /data is mounted (never before — a "before the mount" ordering was
+# silently cycle-dropped by systemd, so resize ran against a live mount and
+# repartitioning it flipped the ext4 read-only). With /data mounted read-write we
+# grow the on-disk table and reboot (boot #1), then grow the fs online (boot #2).
+After=data.mount
+Requires=data.mount
+RequiresMountsFor=/data
+ConditionPathIsMountPoint=/data
+# Grow before anything writes much to /data; keep it cheap on every later boot.
+Before=snapdog-ctrl.service snapdog.service snapdog-client.service
 
 [Service]
 Type=oneshot
+RemainAfterExit=yes
 ExecStart=/opt/snapdog/bin/resize-data-partition
+# A fresh online ext4 grow across tens of GB must never be killed mid-write.
+TimeoutStartSec=300
 StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

@@ -11,6 +11,10 @@ image boot.vfat {
 image data.ext4 {
 	ext4 {
 		label = "data"
+		# 4 KiB blocks (mke2fs -b 4096): raises the first-boot online-resize
+		# ceiling from ~32 GiB (1 KiB default) to ~128 GiB so resize2fs can fill a
+		# large disk. See the A/B genimage config for the full rationale.
+		extraargs = "-b 4096"
 	}
 
 	size = 128M

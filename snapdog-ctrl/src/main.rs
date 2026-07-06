@@ -180,6 +180,11 @@ async fn build_app() -> Router {
         }
     });
 
+    // Reconcile the previous auto-update: confirm the pending bundle booted, or
+    // mark it bad if the bootloader rolled us back, so a broken bundle is never
+    // reinstalled in a loop.
+    system::reconcile_pending_update().await;
+
     // Preflight health check
     let health_warnings = system::preflight_check().await;
     let has_critical = health_warnings.iter().any(|w| w.severity == "critical");

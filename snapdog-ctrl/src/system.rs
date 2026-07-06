@@ -819,6 +819,20 @@ pub async fn set_ssh(config: SshConfig) -> Result<()> {
 // --- OTA Update (RAUC) ---
 
 const UPDATE_BASE_URL: &str = "https://updates.snapdog.cc/os/bundles";
+/// Channel manifest published alongside the bundles (`latest-<channel>.json`).
+/// It is the SSOT for the version a channel currently points at, so auto-update
+/// can compare it to the running version without downloading the whole bundle.
+const UPDATE_MANIFEST_BASE: &str = "https://updates.snapdog.cc/os/images";
+/// Running OS version, written into the read-only rootfs at build time (SSOT).
+const OS_VERSION_FILE: &str = "/etc/snapdog-os.version";
+/// Version we handed to RAUC and are rebooting into, pending confirmation that it
+/// actually boots. Written just before the post-install reboot and reconciled on
+/// the next boot. Lives on the writable `/data` partition.
+const PENDING_UPDATE_FILE: &str = "/data/snapdog-os.pending-update";
+/// Version of a bundle that installed but failed to boot (the bootloader rolled
+/// back). Auto-update refuses to reinstall this version so a broken bundle cannot
+/// drive an endless install→rollback→reinstall loop that wears out the eMMC/SD.
+const FAILED_UPDATE_FILE: &str = "/data/snapdog-os.failed-update";
 
 /// Construct the bundle URL for a given channel.
 pub async fn bundle_url(channel: &str) -> String {
@@ -879,6 +893,148 @@ pub async fn check_update() -> UpdateCheckResponse {
     }
 }
 
+// --- Auto-Update Version Gating ---
+
+/// Outcome of the auto-update pre-install decision.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum UpdateDecision {
+    /// Install this (strictly newer, not known-bad) version.
+    Install(String),
+    /// Skip this cycle for the given human-readable reason.
+    Skip(&'static str),
+}
+
+/// The currently running OS version (from the read-only rootfs SSOT), trimmed.
+pub async fn current_os_version() -> String {
+    read_file(OS_VERSION_FILE)
+        .await
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+/// Fetch the version a channel currently points at from its manifest
+/// (`latest-<channel>.json`). Returns `None` when the manifest is unreachable or
+/// unparseable — callers must treat "unknown" as "do not install" rather than
+/// installing blind.
+pub async fn remote_channel_version(channel: &str) -> Option<String> {
+    let url = format!("{UPDATE_MANIFEST_BASE}/latest-{channel}.json");
+    let body = command_stdout("curl", &["-sf", "--max-time", "10", &url])
+        .await
+        .ok()?;
+    let manifest: serde_json::Value = serde_json::from_str(&body).ok()?;
+    let version = manifest.get("version")?.as_str()?.trim().to_string();
+    (!version.is_empty()).then_some(version)
+}
+
+/// The version last marked bad after a failed boot/rollback, if any.
+pub async fn last_failed_update() -> Option<String> {
+    let version = read_file(FAILED_UPDATE_FILE).await.ok()?.trim().to_string();
+    (!version.is_empty()).then_some(version)
+}
+
+/// Record the version we are about to reboot into (pending boot confirmation).
+pub async fn record_pending_update(version: &str) {
+    if let Err(e) = tokio::fs::write(PENDING_UPDATE_FILE, format!("{version}\n")).await {
+        tracing::warn!("auto-update: failed to record pending update {version}: {e}");
+    }
+}
+
+async fn remove_state_file(path: &str) {
+    if let Err(e) = tokio::fs::remove_file(path).await {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!("auto-update: failed to remove {path}: {e}");
+        }
+    }
+}
+
+/// Reconcile the pending-update marker on boot. Called once at startup.
+///
+/// If we booted into the version we installed, the update took — clear the marker.
+/// If we booted a *different* version, the pending bundle failed to boot and the
+/// bootloader rolled us back — remember it as failed so auto-update never retries
+/// it. Also clears a stale "failed" marker whenever we are successfully running
+/// the version it names (e.g. the admin manually reinstalled a fixed bundle of the
+/// same version), so auto-update is unblocked again.
+pub async fn reconcile_pending_update() {
+    let running = current_os_version().await;
+
+    if !running.is_empty() && last_failed_update().await.as_deref() == Some(running.as_str()) {
+        remove_state_file(FAILED_UPDATE_FILE).await;
+    }
+
+    let Some(pending) = read_file(PENDING_UPDATE_FILE)
+        .await
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    else {
+        return;
+    };
+
+    if running == pending {
+        tracing::info!("auto-update: confirmed boot into {pending}");
+        remove_state_file(FAILED_UPDATE_FILE).await;
+    } else {
+        tracing::warn!(
+            "auto-update: bundle {pending} failed to boot (running {running}); \
+             marking it bad to prevent a reinstall loop"
+        );
+        if let Err(e) = tokio::fs::write(FAILED_UPDATE_FILE, format!("{pending}\n")).await {
+            tracing::warn!("auto-update: failed to record failed update {pending}: {e}");
+        }
+    }
+    remove_state_file(PENDING_UPDATE_FILE).await;
+}
+
+/// Decide whether auto-update should install, given the remote version (if known),
+/// the running version, and the last known-bad version. Pure so it can be tested.
+#[must_use]
+pub fn decide_update(
+    remote: Option<&str>,
+    current: &str,
+    last_failed: Option<&str>,
+) -> UpdateDecision {
+    let Some(remote) = remote else {
+        return UpdateDecision::Skip("remote version unknown");
+    };
+    if !version_is_newer(remote, current) {
+        return UpdateDecision::Skip("already up to date");
+    }
+    if last_failed == Some(remote) {
+        return UpdateDecision::Skip("bundle previously failed to boot");
+    }
+    UpdateDecision::Install(remote.to_string())
+}
+
+/// True when `remote` is a strictly newer version than `current`.
+///
+/// Compares dotted numeric components (ignoring a leading `v` and any
+/// `-prerelease`/`+build` suffix). If either side cannot be parsed, falls back to
+/// "install when they differ" so a legitimately different bundle is not blocked —
+/// the last-failed gate still prevents a reinstall loop.
+fn version_is_newer(remote: &str, current: &str) -> bool {
+    match (parse_version(remote), parse_version(current)) {
+        (Some(mut r), Some(mut c)) => {
+            let width = r.len().max(c.len());
+            r.resize(width, 0);
+            c.resize(width, 0);
+            r > c
+        }
+        _ => remote.trim() != current.trim(),
+    }
+}
+
+fn parse_version(version: &str) -> Option<Vec<u64>> {
+    let core = version.trim().trim_start_matches('v');
+    let core = core.split(['-', '+']).next().unwrap_or(core);
+    let parts: Vec<u64> = core
+        .split('.')
+        .map(|p| p.parse().ok())
+        .collect::<Option<_>>()?;
+    (!parts.is_empty()).then_some(parts)
+}
+
 // --- Factory Reset ---
 
 pub async fn factory_reset() -> Result<()> {
@@ -898,6 +1054,8 @@ pub async fn factory_reset() -> Result<()> {
     let _ = tokio::fs::remove_file("/data/hostname").await;
     let _ = tokio::fs::remove_file("/data/snapdog-os.channel").await;
     let _ = tokio::fs::remove_file("/data/snapdog-os.auto-update").await;
+    let _ = tokio::fs::remove_file(PENDING_UPDATE_FILE).await;
+    let _ = tokio::fs::remove_file(FAILED_UPDATE_FILE).await;
     let _ = tokio::fs::remove_file("/data/snapdog/snapdog.toml").await;
 
     // Disable SSH and remove authorized keys
@@ -1531,6 +1689,56 @@ mod tests {
         assert_eq!(status.ssid, "Studio");
         assert_eq!(status.ip, "10.0.0.3");
         assert_eq!(parse_wifi_signal("RSSI=-51\nLINKSPEED=72\n"), Some(-51));
+    }
+
+    #[test]
+    fn version_comparison_is_strict_and_numeric() {
+        assert!(version_is_newer("0.4.0", "0.3.0"));
+        assert!(version_is_newer("0.3.1", "0.3.0"));
+        assert!(version_is_newer("1.0.0", "0.9.9"));
+        // Equal is not newer — this is what stops the daily reinstall of the
+        // bundle already running.
+        assert!(!version_is_newer("0.3.0", "0.3.0"));
+        // Never auto-downgrade.
+        assert!(!version_is_newer("0.2.9", "0.3.0"));
+        // Numeric, not lexicographic (would fail a naive string compare).
+        assert!(version_is_newer("0.10.0", "0.9.0"));
+        // Leading `v` and build/prerelease suffixes are ignored for the core cmp.
+        assert!(version_is_newer("v0.4.0", "0.3.0"));
+        assert!(!version_is_newer("0.3.0+build.7", "0.3.0"));
+        // Unparseable but different → treated as installable (last-failed gate is
+        // the backstop); identical unparseable → not newer.
+        assert!(version_is_newer("nightly-b", "nightly-a"));
+        assert!(!version_is_newer("weird", "weird"));
+    }
+
+    #[test]
+    fn decide_update_only_installs_strictly_newer_non_bad_versions() {
+        // Newer and never failed → install.
+        assert_eq!(
+            decide_update(Some("0.4.0"), "0.3.0", None),
+            UpdateDecision::Install("0.4.0".into())
+        );
+        // Same version → skip (prevents the flash-wearing daily reinstall).
+        assert_eq!(
+            decide_update(Some("0.3.0"), "0.3.0", None),
+            UpdateDecision::Skip("already up to date")
+        );
+        // Newer but previously rolled back → skip (breaks the reinstall loop).
+        assert_eq!(
+            decide_update(Some("0.4.0"), "0.3.0", Some("0.4.0")),
+            UpdateDecision::Skip("bundle previously failed to boot")
+        );
+        // A newer version than the known-bad one is still allowed through.
+        assert_eq!(
+            decide_update(Some("0.5.0"), "0.3.0", Some("0.4.0")),
+            UpdateDecision::Install("0.5.0".into())
+        );
+        // Manifest unreachable → never install blind.
+        assert_eq!(
+            decide_update(None, "0.3.0", None),
+            UpdateDecision::Skip("remote version unknown")
+        );
     }
 
     #[test]

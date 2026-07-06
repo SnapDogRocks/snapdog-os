@@ -3,7 +3,10 @@
 //! Checks daily at the configured time whether a newer bundle is available,
 //! then installs it via RAUC and reboots.
 
-use crate::system::{get_auto_update, rauc_install, rauc_operation};
+use crate::system::{
+    UpdateDecision, current_os_version, decide_update, get_auto_update, last_failed_update,
+    rauc_install, rauc_operation, record_pending_update, remote_channel_version,
+};
 
 const UPDATE_BASE_URL: &str = "https://updates.snapdog.cc/os/bundles";
 const SECS_PER_DAY: u64 = 24 * 3600;
@@ -50,6 +53,26 @@ async fn run_cycle() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Decide whether to install. Only apply a strictly newer bundle, and never
+    // retry a version that already failed to boot. Without this gate an unbootable
+    // bundle would install → roll back → reinstall on every cycle, rewriting the
+    // eMMC/SD indefinitely; and even a healthy channel would be needlessly
+    // reflashed every day because the pointer already matches the running version.
+    let current = current_os_version().await;
+    let remote = remote_channel_version(&config.channel).await;
+    let last_failed = last_failed_update().await;
+    let version = match decide_update(remote.as_deref(), &current, last_failed.as_deref()) {
+        UpdateDecision::Install(version) => version,
+        UpdateDecision::Skip(reason) => {
+            tracing::info!(
+                "auto-update: skipping (running {current}, {} channel offers {}): {reason}",
+                config.channel,
+                remote.as_deref().unwrap_or("unknown")
+            );
+            return Ok(());
+        }
+    };
+
     // Construct bundle URL
     let board = crate::system::detect_board().await;
     let suffix = if config.channel == "stable" {
@@ -59,7 +82,7 @@ async fn run_cycle() -> anyhow::Result<()> {
     };
     let url = format!("{UPDATE_BASE_URL}/{board}{suffix}.raucb");
 
-    tracing::info!("auto-update: installing from {url}");
+    tracing::info!("auto-update: installing {version} from {url}");
     rauc_install(&url).await?;
 
     // Wait for RAUC to finish (max 30 minutes), then reboot
@@ -74,6 +97,10 @@ async fn run_cycle() -> anyhow::Result<()> {
             return Ok(());
         }
     }
+
+    // Record the version we are about to boot into so the next boot can confirm it
+    // took — or mark it bad if the bootloader rolls back to the previous slot.
+    record_pending_update(&version).await;
 
     tracing::info!("auto-update: install complete, rebooting");
     let _ = tokio::process::Command::new("systemctl")

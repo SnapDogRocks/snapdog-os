@@ -44,12 +44,16 @@ with_boot_rw() {
   mount -o remount,ro "$BOOT_MNT"
 }
 
-# Write cmdline pointing to given slot
+# Write cmdline pointing to given slot.
+# Rewrites BOTH root= (what the kernel mounts) AND rauc.slot= (what RAUC reads to
+# identify the booted slot). Updating only root= left a stale rauc.slot=, so after
+# a slot switch RAUC mis-reported the active slot and marked the wrong slot good.
 write_cmdline() {
   local FILE="$1" SLOT="$2"
   local DEV
   DEV=$(slot_to_dev "$SLOT")
-  sed "s|root=[^ ]*|root=$DEV|" "$CMDLINE" > "$FILE.tmp"
+  sed -e "s|root=[^ ]*|root=$DEV|" -e "s|rauc\.slot=[^ ]*|rauc.slot=$SLOT|" \
+    "$CMDLINE" > "$FILE.tmp"
   mv "$FILE.tmp" "$FILE"
 }
 

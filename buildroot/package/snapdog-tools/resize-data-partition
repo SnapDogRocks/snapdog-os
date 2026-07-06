@@ -20,16 +20,25 @@ echo "Active root filesystem: $ACTIVE"
 echo "Device base: $DEVICEBASE"
 echo "Physical disk: $DEVICE"
 
-# 1. Grow the data partition (partition 4) to fill the remaining space on the SD card.
+# 1. Grow + format the data partition (partition 4) on first boot.
+#    Idempotent via partition size: only act while p4 is still the small baked
+#    partition (< 1 GiB). A grown /data is many GiB, so this never reformats on
+#    later boots. (The /resize-me marker lives on the read-only rootfs and can't
+#    be removed, so it can't be the "done" signal — partition size is.)
 if [ -f /resize-me ]; then
-  echo "Growing persistent data partition (${DEVICEBASE}4) to fill SD card..."
+  P4_SECTORS=$(blockdev --getsz "${DEVICEBASE}4" 2>/dev/null || echo 0)
+  if [ "$P4_SECTORS" -gt 0 ] && [ "$P4_SECTORS" -lt 2097152 ]; then
+    echo "Growing persistent data partition (${DEVICEBASE}4) to fill SD card..."
 
-  # Find the starting sector of partition 4
-  P4_START=$(fdisk -l "$DEVICE" | grep "${DEVICEBASE}4" | awk '{print $2}')
-  
-  if [ -n "$P4_START" ]; then
-    echo "Recreating partition 4 starting at sector $P4_START to fill remaining sectors..."
-    fdisk "$DEVICE" <<EOT
+    # Never repartition a live mount (it flips the mounted ext4 read-only). The
+    # service ordering (Before=data.mount) should prevent this, but be defensive.
+    umount /data 2>/dev/null || true
+    umount "${DEVICEBASE}4" 2>/dev/null || true
+
+    P4_START=$(fdisk -l "$DEVICE" | grep "${DEVICEBASE}4" | awk '{print $2}')
+    if [ -n "$P4_START" ]; then
+      echo "Recreating partition 4 starting at sector $P4_START to fill remaining sectors..."
+      fdisk "$DEVICE" <<EOT
 d
 4
 n
@@ -39,20 +48,37 @@ $P4_START
 
 w
 EOT
-    partprobe "$DEVICE" 2>/dev/null || true
-    sleep 2
-  else
-    echo "Could not find starting sector of partition 4, skipping partition table resizing"
-  fi
+      partprobe "$DEVICE" 2>/dev/null || true
+      sleep 2
+    else
+      echo "Could not find starting sector of partition 4, skipping partition table resizing"
+    fi
 
-  # Create ext4 file system on partition 4
-  if [ -b "${DEVICEBASE}4" ]; then
-    echo "Formatting persistent data partition (${DEVICEBASE}4) with label 'data'..."
-    mkfs.ext4 -F -L data "${DEVICEBASE}4"
+    if [ -b "${DEVICEBASE}4" ]; then
+      echo "Formatting persistent data partition (${DEVICEBASE}4) with label 'data'..."
+      mkfs.ext4 -F -L data "${DEVICEBASE}4"
+    fi
+    echo "First boot partition preparation complete."
+  else
+    # Partition already grown. If the ext4 fills less than half of it (e.g. left
+    # at 128 MiB by an earlier botched resize where the partition grew but the fs
+    # didn't), grow the fs to fill — non-destructive, and a no-op once matched so
+    # there's no fsck on healthy boots. Everything || true: on any failure /data
+    # just stays as-is and still mounts read-write.
+    umount /data 2>/dev/null || true
+    umount "${DEVICEBASE}4" 2>/dev/null || true
+    FS_SECTORS=$(dumpe2fs -h "${DEVICEBASE}4" 2>/dev/null | awk -F: '
+      /Block count/{gsub(/ /,"",$2); bc=$2}
+      /Block size/{gsub(/ /,"",$2); bs=$2}
+      END{ if (bc && bs) printf "%d", (bc*bs)/512 }')
+    if [ -n "$FS_SECTORS" ] && [ "$FS_SECTORS" -gt 0 ] && [ "$((FS_SECTORS * 2))" -lt "$P4_SECTORS" ]; then
+      echo "Filesystem (${FS_SECTORS} sectors) underfills partition (${P4_SECTORS}) — growing..."
+      e2fsck -pf "${DEVICEBASE}4" >/dev/null 2>&1 || true
+      resize2fs "${DEVICEBASE}4" >/dev/null 2>&1 || true
+    else
+      echo "Data partition already sized (${P4_SECTORS} sectors) — nothing to do."
+    fi
   fi
-  
-  rm -f /resize-me
-  echo "First boot partition preparation complete."
 fi
 
 # Ensure data partition is mounted if not already

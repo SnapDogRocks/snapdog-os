@@ -1,7 +1,9 @@
 [Unit]
 Description=Resize persistent data partition
+# Must run BEFORE /data is mounted (fstab LABEL=data auto-mounts it): repartitioning
+# a live mount flips the ext4 read-only and mkfs refuses on a mounted device.
 After=systemd-fsck@.service boot.mount systemd-remount-fs.service systemd-sysusers.service
-Before=network.target
+Before=data.mount local-fs.target network.target
 
 [Service]
 Type=oneshot

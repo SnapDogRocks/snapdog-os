@@ -61,7 +61,11 @@ jobs:
           PR_NUMBER=$(echo "$PR_JSON" | jq -r .number)
           if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ]; then
             echo "Enabling auto-merge for release PR #${PR_NUMBER}"
-            gh pr merge --auto --squash --delete-branch "$PR_NUMBER"
+            # No --delete-branch: this job has no actions/checkout, and gh's
+            # branch cleanup needs a local git repo, so --delete-branch fails the
+            # step with "fatal: not a git repository". GitHub merges server-side;
+            # release-please recreates its branch anyway.
+            gh pr merge --auto --squash "$PR_NUMBER"
           fi
 
       # Single point where version + channel are decided (consumed by build-image

@@ -305,28 +305,49 @@ pub async fn scan_networks() -> Result<Vec<ScannedNetwork>> {
     let iface = detect_wifi_interface().await;
     ensure_supplicant_running(&iface).await?;
 
-    // Trigger scan
+    // Trigger a fresh scan. A cold scan (radio idle since boot) sweeps every
+    // channel and can take several seconds to finish; a single fixed sleep read
+    // `scan_results` before the sweep completed, so the FIRST caller-issued scan
+    // returned an empty set and only the NEXT call saw the now-populated cache —
+    // the frontend does exactly one scan on mount, so it showed "no networks".
+    // Poll instead: return as soon as the sweep yields results, up to a deadline.
     let _ = Command::new("wpa_cli")
         .args(["-i", &iface, "scan"])
         .output()
         .await;
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    let mut networks = Vec::new();
+    let mut saw_results = false;
+    let mut last_err = String::new();
+    // ~6.4 s worst case (8 × 800 ms); the common warm case returns in ~1 sweep.
+    for _ in 0..8 {
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        let output = Command::new("wpa_cli")
+            .args(["-i", &iface, "scan_results"])
+            .output()
+            .await
+            .context("wpa_cli scan_results failed")?;
+        if !output.status.success() {
+            last_err = String::from_utf8_lossy(&output.stderr).into_owned();
+            continue;
+        }
+        saw_results = true;
+        networks = parse_scan_results(&String::from_utf8_lossy(&output.stdout));
+        if !networks.is_empty() {
+            break;
+        }
+    }
+    // Only error if EVERY read failed; an empty-but-successful result is a valid
+    // "no networks in range" answer the caller should surface as such.
+    anyhow::ensure!(saw_results, "wpa_cli scan_results failed: {last_err}");
+    Ok(networks)
+}
 
-    let output = Command::new("wpa_cli")
-        .args(["-i", &iface, "scan_results"])
-        .output()
-        .await
-        .context("wpa_cli scan_results failed")?;
-    anyhow::ensure!(
-        output.status.success(),
-        "wpa_cli scan_results failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // Dedupe by SSID keeping the strongest signal (a network on 2.4+5 GHz or
-    // multiple APs shows up several times).
+/// Parse `wpa_cli scan_results` tab-separated output into deduped networks: one
+/// entry per SSID keeping the strongest signal (a network on 2.4+5 GHz or behind
+/// multiple APs appears several times), strongest first. Hidden (empty-SSID)
+/// beacons are dropped.
+fn parse_scan_results(stdout: &str) -> Vec<ScannedNetwork> {
     let mut best: std::collections::HashMap<String, ScannedNetwork> =
         std::collections::HashMap::new();
     for line in stdout.lines().skip(1) {
@@ -355,7 +376,7 @@ pub async fn scan_networks() -> Result<Vec<ScannedNetwork>> {
     }
     let mut networks: Vec<ScannedNetwork> = best.into_values().collect();
     networks.sort_by_key(|n| std::cmp::Reverse(n.signal));
-    Ok(networks)
+    networks
 }
 
 /// Map a `wpa_supplicant` `scan_results` flags field to a coarse security label the
@@ -547,6 +568,31 @@ mod tests {
         assert_eq!(parse_security("[WPA-PSK-TKIP][ESS]"), "wpa");
         assert_eq!(parse_security("[WEP][ESS]"), "wep");
         assert_eq!(parse_security("[ESS]"), "open");
+    }
+
+    #[test]
+    fn parse_scan_results_dedupes_and_sorts() {
+        // Header line + duplicate SSID across bands + a hidden (empty-SSID) beacon.
+        let raw = "bssid / frequency / signal level / flags / ssid\n\
+            aa:aa:aa:aa:aa:aa\t2412\t-70\t[WPA2-PSK-CCMP][ESS]\tHome\n\
+            bb:bb:bb:bb:bb:bb\t5180\t-45\t[WPA2-PSK-CCMP][ESS]\tHome\n\
+            cc:cc:cc:cc:cc:cc\t2437\t-60\t[ESS]\tGuest\n\
+            dd:dd:dd:dd:dd:dd\t2462\t-80\t[WPA2-PSK-CCMP][ESS]\t";
+        let nets = parse_scan_results(raw);
+        // Home deduped to its strongest (-45), hidden dropped → 2 networks.
+        assert_eq!(nets.len(), 2);
+        assert_eq!(nets[0].ssid, "Home"); // strongest first
+        assert_eq!(nets[0].signal, -45);
+        assert_eq!(nets[0].security, "wpa2");
+        assert_eq!(nets[1].ssid, "Guest");
+        assert_eq!(nets[1].security, "open");
+    }
+
+    #[test]
+    fn parse_scan_results_empty_is_empty() {
+        // Header only (no APs) must yield an empty vec, not a spurious entry.
+        assert!(parse_scan_results("bssid / frequency / signal level / flags / ssid\n").is_empty());
+        assert!(parse_scan_results("").is_empty());
     }
 
     #[test]

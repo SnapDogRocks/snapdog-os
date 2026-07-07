@@ -15,6 +15,7 @@ mkdir -p "$DATA/hostapd"
 mkdir -p "$DATA/systemd/network"
 mkdir -p "$DATA/systemd/resolved.conf.d"
 mkdir -p "$DATA/systemd/system/updater.timer.d"
+mkdir -p "$DATA/systemd/system/snapdog-client.service.d"
 mkdir -p "$DATA/ssh"
 
 # Write defaults if not already present

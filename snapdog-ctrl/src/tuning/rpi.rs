@@ -115,7 +115,11 @@ impl RpiTuningDriver {
         }
         self.write_cmdline(&cmdline_content).await?;
 
-        // 3. Update systemd CPUAffinity drop-in
+        // 3. Update the systemd CPUAffinity drop-in. SYSTEMD_OVERRIDE_DIR is a
+        // symlink to /data (writable) seeded by post-build.sh + snapdog-data-init:
+        // the rootfs is read-only, so writing under /etc directly would EROFS. Via
+        // /data it persists across reboot AND survives an OS update (which replaces
+        // the rootfs slot).
         if config.exclusive_audio_core {
             tokio::fs::create_dir_all(SYSTEMD_OVERRIDE_DIR).await?;
             let affinity_override = "[Service]\n\
@@ -128,6 +132,11 @@ impl RpiTuningDriver {
         } else if tokio::fs::metadata(SYSTEMD_OVERRIDE_PATH).await.is_ok() {
             tokio::fs::remove_file(SYSTEMD_OVERRIDE_PATH).await?;
         }
+        // Re-read unit drop-ins so the affinity takes effect on the next (re)start.
+        let _ = tokio::process::Command::new("systemctl")
+            .arg("daemon-reload")
+            .status()
+            .await;
 
         Ok(())
     }

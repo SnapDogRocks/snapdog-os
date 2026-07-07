@@ -82,25 +82,10 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("snapdog-ctrl listening on {}", interfaces.join(", "));
     }
 
-    // Mark boot as successful (clears OTA rollback counter)
-    #[cfg(target_os = "linux")]
-    {
-        if tokio::fs::metadata("/boot/boot-attempts").await.is_ok() {
-            let _ = tokio::process::Command::new("mount")
-                .args(["-o", "remount,rw", "/boot"])
-                .output()
-                .await;
-
-            if tokio::fs::remove_file("/boot/boot-attempts").await.is_ok() {
-                tracing::info!("Boot marked successful (OTA rollback counter cleared)");
-            }
-
-            let _ = tokio::process::Command::new("mount")
-                .args(["-o", "remount,ro", "/boot"])
-                .output()
-                .await;
-        }
-    }
+    // OTA rollback is handled out-of-process: rauc-mark-good.service runs
+    // rauc-commit (mark-good + boot-handler commit) once the ctrl is up, which
+    // commits a healthy tryboot trial or leaves a failed one to auto-revert on the
+    // next normal boot. Nothing to do here.
 
     axum::serve(listener, app).await?;
 
@@ -171,8 +156,19 @@ async fn build_app() -> Router {
                     break;
                 }
             }
+        } else if wifi_configured {
+            // WiFi is configured but we never entered (and left) AP mode, so
+            // nothing has started the supplicant yet — bring the client up.
+            if let Err(e) = network::start_wifi_client().await {
+                tracing::error!("Failed to start WiFi client: {e}");
+            }
         }
     });
+
+    // Reconcile the previous auto-update: confirm the pending bundle booted, or
+    // mark it bad if the bootloader rolled us back, so a broken bundle is never
+    // reinstalled in a loop.
+    system::reconcile_pending_update().await;
 
     // Preflight health check
     let health_warnings = system::preflight_check().await;
@@ -185,10 +181,9 @@ async fn build_app() -> Router {
         // Auto-detect DAC on first boot: if EEPROM detected and no overlay set → apply + reboot
         if system::auto_apply_dac_overlay().await {
             tracing::info!("DAC detected and configured — rebooting to activate");
-            let _ = tokio::process::Command::new("systemctl")
-                .arg("reboot")
-                .status()
-                .await;
+            // Use the tryboot-aware reboot so a DAC-detect reboot during an OTA
+            // trial re-enters the trial (rather than reverting a good update).
+            system::reboot().await;
             return Router::new(); // unreachable, but satisfies return type
         }
 

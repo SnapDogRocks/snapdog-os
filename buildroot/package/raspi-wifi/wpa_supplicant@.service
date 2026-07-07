@@ -1,0 +1,9 @@
+[Unit]
+Description=WPA supplicant daemon (interface-specific, %I)
+Requires=sys-subsystem-net-devices-%i.device
+After=sys-subsystem-net-devices-%i.device
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/wpa_supplicant -c/etc/wpa_supplicant/wpa_supplicant-%I.conf -i%I
+Restart=on-failure

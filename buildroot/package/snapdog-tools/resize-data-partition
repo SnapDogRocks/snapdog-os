@@ -2,61 +2,151 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Copyright (C) 2026 Fabian Schmieder
 #
-# Safe first-boot resizing and formatting of partitions.
-# Online resizes the active root partition (1GB pre-allocated).
-# Safe expansion and formatting of the unmounted data partition (partition 4).
+# First-boot growth of the persistent data partition (p4) to fill the storage.
+#
+# WHY THIS SHAPE (learned from a device that booted read-only three times):
+#
+#   * The disk that holds /data (p4) ALSO holds the mounted root (p2) and boot
+#     (p1). You therefore cannot re-read its partition table at runtime: a full
+#     BLKRRPART (partprobe / blockdev --rereadpt) returns EBUSY and the kernel
+#     keeps its old 128 MiB view of p4. So fdisk "succeeds" on disk yet the
+#     kernel never sees the bigger partition and mkfs only ever formats 128 MiB.
+#     The only tool-free way to publish a grown last partition on a disk with
+#     mounted partitions is a REBOOT.
+#
+#   * Hence two phases: boot #1 grows the on-disk partition table and reboots;
+#     boot #2 sees the full-size p4 and grows the EXISTING ext4 ONLINE with
+#     resize2fs. We NEVER mkfs: the baked ext4 is valid and labelled, and
+#     reformatting on first boot opened a permanent read-only/unmountable window
+#     (a partial format strands /data) and required an unmounted partition.
+#
+#   * We run After=data.mount, so /data is a normal, mounted, read-write ext4
+#     when we run. There is deliberately no "run before the mount" ordering: the
+#     previous design relied on Before=data.mount, which systemd silently dropped
+#     as an ordering cycle, so resize ran against a live mount and repartitioning
+#     it flipped the ext4 read-only for the whole boot.
+#
+#   * The partition-table grow KEEPS p4's exact start sector (the ext4 lives at
+#     the start of p4). sfdisk --wipe=never preserves the ext4 signature;
+#     --no-reread / --no-tell-kernel leave the running kernel's view (and the
+#     live mount) untouched, so nothing flips read-only before the reboot.
+#
+# Idempotency is keyed on partition SIZE (a grown p4 is >= 1 GiB). A marker on the
+# writable /data breaks any reboot loop if the on-disk grow ever fails.
+#
+# Everything is defensive: on ANY unexpected condition we leave /data mounted
+# read-write at its current size and exit 0. We never leave /data read-only.
 
-# Detect the active root partition device (e.g. /dev/mmcblk0p2, /dev/nvme0n1p2)
-ACTIVE=$(mount | grep " / " | awk '{print $1}')
-if [ -z "$ACTIVE" ]; then
-  echo "Could not detect active root partition, aborting"
-  exit 1
+set -u
+log() { echo "resize-data-partition: $*"; }
+
+MARKER=/data/.resize-grow-attempted
+GIB_SECTORS=2097152        # 1 GiB in 512-byte sectors (idempotency threshold)
+
+# --- /data must be a mounted block device (unit: After/Requires=data.mount) ---
+DATADEV=$(awk '$2 == "/data" { print $1; exit }' /proc/mounts)
+if [ -z "$DATADEV" ] || [ ! -b "$DATADEV" ]; then
+  log "/data is not mounted on a block device; nothing to do"
+  exit 0
 fi
 
-DEVICEBASE=$(echo "$ACTIVE" | sed 's/[0-9]$//')
-DEVICE=$(echo "$DEVICEBASE" | sed 's/p$//')
+# Derive the whole disk and partition number: /dev/mmcblk0p4 -> /dev/mmcblk0, 4
+PARTNUM=$(echo "$DATADEV" | grep -oE '[0-9]+$')
+DEVBASE=$(echo "$DATADEV" | sed 's/[0-9]*$//')   # e.g. /dev/mmcblk0p
+DISK=$(echo "$DEVBASE" | sed 's/p$//')            # e.g. /dev/mmcblk0
+KNAME=$(basename "$DATADEV")                       # e.g. mmcblk0p4
 
-echo "Active root filesystem: $ACTIVE"
-echo "Device base: $DEVICEBASE"
-echo "Physical disk: $DEVICE"
+P4_SECTORS=$(blockdev --getsz "$DATADEV" 2>/dev/null || echo 0)
+DISK_SECTORS=$(blockdev --getsz "$DISK" 2>/dev/null || echo 0)
+log "data=$DATADEV disk=$DISK p4=$PARTNUM p4_sectors=$P4_SECTORS disk_sectors=$DISK_SECTORS"
 
-# 1. Grow the data partition (partition 4) to fill the remaining space on the SD card.
-if [ -f /resize-me ]; then
-  echo "Growing persistent data partition (${DEVICEBASE}4) to fill SD card..."
+# =============================================================================
+# Phase 2: partition already grown -> grow the filesystem ONLINE (never mkfs)
+# =============================================================================
+if [ "$P4_SECTORS" -ge "$GIB_SECTORS" ]; then
+  [ -f "$MARKER" ] && rm -f "$MARKER" 2>/dev/null
 
-  # Find the starting sector of partition 4
-  P4_START=$(fdisk -l "$DEVICE" | grep "${DEVICEBASE}4" | awk '{print $2}')
-  
-  if [ -n "$P4_START" ]; then
-    echo "Recreating partition 4 starting at sector $P4_START to fill remaining sectors..."
-    fdisk "$DEVICE" <<EOT
-d
-4
-n
-p
-4
-$P4_START
-
-w
-EOT
-    partprobe "$DEVICE" 2>/dev/null || true
-    sleep 2
+  FS_BLOCKS=$(dumpe2fs -h "$DATADEV" 2>/dev/null | awk -F: '/^Block count/{gsub(/[^0-9]/,"",$2);print $2;exit}')
+  BLK_SIZE=$(dumpe2fs -h "$DATADEV" 2>/dev/null  | awk -F: '/^Block size/{gsub(/[^0-9]/,"",$2);print $2;exit}')
+  if [ -n "${FS_BLOCKS:-}" ] && [ -n "${BLK_SIZE:-}" ] && [ "$FS_BLOCKS" -gt 0 ] 2>/dev/null; then
+    FS_SECTORS=$(( FS_BLOCKS * BLK_SIZE / 512 ))
+    # Only grow if the fs underfills the partition by more than 5%.
+    if [ "$(( FS_SECTORS + FS_SECTORS / 20 ))" -lt "$P4_SECTORS" ]; then
+      log "growing ext4 online: fs=${FS_SECTORS}s < partition=${P4_SECTORS}s"
+      if command -v resize2fs >/dev/null 2>&1; then
+        resize2fs "$DATADEV" 2>&1 | sed 's/^/  resize2fs: /'
+        log "online grow complete"
+      else
+        log "resize2fs not installed; cannot grow (non-fatal; /data stays rw)"
+      fi
+    else
+      log "filesystem already fills the partition; nothing to do"
+    fi
   else
-    echo "Could not find starting sector of partition 4, skipping partition table resizing"
+    log "could not read ext4 geometry; leaving /data as-is (rw)"
   fi
-
-  # Create ext4 file system on partition 4
-  if [ -b "${DEVICEBASE}4" ]; then
-    echo "Formatting persistent data partition (${DEVICEBASE}4) with label 'data'..."
-    mkfs.ext4 -F -L data "${DEVICEBASE}4"
-  fi
-  
-  rm -f /resize-me
-  echo "First boot partition preparation complete."
+  exit 0
 fi
 
-# Ensure data partition is mounted if not already
-if [ -b "${DEVICEBASE}4" ] && ! mount | grep -q "/data"; then
-  mkdir -p /data
-  mount "${DEVICEBASE}4" /data 2>/dev/null || true
+# =============================================================================
+# Phase 1: baked ~128 MiB partition -> grow the on-disk table, then reboot
+# =============================================================================
+if [ -f "$MARKER" ]; then
+  log "ERROR: p4 still ${P4_SECTORS}s after a previous grow+reboot; not retrying"
+  log "       (avoiding a boot loop). /data stays at its baked size, read-write."
+  exit 0
 fi
+
+if [ "$DISK_SECTORS" -le "$P4_SECTORS" ]; then
+  log "disk (${DISK_SECTORS}s) not larger than p4 (${P4_SECTORS}s); nothing to grow"
+  exit 0
+fi
+
+P4_START=$(cat "/sys/class/block/${KNAME}/start" 2>/dev/null || echo "")
+case "${P4_START:-}" in
+  '' | *[!0-9]*) log "could not read p4 start sector; skipping grow"; exit 0 ;;
+esac
+
+NEW_SIZE=$(( DISK_SECTORS - P4_START ))
+if [ "$NEW_SIZE" -le "$P4_SECTORS" ]; then
+  log "computed new size ${NEW_SIZE}s not larger than current; nothing to grow"
+  exit 0
+fi
+
+log "first boot: growing p4 from ${P4_SECTORS}s to ${NEW_SIZE}s (start ${P4_START}), then rebooting"
+
+# Record the attempt while /data is definitely writable, so a failed grow can
+# never turn into a reboot loop.
+touch "$MARKER" 2>/dev/null || true
+sync
+
+# Rewrite ONLY partition 4, keeping its start sector (preserving the ext4 that
+# lives there) and extending it to the end of the disk. --wipe=never keeps the
+# ext4 signature; --no-reread / --no-tell-kernel leave the live kernel/mount
+# untouched (the reboot below is what publishes the new table).
+if printf 'start=%s, size=%s, type=83\n' "$P4_START" "$NEW_SIZE" \
+     | sfdisk --no-reread --no-tell-kernel --wipe=never --force -N "$PARTNUM" "$DISK" 2>&1 \
+     | sed 's/^/  sfdisk: /'; then
+  sync
+else
+  log "sfdisk grow failed; clearing marker and leaving /data at baked size (rw)"
+  rm -f "$MARKER" 2>/dev/null || true
+  exit 0
+fi
+
+# Verify the ON-DISK table actually grew before spending a reboot on it.
+# `sfdisk -d` prints padded fields ("size=  3667968"), so match the number after
+# size= across whitespace rather than assuming it is its own awk field.
+ONDISK_SIZE=$(sfdisk -d "$DISK" 2>/dev/null \
+  | awk -v dev="$DATADEV" 'index($0, dev " ") == 1 { if (match($0, /size=[ \t]*[0-9]+/)) { s = substr($0, RSTART, RLENGTH); gsub(/[^0-9]/, "", s); print s; exit } }')
+if [ -n "${ONDISK_SIZE:-}" ] && [ "$ONDISK_SIZE" -ge "$GIB_SECTORS" ] 2>/dev/null; then
+  log "on-disk p4 now ${ONDISK_SIZE}s; rebooting to publish the new partition table"
+  sync
+  systemctl reboot
+  exit 0
+fi
+
+log "WARNING: on-disk p4 did not grow (got '${ONDISK_SIZE:-none}'); not rebooting"
+log "         /data stays at its baked size, read-write. Manual resize may be needed."
+rm -f "$MARKER" 2>/dev/null || true
+exit 0

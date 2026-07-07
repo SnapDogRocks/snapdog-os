@@ -7,8 +7,8 @@ use anyhow::{Context, Result};
 
 use crate::routes::{
     AudioInfo, AutoUpdateConfig, ClientConfig, ComponentVersions, DacOverlay, EthernetConfig,
-    EthernetInfo, LogsResponse, NetworkOverview, ScanServersResponse, SshConfig, SystemInfo,
-    TimezoneInfo, UpdateCheckResponse, WifiInfo, WifiNetwork, WifiScanResult,
+    EthernetInfo, LogsResponse, NetworkOverview, ScanServersResponse, Soundcard, SshConfig,
+    SystemInfo, TimezoneInfo, UpdateCheckResponse, WifiInfo, WifiNetwork, WifiScanResult,
 };
 
 // --- Health Check ---
@@ -160,6 +160,18 @@ pub async fn set_system(hostname: Option<String>, channel: Option<String>) -> Re
 }
 
 pub async fn reboot() {
+    // If a RAUC tryboot trial is armed (a bundle was just installed to the
+    // inactive slot), boot it via the RPi one-shot tryboot flag so a failed trial
+    // auto-reverts to the committed slot on the next normal boot. systemd on this
+    // image cannot set the tryboot flag, so use the RESTART2 helper (runs with the
+    // ctrl's CAP_SYS_BOOT). Otherwise a plain reboot, which always lands on the
+    // committed slot.
+    if tokio::fs::metadata("/boot/tryboot.txt").await.is_ok() {
+        tracing::info!("Tryboot trial armed — rebooting into it via the one-shot tryboot flag");
+        // Reboots immediately via RESTART2 (ctrl carries CAP_SYS_BOOT). If it
+        // returns (e.g. missing capability), we fall through to a normal reboot.
+        let _ = run_cmd("/usr/lib/rauc/tryboot-reboot", &[]).await;
+    }
     let _ = run_cmd("systemctl", &["reboot"]).await;
 }
 
@@ -301,7 +313,10 @@ pub async fn delete_wifi() -> Result<()> {
 }
 
 pub async fn wifi_scan() -> WifiScanResult {
-    let networks = crate::network::scan_networks().await.unwrap_or_default();
+    let networks = crate::network::scan_networks().await.unwrap_or_else(|e| {
+        tracing::warn!("WiFi scan failed: {e:#}");
+        Vec::new()
+    });
     WifiScanResult {
         networks: networks
             .into_iter()
@@ -507,21 +522,156 @@ fn prefix_to_subnet(prefix: u8) -> String {
 
 // --- Audio ---
 
-const AVAILABLE_OVERLAYS: &[(&str, &str)] = &[
-    ("", "Auto-detect (HAT EEPROM)"),
-    ("hifiberry-dacplus", "HiFiBerry DAC+/Amp2/Amp4"),
-    ("hifiberry-dacplushd", "HiFiBerry DAC2 HD"),
-    ("hifiberry-dacplusdsp", "HiFiBerry DAC+ DSP"),
-    ("hifiberry-digi", "HiFiBerry Digi+"),
-    ("iqaudio-dacplus", "Raspberry Pi DAC+ / DAC Pro / DigiAMP+"),
-    ("iqaudio-codec", "Raspberry Pi Codec Zero"),
-    ("justboom-dac", "JustBoom DAC/Amp HAT"),
-    ("justboom-digi", "JustBoom Digi HAT"),
-    ("allo-boss-dac-pcm512x-audio", "Allo Boss DAC"),
-    ("max98357a", "MAX98357A (Adafruit, Google AIY)"),
-    ("googlevoicehat-soundcard", "Google AIY Voice HAT"),
-    ("vc4-kms-v3d", "HDMI Audio"),
+/// One HAT in the catalog — the single source of truth for both the manual
+/// overlay dropdown and EEPROM auto-detection. Adding a board is one row here.
+struct HatEntry {
+    /// dtoverlay id written to `/boot/config.txt` (empty = the "auto-detect" row).
+    id: &'static str,
+    /// Human-readable label shown in the dropdown.
+    label: &'static str,
+    /// Required HAT `vendor`/`product` substring, or `None` for any. Guards
+    /// generic model names (e.g. "Digi", shared by `HiFiBerry` and `JustBoom`).
+    vendor: Option<&'static str>,
+    /// `product`-atom substrings that auto-select this overlay (any match; rows
+    /// are tried top-to-bottom, so specific models must precede catch-alls).
+    /// Empty = manual-only: shown in the dropdown but never auto-detected.
+    eeprom: &'static [&'static str],
+}
+
+/// HAT catalog + EEPROM detection table (the SSOT). Product strings mirror
+/// `HiFiBerry`'s own detect-hifiberry (bare model names; the brand is often only
+/// in `vendor`). Only overlays present in the mainline Raspberry Pi kernel are
+/// used — there is no hifiberry-amp4, so a plain Amp4 (like Amp2/DAC+) uses dacplus.
+const HATS: &[HatEntry] = &[
+    HatEntry {
+        id: "",
+        label: "Auto-detect (HAT EEPROM)",
+        vendor: None,
+        eeprom: &[],
+    },
+    // HiFiBerry — specific models first, DAC+ catch-all last.
+    HatEntry {
+        id: "hifiberry-dacplushd",
+        label: "HiFiBerry DAC2 HD",
+        vendor: None,
+        eeprom: &["DAC 2 HD", "DAC2 HD"],
+    },
+    HatEntry {
+        id: "hifiberry-dacplusadcpro",
+        label: "HiFiBerry DAC+ ADC Pro",
+        vendor: None,
+        eeprom: &["DAC+ ADC Pro"],
+    },
+    HatEntry {
+        id: "hifiberry-dacplusadc",
+        label: "HiFiBerry DAC+ ADC",
+        vendor: None,
+        eeprom: &["DAC+ ADC"],
+    },
+    HatEntry {
+        id: "hifiberry-dacplusdsp",
+        label: "HiFiBerry DAC+ DSP",
+        vendor: None,
+        eeprom: &["DAC+ DSP", "DAC+DSP"],
+    },
+    HatEntry {
+        id: "hifiberry-digi-pro",
+        label: "HiFiBerry Digi+ Pro/Digi2 Pro",
+        vendor: Some("HiFiBerry"),
+        eeprom: &["Digi2", "Digi+ Pro"],
+    },
+    HatEntry {
+        id: "hifiberry-digi",
+        label: "HiFiBerry Digi+",
+        vendor: Some("HiFiBerry"),
+        eeprom: &["Digi"],
+    },
+    HatEntry {
+        id: "hifiberry-amp100",
+        label: "HiFiBerry Amp100",
+        vendor: Some("HiFiBerry"),
+        eeprom: &["Amp100"],
+    },
+    HatEntry {
+        id: "hifiberry-amp4pro",
+        label: "HiFiBerry Amp4 Pro",
+        vendor: Some("HiFiBerry"),
+        eeprom: &["Amp4 Pro", "Amp4Pro"],
+    },
+    HatEntry {
+        id: "hifiberry-amp3",
+        label: "HiFiBerry Amp3",
+        vendor: Some("HiFiBerry"),
+        eeprom: &["Amp3"],
+    },
+    HatEntry {
+        id: "hifiberry-dacplus",
+        label: "HiFiBerry DAC+/Amp2/Amp4",
+        vendor: Some("HiFiBerry"),
+        eeprom: &[""],
+    },
+    // IQaudio / Raspberry Pi — Codec Zero before the generic DAC+/DigiAMP+ match.
+    HatEntry {
+        id: "iqaudio-codec",
+        label: "Raspberry Pi Codec Zero",
+        vendor: None,
+        eeprom: &["Codec Zero"],
+    },
+    HatEntry {
+        id: "iqaudio-dacplus",
+        label: "Raspberry Pi DAC+ / DAC Pro / DigiAMP+",
+        vendor: None,
+        eeprom: &["DigiAMP", "IQaudIO", "IQaudio"],
+    },
+    // JustBoom — Digi before the generic DAC/Amp match.
+    HatEntry {
+        id: "justboom-digi",
+        label: "JustBoom Digi HAT",
+        vendor: None,
+        eeprom: &["JustBoom Digi"],
+    },
+    HatEntry {
+        id: "justboom-dac",
+        label: "JustBoom DAC/Amp HAT",
+        vendor: None,
+        eeprom: &["JustBoom"],
+    },
+    // Manual-only — no reliable EEPROM identification.
+    HatEntry {
+        id: "allo-boss-dac-pcm512x-audio",
+        label: "Allo Boss DAC",
+        vendor: None,
+        eeprom: &[],
+    },
+    HatEntry {
+        id: "max98357a",
+        label: "MAX98357A (Adafruit, Google AIY)",
+        vendor: None,
+        eeprom: &[],
+    },
+    HatEntry {
+        id: "googlevoicehat-soundcard",
+        label: "Google AIY Voice HAT",
+        vendor: None,
+        eeprom: &[],
+    },
+    HatEntry {
+        id: "vc4-kms-v3d",
+        label: "HDMI Audio",
+        vendor: None,
+        eeprom: &[],
+    },
 ];
+
+/// The overlay catalog for the manual dropdown — derived from [`HATS`] (SSOT).
+pub fn overlay_catalog() -> Vec<DacOverlay> {
+    HATS.iter()
+        .map(|h| DacOverlay {
+            id: h.id.into(),
+            name: h.label.into(),
+        })
+        .collect()
+}
 
 /// Auto-apply DAC overlay on first boot if EEPROM detected and no overlay configured.
 /// Returns true if overlay was applied (caller should reboot).
@@ -541,24 +691,28 @@ pub async fn auto_apply_dac_overlay() -> bool {
     false
 }
 
-/// Detect DAC from HAT EEPROM product string.
+/// Auto-detect the DAC overlay from the HAT EEPROM, using [`HATS`] (SSOT).
+/// Reads the `product` atom (and `vendor`, since `HiFiBerry` often carries the
+/// brand only there) and returns the first entry whose vendor guard passes and
+/// one of whose `eeprom` substrings appears in the product string.
 async fn detect_hat_overlay() -> Option<&'static str> {
     let product = read_file("/proc/device-tree/hat/product").await.ok()?;
-    let product = product.trim();
+    let vendor = read_file("/proc/device-tree/hat/vendor")
+        .await
+        .unwrap_or_default();
+    match_hat_overlay(product.trim(), vendor.trim())
+}
 
-    Some(match product {
-        p if p.contains("DAC2 HD") => "hifiberry-dacplushd",
-        p if p.contains("DAC+ DSP") || p.contains("DAC+DSP") => "hifiberry-dacplusdsp",
-        p if p.contains("Digi") && p.contains("HiFiBerry") => "hifiberry-digi",
-        p if p.contains("HiFiBerry") => "hifiberry-dacplus",
-        p if p.contains("DigiAMP") || p.contains("IQaudIO") || p.contains("IQaudio") => {
-            "iqaudio-dacplus"
-        }
-        p if p.contains("Codec Zero") => "iqaudio-codec",
-        p if p.contains("JustBoom") && p.contains("Digi") => "justboom-digi",
-        p if p.contains("JustBoom") => "justboom-dac",
-        _ => return None,
-    })
+/// Pure [`HATS`] lookup behind [`detect_hat_overlay`] — split out so the tricky
+/// vendor-gate / ordering cases can be unit-tested without touching `/proc`.
+fn match_hat_overlay(product: &str, vendor: &str) -> Option<&'static str> {
+    HATS.iter()
+        .find(|h| {
+            h.vendor
+                .is_none_or(|v| product.contains(v) || vendor.contains(v))
+                && h.eeprom.iter().any(|m| product.contains(*m))
+        })
+        .map(|h| h.id)
 }
 
 pub async fn get_audio() -> AudioInfo {
@@ -577,13 +731,7 @@ pub async fn get_audio() -> AudioInfo {
         detected_card,
         detected_hat: detected_hat.unwrap_or_default().to_string(),
         soundcard: "hw:0".into(),
-        available_overlays: AVAILABLE_OVERLAYS
-            .iter()
-            .map(|(id, name)| DacOverlay {
-                id: (*id).into(),
-                name: (*name).into(),
-            })
-            .collect(),
+        available_overlays: overlay_catalog(),
     }
 }
 
@@ -683,6 +831,20 @@ pub async fn set_ssh(config: SshConfig) -> Result<()> {
 // --- OTA Update (RAUC) ---
 
 const UPDATE_BASE_URL: &str = "https://updates.snapdog.cc/os/bundles";
+/// Channel manifest published alongside the bundles (`latest-<channel>.json`).
+/// It is the SSOT for the version a channel currently points at, so auto-update
+/// can compare it to the running version without downloading the whole bundle.
+const UPDATE_MANIFEST_BASE: &str = "https://updates.snapdog.cc/os/images";
+/// Running OS version, written into the read-only rootfs at build time (SSOT).
+const OS_VERSION_FILE: &str = "/etc/snapdog-os.version";
+/// Version we handed to RAUC and are rebooting into, pending confirmation that it
+/// actually boots. Written just before the post-install reboot and reconciled on
+/// the next boot. Lives on the writable `/data` partition.
+const PENDING_UPDATE_FILE: &str = "/data/snapdog-os.pending-update";
+/// Version of a bundle that installed but failed to boot (the bootloader rolled
+/// back). Auto-update refuses to reinstall this version so a broken bundle cannot
+/// drive an endless install→rollback→reinstall loop that wears out the eMMC/SD.
+const FAILED_UPDATE_FILE: &str = "/data/snapdog-os.failed-update";
 
 /// Construct the bundle URL for a given channel.
 pub async fn bundle_url(channel: &str) -> String {
@@ -719,16 +881,170 @@ pub async fn check_update() -> UpdateCheckResponse {
         .await
         .is_ok_and(|o| o.status.success());
 
+    // RAUC verifies the bundle signature against the device keyring at install
+    // time (`rauc install` refuses an unsigned or untrusted bundle), so when the
+    // keyring is present the update is guaranteed to be cryptographically
+    // verified before it is applied.
+    let signature_verified = tokio::fs::metadata("/etc/rauc/ca.cert.pem").await.is_ok();
+
     UpdateCheckResponse {
         available,
+        installable: available && signature_verified,
         current_version: if current.is_empty() {
             "unknown".into()
         } else {
             current
         },
+        // The channel bundle URL is version-less, so the remote version is not
+        // known without downloading the bundle; left empty (UI hides the arrow).
+        latest_version: String::new(),
         channel: config.channel,
+        is_downgrade: false,
+        signature_verified,
         bundle_url: url,
     }
+}
+
+// --- Auto-Update Version Gating ---
+
+/// Outcome of the auto-update pre-install decision.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum UpdateDecision {
+    /// Install this (strictly newer, not known-bad) version.
+    Install(String),
+    /// Skip this cycle for the given human-readable reason.
+    Skip(&'static str),
+}
+
+/// The currently running OS version (from the read-only rootfs SSOT), trimmed.
+pub async fn current_os_version() -> String {
+    read_file(OS_VERSION_FILE)
+        .await
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+/// Fetch the version a channel currently points at from its manifest
+/// (`latest-<channel>.json`). Returns `None` when the manifest is unreachable or
+/// unparseable — callers must treat "unknown" as "do not install" rather than
+/// installing blind.
+pub async fn remote_channel_version(channel: &str) -> Option<String> {
+    let url = format!("{UPDATE_MANIFEST_BASE}/latest-{channel}.json");
+    let body = command_stdout("curl", &["-sf", "--max-time", "10", &url])
+        .await
+        .ok()?;
+    let manifest: serde_json::Value = serde_json::from_str(&body).ok()?;
+    let version = manifest.get("version")?.as_str()?.trim().to_string();
+    (!version.is_empty()).then_some(version)
+}
+
+/// The version last marked bad after a failed boot/rollback, if any.
+pub async fn last_failed_update() -> Option<String> {
+    let version = read_file(FAILED_UPDATE_FILE).await.ok()?.trim().to_string();
+    (!version.is_empty()).then_some(version)
+}
+
+/// Record the version we are about to reboot into (pending boot confirmation).
+pub async fn record_pending_update(version: &str) {
+    if let Err(e) = tokio::fs::write(PENDING_UPDATE_FILE, format!("{version}\n")).await {
+        tracing::warn!("auto-update: failed to record pending update {version}: {e}");
+    }
+}
+
+async fn remove_state_file(path: &str) {
+    if let Err(e) = tokio::fs::remove_file(path).await {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!("auto-update: failed to remove {path}: {e}");
+        }
+    }
+}
+
+/// Reconcile the pending-update marker on boot. Called once at startup.
+///
+/// If we booted into the version we installed, the update took — clear the marker.
+/// If we booted a *different* version, the pending bundle failed to boot and the
+/// bootloader rolled us back — remember it as failed so auto-update never retries
+/// it. Also clears a stale "failed" marker whenever we are successfully running
+/// the version it names (e.g. the admin manually reinstalled a fixed bundle of the
+/// same version), so auto-update is unblocked again.
+pub async fn reconcile_pending_update() {
+    let running = current_os_version().await;
+
+    if !running.is_empty() && last_failed_update().await.as_deref() == Some(running.as_str()) {
+        remove_state_file(FAILED_UPDATE_FILE).await;
+    }
+
+    let Some(pending) = read_file(PENDING_UPDATE_FILE)
+        .await
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    else {
+        return;
+    };
+
+    if running == pending {
+        tracing::info!("auto-update: confirmed boot into {pending}");
+        remove_state_file(FAILED_UPDATE_FILE).await;
+    } else {
+        tracing::warn!(
+            "auto-update: bundle {pending} failed to boot (running {running}); \
+             marking it bad to prevent a reinstall loop"
+        );
+        if let Err(e) = tokio::fs::write(FAILED_UPDATE_FILE, format!("{pending}\n")).await {
+            tracing::warn!("auto-update: failed to record failed update {pending}: {e}");
+        }
+    }
+    remove_state_file(PENDING_UPDATE_FILE).await;
+}
+
+/// Decide whether auto-update should install, given the remote version (if known),
+/// the running version, and the last known-bad version. Pure so it can be tested.
+#[must_use]
+pub fn decide_update(
+    remote: Option<&str>,
+    current: &str,
+    last_failed: Option<&str>,
+) -> UpdateDecision {
+    let Some(remote) = remote else {
+        return UpdateDecision::Skip("remote version unknown");
+    };
+    if !version_is_newer(remote, current) {
+        return UpdateDecision::Skip("already up to date");
+    }
+    if last_failed == Some(remote) {
+        return UpdateDecision::Skip("bundle previously failed to boot");
+    }
+    UpdateDecision::Install(remote.to_string())
+}
+
+/// True when `remote` is a strictly newer version than `current`.
+///
+/// Compares dotted numeric components (ignoring a leading `v` and any
+/// `-prerelease`/`+build` suffix). If either side cannot be parsed, falls back to
+/// "install when they differ" so a legitimately different bundle is not blocked —
+/// the last-failed gate still prevents a reinstall loop.
+fn version_is_newer(remote: &str, current: &str) -> bool {
+    match (parse_version(remote), parse_version(current)) {
+        (Some(mut r), Some(mut c)) => {
+            let width = r.len().max(c.len());
+            r.resize(width, 0);
+            c.resize(width, 0);
+            r > c
+        }
+        _ => remote.trim() != current.trim(),
+    }
+}
+
+fn parse_version(version: &str) -> Option<Vec<u64>> {
+    let core = version.trim().trim_start_matches('v');
+    let core = core.split(['-', '+']).next().unwrap_or(core);
+    let parts: Vec<u64> = core
+        .split('.')
+        .map(|p| p.parse().ok())
+        .collect::<Option<_>>()?;
+    (!parts.is_empty()).then_some(parts)
 }
 
 // --- Factory Reset ---
@@ -750,6 +1066,8 @@ pub async fn factory_reset() -> Result<()> {
     let _ = tokio::fs::remove_file("/data/hostname").await;
     let _ = tokio::fs::remove_file("/data/snapdog-os.channel").await;
     let _ = tokio::fs::remove_file("/data/snapdog-os.auto-update").await;
+    let _ = tokio::fs::remove_file(PENDING_UPDATE_FILE).await;
+    let _ = tokio::fs::remove_file(FAILED_UPDATE_FILE).await;
     let _ = tokio::fs::remove_file("/data/snapdog/snapdog.toml").await;
 
     // Disable SSH and remove authorized keys
@@ -853,7 +1171,7 @@ pub async fn set_timezone(tz: &str) -> Result<()> {
     let path = std::path::Path::new("/data/localtime");
     if path.exists() || path.is_symlink() {
         tokio::fs::remove_file(path).await.ok();
-        let target = format!("/usr/share/zoneinfo/{}", tz);
+        let target = format!("/usr/share/zoneinfo/{tz}");
         tokio::fs::symlink(target, path)
             .await
             .context("failed to update /data/localtime timezone symlink")
@@ -864,7 +1182,7 @@ pub async fn set_timezone(tz: &str) -> Result<()> {
 
 // --- Soundcards ---
 
-pub async fn list_soundcards() -> Vec<String> {
+pub async fn list_soundcards() -> Vec<Soundcard> {
     let output = tokio::process::Command::new("aplay")
         .args(["-l"])
         .output()
@@ -875,11 +1193,28 @@ pub async fn list_soundcards() -> Vec<String> {
         .map(|o| {
             String::from_utf8_lossy(&o.stdout)
                 .lines()
-                .filter(|l| l.starts_with("card "))
-                .map(ToString::to_string)
+                .filter_map(parse_soundcard_line)
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Parse one `aplay -l` line — `card N: id [name], device M: ...` — into the
+/// ALSA device (`hw:N`) plus a friendly name (the bracketed name, or the id).
+fn parse_soundcard_line(line: &str) -> Option<Soundcard> {
+    let (num, after) = line.strip_prefix("card ")?.split_once(':')?;
+    let num: u8 = num.trim().parse().ok()?;
+    let name = after
+        .split_once('[')
+        .and_then(|(_, rest)| rest.split_once(']'))
+        .map(|(n, _)| n.trim())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| after.split(',').next().unwrap_or(after).trim())
+        .to_string();
+    Some(Soundcard {
+        device: format!("hw:{num}"),
+        name,
+    })
 }
 
 // --- Auto-Update Settings ---
@@ -984,6 +1319,26 @@ const SERVICE_MAP: &[(&str, &str)] = &[
     ("server", "snapdog.service"),
 ];
 
+/// Writable flag that gates `sshd.service` on the read-only rootfs. `post-build.sh`
+/// gives sshd a drop-in with `ConditionPathExists=/data/ssh.enabled`, so sshd only
+/// starts (at boot or on demand) while this file exists. We toggle the flag instead
+/// of `systemctl mask/unmask` or enable/disable, which cannot write to read-only /etc.
+const SSH_ENABLED_FLAG: &str = "/data/ssh.enabled";
+
+/// Create or remove the flag that gates `sshd.service`.
+async fn set_ssh_enabled_flag(enabled: bool) -> Result<()> {
+    if enabled {
+        tokio::fs::write(SSH_ENABLED_FLAG, b"")
+            .await
+            .context("failed to create SSH enable flag")?;
+    } else if let Err(e) = tokio::fs::remove_file(SSH_ENABLED_FLAG).await {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            return Err(e).context("failed to remove SSH enable flag");
+        }
+    }
+    Ok(())
+}
+
 /// Read service states from ctrl.toml, apply defaults if missing.
 pub async fn get_service_config() -> std::collections::HashMap<String, bool> {
     let content = read_file(CTRL_CONFIG).await.unwrap_or_default();
@@ -1018,10 +1373,15 @@ pub async fn apply_service_config() {
     for (key, unit) in SERVICE_MAP {
         let enabled = config.get(*key).copied().unwrap_or(false);
         if enabled {
-            let _ = run_cmd("systemctl", &["unmask", unit]).await;
+            if *key == "ssh" {
+                let _ = set_ssh_enabled_flag(true).await;
+            }
             let _ = run_cmd("systemctl", &["start", unit]).await;
         } else {
             let _ = run_cmd("systemctl", &["stop", unit]).await;
+            if *key == "ssh" {
+                let _ = set_ssh_enabled_flag(false).await;
+            }
         }
     }
 }
@@ -1047,10 +1407,15 @@ pub async fn set_service(name: &str, enabled: bool) -> Result<()> {
     atomic_write(CTRL_CONFIG, &doc.to_string()).await?;
 
     if enabled {
-        let _ = run_cmd("systemctl", &["unmask", unit]).await;
+        if name == "ssh" {
+            set_ssh_enabled_flag(true).await?;
+        }
         run_cmd("systemctl", &["start", unit]).await?;
     } else {
         run_cmd("systemctl", &["stop", unit]).await?;
+        if name == "ssh" {
+            set_ssh_enabled_flag(false).await?;
+        }
     }
     Ok(())
 }
@@ -1223,6 +1588,78 @@ mod tests {
     use super::*;
 
     #[test]
+    fn hat_detection_covers_tricky_cases() {
+        // HiFiBerry: bare model names, brand only in `vendor`.
+        assert_eq!(
+            match_hat_overlay("Amp3", "HiFiBerry"),
+            Some("hifiberry-amp3")
+        );
+        assert_eq!(
+            match_hat_overlay("Amp4 Pro", "HiFiBerry"),
+            Some("hifiberry-amp4pro")
+        );
+        assert_eq!(
+            match_hat_overlay("Amp100", "HiFiBerry"),
+            Some("hifiberry-amp100")
+        );
+        assert_eq!(
+            match_hat_overlay("DAC 2 HD", "HiFiBerry"),
+            Some("hifiberry-dacplushd")
+        );
+        assert_eq!(
+            match_hat_overlay("Digi2 Pro", "HiFiBerry"),
+            Some("hifiberry-digi-pro")
+        );
+        assert_eq!(
+            match_hat_overlay("Digi+", "HiFiBerry"),
+            Some("hifiberry-digi")
+        );
+        // Amp2 reports as "HiFiBerry DAC+"; Amp4/DAC+ hit the dacplus catch-all.
+        assert_eq!(
+            match_hat_overlay("HiFiBerry DAC+", "HiFiBerry"),
+            Some("hifiberry-dacplus")
+        );
+        // IQaudio / official RPi must NOT be stolen by the HiFiBerry Digi row
+        // ("DigiAMP+" contains "Digi") or the HiFiBerry DAC+ catch-all.
+        assert_eq!(
+            match_hat_overlay("DigiAMP+", "IQaudIO Limited"),
+            Some("iqaudio-dacplus")
+        );
+        assert_eq!(
+            match_hat_overlay("IQaudIO DAC+", "IQaudIO Limited"),
+            Some("iqaudio-dacplus")
+        );
+        // Codec Zero is more specific than DAC+ — its row wins despite "IQaudIO".
+        assert_eq!(
+            match_hat_overlay("IQaudIO Codec Zero", "IQaudIO Limited"),
+            Some("iqaudio-codec")
+        );
+        // JustBoom "Digi" must not be caught by the HiFiBerry Digi row.
+        assert_eq!(
+            match_hat_overlay("JustBoom Digi HAT", "JustBoom"),
+            Some("justboom-digi")
+        );
+        assert_eq!(
+            match_hat_overlay("JustBoom DAC HAT", "JustBoom"),
+            Some("justboom-dac")
+        );
+        // Unknown board → no auto-overlay.
+        assert_eq!(match_hat_overlay("Mystery Board", "Nobody Inc"), None);
+    }
+
+    #[test]
+    fn parse_soundcard_line_extracts_device_and_name() {
+        let sc = parse_soundcard_line(
+            "card 1: sndrpihifiberry [snd_rpi_hifiberry_dacplus], device 0: HiFiBerry [x]",
+        )
+        .unwrap();
+        assert_eq!(sc.device, "hw:1");
+        assert_eq!(sc.name, "snd_rpi_hifiberry_dacplus");
+        // Non-card header lines are ignored.
+        assert!(parse_soundcard_line("**** List of PLAYBACK Hardware Devices ****").is_none());
+    }
+
+    #[test]
     fn validate_client_arg_rejects_environment_file_breakout() {
         assert!(validate_client_arg("host_id", "living room").is_err());
         assert!(validate_client_arg("host_id", "living\"room").is_err());
@@ -1264,6 +1701,56 @@ mod tests {
         assert_eq!(status.ssid, "Studio");
         assert_eq!(status.ip, "10.0.0.3");
         assert_eq!(parse_wifi_signal("RSSI=-51\nLINKSPEED=72\n"), Some(-51));
+    }
+
+    #[test]
+    fn version_comparison_is_strict_and_numeric() {
+        assert!(version_is_newer("0.4.0", "0.3.0"));
+        assert!(version_is_newer("0.3.1", "0.3.0"));
+        assert!(version_is_newer("1.0.0", "0.9.9"));
+        // Equal is not newer — this is what stops the daily reinstall of the
+        // bundle already running.
+        assert!(!version_is_newer("0.3.0", "0.3.0"));
+        // Never auto-downgrade.
+        assert!(!version_is_newer("0.2.9", "0.3.0"));
+        // Numeric, not lexicographic (would fail a naive string compare).
+        assert!(version_is_newer("0.10.0", "0.9.0"));
+        // Leading `v` and build/prerelease suffixes are ignored for the core cmp.
+        assert!(version_is_newer("v0.4.0", "0.3.0"));
+        assert!(!version_is_newer("0.3.0+build.7", "0.3.0"));
+        // Unparseable but different → treated as installable (last-failed gate is
+        // the backstop); identical unparseable → not newer.
+        assert!(version_is_newer("nightly-b", "nightly-a"));
+        assert!(!version_is_newer("weird", "weird"));
+    }
+
+    #[test]
+    fn decide_update_only_installs_strictly_newer_non_bad_versions() {
+        // Newer and never failed → install.
+        assert_eq!(
+            decide_update(Some("0.4.0"), "0.3.0", None),
+            UpdateDecision::Install("0.4.0".into())
+        );
+        // Same version → skip (prevents the flash-wearing daily reinstall).
+        assert_eq!(
+            decide_update(Some("0.3.0"), "0.3.0", None),
+            UpdateDecision::Skip("already up to date")
+        );
+        // Newer but previously rolled back → skip (breaks the reinstall loop).
+        assert_eq!(
+            decide_update(Some("0.4.0"), "0.3.0", Some("0.4.0")),
+            UpdateDecision::Skip("bundle previously failed to boot")
+        );
+        // A newer version than the known-bad one is still allowed through.
+        assert_eq!(
+            decide_update(Some("0.5.0"), "0.3.0", Some("0.4.0")),
+            UpdateDecision::Install("0.5.0".into())
+        );
+        // Manifest unreachable → never install blind.
+        assert_eq!(
+            decide_update(None, "0.3.0", None),
+            UpdateDecision::Skip("remote version unknown")
+        );
     }
 
     #[test]

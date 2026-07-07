@@ -27,8 +27,12 @@ existing SnapDog client binary and Homebrew tap pattern.
 6. The workflow attaches archives, per-archive checksums, and aggregate `SHA256SUMS` to the
    GitHub Release.
 7. GitHub artifact attestations are generated for the release assets.
-8. The workflow updates `SnapDogRocks/homebrew-tap` with
-   `Formula/snapdog-update.rb`.
+8. For **stable** tags only, the workflow updates `SnapDogRocks/homebrew-tap`
+   with `Formula/snapdog-update.rb`. Prerelease tags (a semver hyphen suffix,
+   e.g. `snapdog-update-v0.1.0-beta.1` or `-rc.1`) still publish GitHub Release
+   assets but skip the tap, so `brew install snapdogrocks/tap/snapdog-update`
+   always resolves to the latest stable. The gate is the `meta.prerelease`
+   output driving `if:` on the `update-homebrew` job.
 
 The release job sets `SNAPDOG_UPDATE_VERSION=<version>` during the build so the
 binary reports the package release version instead of the root OS image tag.

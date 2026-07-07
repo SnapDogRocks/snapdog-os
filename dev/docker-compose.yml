@@ -11,6 +11,10 @@ services:
       bash -c "
         set -e
 
+        # Board for the RAUC compatible (snapdog-os-<board>); the local build is
+        # pi4-only (raspberrypi4_64_defconfig). release.yml sets this per matrix board.
+        export SNAPDOG_BOARD=pi4
+
         echo '── Setup buildroot ──'
         if [ ! -d /build/buildroot/.git ]; then
           git clone --depth 1 --branch 2025.02 https://github.com/buildroot/buildroot /build/buildroot

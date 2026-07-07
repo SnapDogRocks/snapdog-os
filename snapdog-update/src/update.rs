@@ -190,6 +190,13 @@ impl UpgradeManager {
             .reporter
             .spinner("install", "Starting RAUC installation...");
 
+        // RAUC's InstallBundle is asynchronous, so "idle" is ambiguous: it is both
+        // the pre-start state (right after trigger_install(), before the installer
+        // thread spins up) and the post-finish state. Reading that early "idle" as
+        // completion would reboot before anything was written to the slot. So we
+        // only accept "idle" as done once we have actually observed "installing".
+        let mut saw_installing = false;
+
         loop {
             if sleep_until_deadline(deadline, self.poll_interval, "RAUC installation")
                 .await
@@ -201,25 +208,54 @@ impl UpgradeManager {
                 ));
             }
 
-            let status =
-                run_with_deadline(deadline, "fetch update status", self.client.update_status())
-                    .await?;
-            if status.operation == "installing" {
-                if let Some(prog) = status.progress {
-                    ui_poll.update_message(format!(
-                        "Installing: {:.1}% ({})",
-                        prog.percent, prog.message
-                    ));
+            // The status endpoint can hiccup while rauc is busy writing the slot
+            // (a slow or momentarily-malformed response). A transient poll error
+            // must NOT abort the update — keep polling; the deadline is enforced
+            // by sleep_until_deadline at the top of the loop.
+            let status = match run_with_deadline(
+                deadline,
+                "fetch update status",
+                self.client.update_status(),
+            )
+            .await
+            {
+                Ok(status) => status,
+                Err(e) => {
+                    ui_poll.update_message(format!("status poll failed (retrying): {e}"));
+                    continue;
                 }
-            } else if status.operation == "idle" {
-                if !status.last_error.is_empty() {
+            };
+
+            match classify_install_status(&status.operation, &status.last_error, saw_installing) {
+                InstallPoll::Installing => {
+                    saw_installing = true;
+                    if let Some(prog) = status.progress {
+                        ui_poll.update_message(format!(
+                            "Installing: {}% ({})",
+                            prog.percentage, prog.message
+                        ));
+                    }
+                }
+                InstallPoll::Failed => {
                     ui_poll.finish_failure("Installation failed!");
                     return Err(UpgradeError::Failed(status.last_error));
                 }
-                ui_poll.finish_success("Installation complete! System is rebooting...");
-                break;
-            } else {
-                ui_poll.update_message(format!("Operation status: {}", status.operation));
+                InstallPoll::Completed => {
+                    // The install is done but the device does not reboot on its own
+                    // — trigger it so it boots into the freshly-installed slot. The
+                    // connection drops as it goes down, so ignore the transport
+                    // result.
+                    let _ = self.client.reboot().await;
+                    ui_poll.finish_success("Installation complete! System is rebooting...");
+                    break;
+                }
+                InstallPoll::Waiting => {
+                    ui_poll.update_message(if status.operation == "idle" {
+                        "Waiting for installation to start...".to_string()
+                    } else {
+                        format!("Operation status: {}", status.operation)
+                    });
+                }
             }
         }
         Ok(())
@@ -458,6 +494,30 @@ fn booted_slot_name(slots: &[SlotStatus]) -> Option<String> {
         .iter()
         .find(|slot| slot.booted)
         .map(|slot| slot.name.clone())
+}
+
+/// What a single RAUC status poll means during installation.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum InstallPoll {
+    Installing,
+    Completed,
+    Failed,
+    Waiting,
+}
+
+/// Interpret a RAUC status poll. Because `InstallBundle` is asynchronous, "idle"
+/// is ambiguous — it is both the pre-start and the post-finish state. We only
+/// treat "idle" as completion once "installing" has been observed at least once;
+/// before that, an "idle" (or any other transient operation) means the installer
+/// simply has not started yet. A non-empty `last_error` on "idle" is always a
+/// failure, matching RAUC's terminal-error reporting.
+fn classify_install_status(operation: &str, last_error: &str, saw_installing: bool) -> InstallPoll {
+    match operation {
+        "installing" => InstallPoll::Installing,
+        "idle" if !last_error.is_empty() => InstallPoll::Failed,
+        "idle" if saw_installing => InstallPoll::Completed,
+        _ => InstallPoll::Waiting,
+    }
 }
 
 async fn run_with_deadline<T, Fut>(
@@ -775,6 +835,51 @@ mod tests {
     }
 
     #[test]
+    fn idle_before_installing_is_not_completion() {
+        // The bug this guards: the pre-start "idle" must not be read as "done".
+        assert_eq!(
+            classify_install_status("idle", "", false),
+            InstallPoll::Waiting
+        );
+    }
+
+    #[test]
+    fn idle_after_installing_is_completion() {
+        assert_eq!(
+            classify_install_status("idle", "", true),
+            InstallPoll::Completed
+        );
+    }
+
+    #[test]
+    fn installing_is_reported_and_arms_completion() {
+        assert_eq!(
+            classify_install_status("installing", "", false),
+            InstallPoll::Installing
+        );
+    }
+
+    #[test]
+    fn idle_with_error_is_failure_regardless_of_progress() {
+        assert_eq!(
+            classify_install_status("idle", "signature invalid", false),
+            InstallPoll::Failed
+        );
+        assert_eq!(
+            classify_install_status("idle", "verity hash mismatch", true),
+            InstallPoll::Failed
+        );
+    }
+
+    #[test]
+    fn unknown_operation_keeps_waiting() {
+        assert_eq!(
+            classify_install_status("starting", "", false),
+            InstallPoll::Waiting
+        );
+    }
+
+    #[test]
     fn raw_flash_reboot_accepts_recent_uptime() {
         let expectation = RebootExpectation::RawFlash {
             previous_version: "1.0.0".to_string(),
@@ -782,5 +887,37 @@ mod tests {
 
         let reason = expectation.success_reason(&system_info("1.0.0", 42), None);
         assert!(reason.is_some_and(|r| r == "device rebooted"));
+    }
+
+    #[test]
+    fn installing_status_with_percentage_progress_decodes() {
+        // Regression: the device populates progress as {"percentage": <int>, ...}
+        // ONLY while installing. A field mismatch (percent vs percentage) failed the
+        // whole status decode on every poll during the install window, so
+        // `saw_installing` was never set and the client waited forever for an install
+        // that had already finished. This is the exact body observed on-device.
+        let body = r#"{"operation":"installing","progress":{"percentage":40,"message":"Determining target install group done."},"last_error":"","slots":[]}"#;
+        let status: crate::client::UpdateStatus =
+            serde_json::from_str(body).expect("installing status must decode");
+        assert_eq!(status.operation, "installing");
+        let prog = status.progress.expect("progress present while installing");
+        assert_eq!(prog.percentage, 40);
+        assert_eq!(
+            classify_install_status(&status.operation, &status.last_error, false),
+            InstallPoll::Installing
+        );
+    }
+
+    #[test]
+    fn malformed_progress_never_blocks_operation() {
+        // Defense-in-depth: a display-only progress field of an unexpected shape must
+        // degrade to None, never failing the decode of the whole status — otherwise
+        // `operation` (which drives the state machine) becomes unreadable.
+        let body =
+            r#"{"operation":"installing","progress":{"percent":99.5},"last_error":"","slots":[]}"#;
+        let status: crate::client::UpdateStatus =
+            serde_json::from_str(body).expect("a mismatched progress shape must not fail decode");
+        assert_eq!(status.operation, "installing");
+        assert!(status.progress.is_none());
     }
 }

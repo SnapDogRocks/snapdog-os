@@ -9,7 +9,7 @@ use anyhow::Result;
 use tokio::sync::Mutex;
 
 use crate::routes::{
-    AudioInfo, ClientConfig, DacOverlay, EthernetConfig, EthernetInfo, NetworkOverview, SshConfig,
+    AudioInfo, ClientConfig, EthernetConfig, EthernetInfo, NetworkOverview, Soundcard, SshConfig,
     SystemInfo, WifiInfo, WifiNetwork, WifiScanResult,
 };
 
@@ -55,7 +55,10 @@ impl MockState {
                     latency: 0,
                     mdns_name: "_snapdog._tcp".into(),
                     running: true,
-                    available_soundcards: vec!["card 0: sndrpiallo [snd_rpi_allo_boss]".into()],
+                    available_soundcards: vec![Soundcard {
+                        device: "hw:0".into(),
+                        name: "Allo Boss DAC".into(),
+                    }],
                 },
                 ssh: SshConfig {
                     enabled: false,
@@ -223,13 +226,7 @@ impl MockState {
             detected_card: "Mock Allo Boss DAC".into(),
             detected_hat: "hifiberry-dacplus".into(),
             soundcard: "hw:0".into(),
-            available_overlays: AVAILABLE_OVERLAYS
-                .iter()
-                .map(|(id, name)| DacOverlay {
-                    id: (*id).into(),
-                    name: (*name).into(),
-                })
-                .collect(),
+            available_overlays: crate::system::overlay_catalog(),
         }
     }
 
@@ -255,7 +252,10 @@ impl MockState {
         s.client = config;
         s.client.mdns_name = "_snapdog._tcp".into();
         s.client.running = true;
-        s.client.available_soundcards = vec!["card 0: sndrpiallo [snd_rpi_allo_boss]".into()];
+        s.client.available_soundcards = vec![Soundcard {
+            device: "hw:0".into(),
+            name: "Allo Boss DAC".into(),
+        }];
         drop(s);
         Ok(())
     }
@@ -272,12 +272,3 @@ impl MockState {
         Ok(())
     }
 }
-
-const AVAILABLE_OVERLAYS: &[(&str, &str)] = &[
-    ("", "Auto-detect (HAT EEPROM)"),
-    ("hifiberry-dacplus", "HiFiBerry DAC+/Amp2/Amp4"),
-    ("hifiberry-dacplushd", "HiFiBerry DAC2 HD"),
-    ("iqaudio-dacplus", "Raspberry Pi DAC+ / DAC Pro"),
-    ("justboom-dac", "JustBoom DAC/Amp HAT"),
-    ("vc4-kms-v3d", "HDMI Audio"),
-];

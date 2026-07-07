@@ -48,10 +48,43 @@ export interface TuningConfig {
   exclusive_audio_core: boolean;
 }
 
+/** WiFi encryption as reported by a scan. */
+export type WifiSecurity = "wpa3" | "wpa2" | "wpa" | "wep" | "open";
+
 export interface WifiNetwork {
   ssid: string;
   signal: number;
-  security: string;
+  security: string; // one of WifiSecurity, but kept lenient for forward-compat
+}
+
+/**
+ * Connection lifecycle surfaced by GET /api/network/wifi so the UI can give
+ * live feedback while an (async) association is in progress.
+ */
+export type WifiState =
+  | "disconnected"
+  | "associating"
+  | "auth_failed"
+  | "acquiring_ip"
+  | "connected";
+
+export interface WifiScanResult {
+  networks: WifiNetwork[];
+  /** ok = scan ran; unavailable_ap_mode = radio busy as setup AP; error = scan failed. */
+  status: "ok" | "unavailable_ap_mode" | "error";
+  ap_active: boolean;
+}
+
+/**
+ * Masked setup-AP view from GET /api/network/softap. The passphrase is only
+ * non-null while the setup AP is actually running (the requester is already
+ * on it and needs it shown), otherwise it is withheld from the LAN.
+ */
+export interface SoftApView {
+  enabled: boolean;
+  ssid: string;
+  country: string;
+  password: string | null;
 }
 
 export interface NetworkConfig {
@@ -71,6 +104,7 @@ export interface WifiStatus {
   dns: string;
   signal: number;
   mode: "dhcp" | "static";
+  state: WifiState;
 }
 
 export interface EthernetStatus {
@@ -237,7 +271,9 @@ export const api = {
   setEthernet: (config: NetworkConfig) =>
     request<void>("/api/network/ethernet", { method: "PUT", body: JSON.stringify(config) }),
   getWifi: () => request<WifiStatus>("/api/network/wifi"),
-  scanWifi: () => request<{ networks: WifiNetwork[] }>("/api/network/wifi/scan", { method: "POST" }),
+  scanWifi: () => request<WifiScanResult>("/api/network/wifi/scan", { method: "POST" }),
+  // PUT returns 202 (config accepted; association is async). `request` treats any
+  // 2xx as success and returns undefined for the empty body; a non-2xx throws.
   setWifi: (config: { ssid: string; password: string; mode?: "dhcp" | "static"; ip?: string; subnet?: string; gateway?: string; dns?: string }) =>
     request<void>("/api/network/wifi", { method: "PUT", body: JSON.stringify(config) }),
   disconnectWifi: () => request<void>("/api/network/wifi", { method: "DELETE" }),
@@ -286,9 +322,11 @@ export const api = {
       body: JSON.stringify({ current, new: newPassword }),
     }),
 
-  // SoftAP
-  getSoftap: () => request<{ enabled: boolean; password: string }>("/api/network/softap"),
-  setSoftap: (config: { enabled: boolean; password: string }) =>
+  // SoftAP. GET returns a masked view; PUT can fail with 409 (+text reason) when
+  // disabling would leave the device unreachable, or 400 if the password is < 8
+  // chars. Both surface as a thrown Error whose message is the server's reason.
+  getSoftap: () => request<SoftApView>("/api/network/softap"),
+  setSoftap: (config: { enabled: boolean; password: string; country: string }) =>
     request<void>("/api/network/softap", { method: "PUT", body: JSON.stringify(config) }),
 
   // Timezone

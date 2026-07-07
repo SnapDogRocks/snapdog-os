@@ -323,11 +323,95 @@ function NetworkDetails({ ip, subnet, gateway, dns }: { ip: string; subnet: stri
   );
 }
 
+// Host the setup access point answers on. When the browser is talking to the
+// device over this address we're on the temporary AP, which disappears the
+// moment WiFi associates — so we can't poll and must instruct the user instead.
+const AP_SETUP_HOST = "10.11.12.13";
+// Sentinel selection for the "Other / hidden network…" row.
+const MANUAL_SSID = "__manual__";
+
+/** Map a dBm reading to a 1–4 bar strength. */
+function wifiSignalLevel(dbm: number): 1 | 2 | 3 | 4 {
+  if (dbm >= -55) return 4;
+  if (dbm >= -66) return 3; // -66..-56
+  if (dbm >= -77) return 2; // -77..-67
+  return 1; // < -77
+}
+
+function SignalBars({ dbm, label }: { dbm: number; label: string }) {
+  const level = wifiSignalLevel(dbm);
+  return (
+    <span
+      className="inline-flex shrink-0 items-end gap-0.5"
+      title={`${dbm} dBm`}
+      role="img"
+      aria-label={label}
+    >
+      {([1, 2, 3, 4] as const).map((bar) => (
+        <span
+          key={bar}
+          aria-hidden="true"
+          className={`w-1 rounded-sm ${bar <= level ? "bg-foreground" : "bg-muted-foreground/25"}`}
+          style={{ height: `${2 + bar * 3}px` }}
+        />
+      ))}
+    </span>
+  );
+}
+
+function SecurityIcon({ security, openLabel, securedLabel }: { security: string; openLabel: string; securedLabel: string }) {
+  const isOpen = security === "open";
+  const title = isOpen ? openLabel : `${securedLabel} · ${security.toUpperCase()}`;
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      className={`size-3.5 shrink-0 ${isOpen ? "text-muted-foreground/40" : "text-muted-foreground"}`}
+      role="img"
+      aria-label={title}
+    >
+      <title>{title}</title>
+      <rect x="4.5" y="10.5" width="15" height="9.5" rx="2" strokeWidth={1.6} />
+      {isOpen ? (
+        <path d="M8 10.5V7a4 4 0 0 1 7.8-1.3" strokeWidth={1.6} strokeLinecap="round" />
+      ) : (
+        <path d="M8 10.5V7a4 4 0 1 1 8 0v3.5" strokeWidth={1.6} strokeLinecap="round" />
+      )}
+    </svg>
+  );
+}
+
+/** Small inline status banner used for scan/connect feedback. */
+function Banner({ tone, busy, children }: { tone: "info" | "warn" | "success" | "muted"; busy?: boolean; children: React.ReactNode }) {
+  const tones = {
+    info: "bg-blue-500/10 text-blue-800 dark:text-blue-300",
+    warn: "bg-amber-500/10 text-amber-800 dark:text-amber-300",
+    success: "bg-green-500/10 text-green-700 dark:text-green-300",
+    muted: "bg-muted/60 text-muted-foreground",
+  } as const;
+  return (
+    <div className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs ${tones[tone]}`} role="status">
+      {busy && (
+        <svg className="size-3.5 shrink-0 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
+      )}
+      <span>{children}</span>
+    </div>
+  );
+}
+
 function NetworkTab() {
   const t = useTranslations("network");
   const [networks, setNetworks] = useState<WifiNetwork[]>([]);
+  const [scanStatus, setScanStatus] = useState<"ok" | "unavailable_ap_mode" | "error" | null>(null);
+  const [apActive, setApActive] = useState(false);
   const [scanning, setScanning] = useState(true);
-  const [ssid, setSsid] = useState("");
+  // Selection: a scanned SSID, MANUAL_SSID for "other / hidden", or "" (none yet).
+  const [selection, setSelection] = useState("");
+  const [manualSsid, setManualSsid] = useState("");
   const [password, setPassword] = useState("");
   const [wifiMode, setWifiMode] = useState<"dhcp" | "static">("dhcp");
   const [wifiIp, setWifiIp] = useState("");
@@ -335,6 +419,13 @@ function NetworkTab() {
   const [wifiGateway, setWifiGateway] = useState("");
   const [wifiDns, setWifiDns] = useState("");
   const [wifiStatus, setWifiStatus] = useState<import("@/lib/api").WifiStatus | null>(null);
+  // Connect feedback state machine.
+  const [connectState, setConnectState] = useState<
+    "idle" | "submitting" | "connecting" | "success" | "auth_failed" | "timeout" | "ap_redirect" | "error"
+  >("idle");
+  const [connectError, setConnectError] = useState("");
+  const [connectResult, setConnectResult] = useState<{ ssid: string; ip: string } | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [ethStatus, setEthStatus] = useState<import("@/lib/api").EthernetStatus | null>(null);
   const [ethMode, setEthMode] = useState<"dhcp" | "static">("dhcp");
   const [ethIp, setEthIp] = useState("");
@@ -356,13 +447,39 @@ function NetworkTab() {
   const wifiCardId = useId();
   const ethCardId = useId();
 
-  const scan = useCallback(() => {
-    setScanning(true);
-    api.scanWifi().then((r) => setNetworks(r.networks)).catch(() => {}).finally(() => setScanning(false));
+  const manualSelected = selection === MANUAL_SSID;
+  const selectedNetwork = manualSelected ? null : networks.find((n) => n.ssid === selection) ?? null;
+  const effectiveSsid = manualSelected ? manualSsid.trim() : selectedNetwork?.ssid ?? "";
+  // Only a *scanned* open network lets us safely drop the password field; for a
+  // hidden/manual network the security is unknown, so keep it (blank means open).
+  const passwordHidden = selectedNetwork?.security === "open";
+  const effectivePassword = passwordHidden ? "" : password;
+
+  // Cancel any in-flight connect poll and reset feedback (on any edit/selection).
+  const resetConnect = () => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    setConnectState("idle");
+  };
+
+  const applyScan = useCallback((r: import("@/lib/api").WifiScanResult) => {
+    setNetworks(r.networks);
+    setScanStatus(r.status);
+    setApActive(r.ap_active);
+    // Keep the manual field reachable immediately when there's nothing to pick.
+    setSelection((prev) => {
+      if (r.networks.length === 0) return MANUAL_SSID;
+      if (prev === MANUAL_SSID || r.networks.some((n) => n.ssid === prev)) return prev;
+      return "";
+    });
   }, []);
 
+  const scan = useCallback(() => {
+    setScanning(true);
+    api.scanWifi().then(applyScan).catch(() => setScanStatus("error")).finally(() => setScanning(false));
+  }, [applyScan]);
+
   useEffect(() => {
-    api.scanWifi().then((r) => setNetworks(r.networks)).catch(() => {}).finally(() => setScanning(false));
+    api.scanWifi().then(applyScan).catch(() => setScanStatus("error")).finally(() => setScanning(false));
     api.getWifi().then((w) => {
       setWifiStatus(w);
       if (w.mode) setWifiMode(w.mode);
@@ -375,15 +492,70 @@ function NetworkTab() {
       if (e.gateway) setEthGateway(e.gateway);
       if (e.dns) setEthDns(e.dns);
     }).catch(() => {});
-  }, []);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [applyScan]);
+
+  // Submit → (202) connecting → poll GET /wifi ≤30s → success | auth_failed | timeout.
+  // Special case: if we reached the device over the setup AP, that AP tears down
+  // as WiFi comes up, so polling is impossible — instruct the user to reconnect.
+  const connect = async () => {
+    if (!effectiveSsid || connectState === "submitting" || connectState === "connecting") return;
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    setConnectError("");
+    setConnectResult(null);
+    setConnectState("submitting");
+    try {
+      await api.setWifi({
+        ssid: effectiveSsid,
+        password: effectivePassword,
+        mode: wifiMode,
+        ...(wifiMode === "static" ? { ip: wifiIp, subnet: wifiSubnet, gateway: wifiGateway, dns: wifiDns } : {}),
+      });
+    } catch (e) {
+      setConnectError(e instanceof Error ? e.message : String(e));
+      setConnectState("error");
+      return;
+    }
+    if (typeof window !== "undefined" && window.location.hostname === AP_SETUP_HOST) {
+      setConnectState("ap_redirect");
+      return;
+    }
+    setConnectState("connecting");
+    const startedAt = Date.now();
+    const poll = async () => {
+      try {
+        const w = await api.getWifi();
+        setWifiStatus(w);
+        if (w.state === "connected" && w.ip) {
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+          setConnectResult({ ssid: w.ssid || effectiveSsid, ip: w.ip });
+          setConnectState("success");
+          return;
+        }
+        if (w.state === "auth_failed") {
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+          setConnectState("auth_failed");
+          return;
+        }
+      } catch {
+        // Transient drop while the radio switches networks — keep polling.
+      }
+      if (Date.now() - startedAt >= 30000) {
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+        setConnectState("timeout");
+      }
+    };
+    pollRef.current = setInterval(() => { void poll(); }, 2000);
+  };
 
   return (
     <div className="space-y-5">
       <Card title={t("wifi")} id={wifiCardId}>
         <div className="space-y-3">
           {wifiStatus?.connected && (
-            <div className="flex items-center gap-2 text-sm">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
               <StatusDot connected label={t("connectedTo")} />
+              <span className="text-muted-foreground">{t("connectedTo")}</span>
               <span className="font-medium">{wifiStatus.ssid}</span>
               <span className="text-xs text-muted-foreground">({wifiStatus.signal} dBm)</span>
             </div>
@@ -391,32 +563,80 @@ function NetworkTab() {
           {wifiStatus?.connected && (
             <NetworkDetails ip={wifiStatus.ip} subnet={wifiStatus.subnet} gateway={wifiStatus.gateway} dns={wifiStatus.dns} />
           )}
-          <Button variant="outline" size="sm" onClick={scan} disabled={scanning} aria-busy={scanning}>
-            {scanning ? t("scanning") : t("scan")}
-          </Button>
-          {networks.length > 0 && (
-            <ul className="max-h-40 space-y-1 overflow-y-auto text-sm" aria-label={t("availableNetworks")}>
-              {networks.map((n) => (
+
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-muted-foreground">{t("availableNetworks")}</span>
+            <Button variant="outline" size="sm" onClick={scan} disabled={scanning} aria-busy={scanning}>
+              {scanning ? t("scanning") : t("rescan")}
+            </Button>
+          </div>
+
+          {!scanning && networks.length === 0 && (
+            scanStatus === "unavailable_ap_mode" || apActive ? (
+              <Banner tone="info">{t("bannerApMode")}</Banner>
+            ) : scanStatus === "error" ? (
+              <Banner tone="warn">{t("bannerScanError")}</Banner>
+            ) : (
+              <Banner tone="muted">{t("bannerNoneFound")}</Banner>
+            )
+          )}
+
+          <ul role="radiogroup" aria-label={t("availableNetworks")} className="max-h-56 space-y-1 overflow-y-auto">
+            {networks.map((n) => {
+              const selected = !manualSelected && selection === n.ssid;
+              return (
                 <li key={n.ssid}>
                   <button
                     type="button"
-                    className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    onClick={() => setSsid(n.ssid)}
-                    aria-label={`${t("selectNetwork")}: ${n.ssid} (${n.signal} dBm)`}
+                    role="radio"
+                    aria-checked={selected}
+                    onClick={() => { setSelection(n.ssid); resetConnect(); }}
+                    className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${selected ? "border-primary bg-primary/5" : "border-border hover:bg-muted"}`}
                   >
-                    <span>{n.ssid}</span>
-                    <span className="text-xs text-muted-foreground" aria-hidden="true">{n.signal} dBm</span>
+                    <SignalBars dbm={n.signal} label={t("signalAria", { ssid: n.ssid, dbm: n.signal })} />
+                    <span className="flex-1 truncate">{n.ssid}</span>
+                    <SecurityIcon security={n.security} openLabel={t("openNetwork")} securedLabel={t("secured")} />
                   </button>
                 </li>
-              ))}
-            </ul>
+              );
+            })}
+            <li>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={manualSelected}
+                onClick={() => { setSelection(MANUAL_SSID); resetConnect(); }}
+                className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${manualSelected ? "border-primary bg-primary/5" : "border-border hover:bg-muted"}`}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6} d="M12 5v14M5 12h14" />
+                </svg>
+                <span className="flex-1">{t("otherNetwork")}</span>
+              </button>
+            </li>
+          </ul>
+
+          {manualSelected && (
+            <Field label={t("ssid")} htmlFor={ssidId}>
+              <Input
+                id={ssidId}
+                value={manualSsid}
+                onChange={(e) => { setManualSsid(e.target.value); resetConnect(); }}
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                placeholder={t("ssid")}
+              />
+              <p className="text-xs text-muted-foreground">{t("hiddenSsidHint")}</p>
+            </Field>
           )}
-          <Field label={t("ssid")} htmlFor={ssidId}>
-            <Input id={ssidId} value={ssid} onChange={(e) => setSsid(e.target.value)} autoComplete="off" />
-          </Field>
-          <Field label={t("password")} htmlFor={passwordId}>
-            <Input id={passwordId} type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
-          </Field>
+
+          {!passwordHidden && (
+            <Field label={t("password")} htmlFor={passwordId}>
+              <Input id={passwordId} type="password" value={password} onChange={(e) => { setPassword(e.target.value); resetConnect(); }} autoComplete="current-password" />
+            </Field>
+          )}
+
           <Field label={t("mode")} htmlFor={wifiModeId}>
             <Select id={wifiModeId} value={wifiMode} onChange={(e) => setWifiMode(e.target.value as "dhcp" | "static")}>
               <option value="dhcp">DHCP</option>
@@ -439,11 +659,33 @@ function NetworkTab() {
               </Field>
             </>
           )}
-          <Button size="sm" onClick={() => api.setWifi({ ssid, password, mode: wifiMode, ...(wifiMode === "static" ? { ip: wifiIp, subnet: wifiSubnet, gateway: wifiGateway, dns: wifiDns } : {}) })}>
-            {t("connect")}
-          </Button>
-          {wifiStatus?.connected && (
-            <Button variant="outline" size="sm" onClick={() => api.disconnectWifi()}>
+
+          {connectState === "connecting" && <Banner tone="info" busy>{t("connecting")}</Banner>}
+          {connectState === "success" && connectResult && (
+            <Banner tone="success">{t("connectSuccess", { ssid: connectResult.ssid, ip: connectResult.ip })}</Banner>
+          )}
+          {connectState === "auth_failed" && <Banner tone="warn">{t("authFailed")}</Banner>}
+          {connectState === "timeout" && <Banner tone="warn">{t("connectTimeout")}</Banner>}
+          {connectState === "error" && <Banner tone="warn">{t("connectError", { reason: connectError })}</Banner>}
+          {connectState === "ap_redirect" && (
+            <div className="rounded-xl border border-primary/30 bg-primary/5 p-4 text-sm">
+              <p className="font-semibold">{t("apRedirectTitle")}</p>
+              <p className="mt-1 text-muted-foreground">{t("apRedirectBody")}</p>
+            </div>
+          )}
+
+          {connectState !== "ap_redirect" && (
+            <Button
+              size="sm"
+              onClick={() => void connect()}
+              disabled={!effectiveSsid || connectState === "submitting" || connectState === "connecting"}
+              aria-busy={connectState === "submitting" || connectState === "connecting"}
+            >
+              {connectState === "submitting" ? t("submitting") : t("connect")}
+            </Button>
+          )}
+          {wifiStatus?.connected && connectState !== "ap_redirect" && (
+            <Button variant="outline" size="sm" onClick={() => { api.disconnectWifi().catch(() => {}).finally(() => { api.getWifi().then(setWifiStatus).catch(() => {}); }); }}>
               {t("disconnect")}
             </Button>
           )}
@@ -493,38 +735,115 @@ function NetworkTab() {
 }
 
 function SoftApCard() {
+  const t = useTranslations("network.softap");
   const id = useId();
-  const [config, setConfig] = useState({ enabled: true, password: "snapdog123" });
+  const [view, setView] = useState<import("@/lib/api").SoftApView | null>(null);
+  const [enabled, setEnabled] = useState(true);
+  const [password, setPassword] = useState("");
+  const [country, setCountry] = useState("DE");
   const [status, setStatus] = useState<"idle" | "saved">("idle");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    api.getSoftap().then(setConfig).catch(() => {});
+    api.getSoftap().then((v) => {
+      setView(v);
+      setEnabled(v.enabled);
+      // Passphrase is only exposed while the AP is up; otherwise start empty.
+      setPassword(v.password ?? "");
+      setCountry(v.country || "DE");
+    }).catch(() => {});
   }, []);
 
-  const save = (updated: typeof config) => {
-    setConfig(updated);
-    api.setSoftap(updated).then(() => { setStatus("saved"); setTimeout(() => setStatus("idle"), 2000); });
+  const persist = async (next: { enabled: boolean; password: string; country: string }): Promise<boolean> => {
+    setError("");
+    setSaving(true);
+    try {
+      await api.setSoftap(next);
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+      return true;
+    } catch (e) {
+      // 409 (lockout guard) or 400 (password too short) — surface the reason.
+      setError(e instanceof Error ? e.message : String(e));
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onToggle = async (next: boolean) => {
+    setEnabled(next);
+    // Enabling with an unsaved short password: let them fill it in before saving.
+    if (next && password.length < 8) return;
+    const ok = await persist({ enabled: next, password, country });
+    if (!ok) setEnabled(!next); // revert so the switch reflects the real state
+  };
+
+  const saveField = () => {
+    if (password.length < 8) return;
+    void persist({ enabled, password, country });
   };
 
   return (
-    <Card title="Setup Access Point" id={id}>
+    <Card title={t("title")} id={id}>
       <div className="space-y-3">
-        <p className="text-xs text-muted-foreground">
-          Creates a temporary WiFi network on each boot when no WiFi is configured and no Ethernet is connected. Stops automatically once a network connection is established.
-        </p>
+        <p className="text-xs text-muted-foreground">{t("description")}</p>
+
+        {view && (
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-lg bg-muted/50 p-3 text-xs">
+            <dt className="text-muted-foreground">{t("networkName")}</dt>
+            <dd className="font-mono break-all">{view.ssid}</dd>
+            {view.password && (
+              <>
+                <dt className="text-muted-foreground">{t("passphrase")}</dt>
+                <dd className="font-mono break-all">{view.password}</dd>
+              </>
+            )}
+          </dl>
+        )}
+
         <div className="flex items-center justify-between">
-          <span className="text-sm">Enable Setup AP</span>
-          <Switch checked={config.enabled} onCheckedChange={(enabled) => save({ ...config, enabled })} />
+          <span className="text-sm">{t("enable")}</span>
+          <Switch checked={enabled} onCheckedChange={(v) => void onToggle(v)} disabled={saving} />
         </div>
-        {config.enabled && (
-          <div>
-            <label htmlFor={`${id}-pw`} className="text-sm font-medium">AP Password</label>
-            <Input id={`${id}-pw`} value={config.password} onChange={(e) => setConfig({ ...config, password: e.target.value })}
-              onBlur={() => { if (config.password.length >= 8) save(config); }} minLength={8} />
-            {config.password.length < 8 && <p className="text-xs text-destructive">Minimum 8 characters (WPA2)</p>}
+
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={`${id}-pw`} className="text-sm text-muted-foreground">{t("password")}</label>
+          <Input
+            id={`${id}-pw`}
+            type="text"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onBlur={saveField}
+            minLength={8}
+            autoComplete="off"
+            aria-invalid={password.length > 0 && password.length < 8}
+          />
+          {password.length < 8 && <p className="text-xs text-destructive">{t("passwordHint")}</p>}
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={`${id}-cc`} className="text-sm text-muted-foreground">{t("country")}</label>
+          <Input
+            id={`${id}-cc`}
+            value={country}
+            onChange={(e) => setCountry(e.target.value.toUpperCase().slice(0, 2))}
+            onBlur={saveField}
+            maxLength={2}
+            className="w-24 uppercase"
+            autoComplete="off"
+          />
+          <p className="text-xs text-muted-foreground">{t("countryHint")}</p>
+        </div>
+
+        {error && (
+          <div className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive" role="status">
+            <p className="font-medium">{t("saveError")}</p>
+            <p className="mt-0.5 opacity-90">{error}</p>
           </div>
         )}
-        {status === "saved" && <p className="text-xs text-green-600">Saved</p>}
+        {status === "saved" && !error && <p className="text-xs text-green-600">{t("saved")}</p>}
       </div>
     </Card>
   );

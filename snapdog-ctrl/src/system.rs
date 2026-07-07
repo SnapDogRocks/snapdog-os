@@ -303,29 +303,37 @@ pub async fn get_wifi() -> WifiInfo {
     }
 }
 
+/// Pure mapping from `wpa_supplicant`'s `wpa_state` + IP presence + the network's
+/// TEMP-DISABLED flag into the UI-facing lifecycle. Extracted so the ordering is
+/// unit-testable — in particular that a TEMP-DISABLED (wrong-passphrase) network
+/// wins over the in-flight retry states.
+fn classify_wifi_state(wpa_state: &str, has_ip: bool, temp_disabled: bool) -> &'static str {
+    // A COMPLETED association is authoritative.
+    if wpa_state == "COMPLETED" {
+        return if has_ip { "connected" } else { "acquiring_ip" };
+    }
+    // A wrong passphrase durably TEMP-DISABLES the network, but wpa_supplicant then
+    // keeps RETRYING — cycling back through SCANNING/ASSOCIATING with backoff. So
+    // this must be checked BEFORE the retry states below, otherwise the failure
+    // reads as a perpetual "associating" and the UI hangs on "connecting…" until it
+    // times out instead of showing "wrong password".
+    if temp_disabled {
+        return "auth_failed";
+    }
+    match wpa_state {
+        "SCANNING" | "AUTHENTICATING" | "ASSOCIATING" | "ASSOCIATED" | "4WAY_HANDSHAKE"
+        | "GROUP_HANDSHAKE" => "associating",
+        _ => "disconnected",
+    }
+}
+
 /// Map `wpa_supplicant`'s `wpa_state` + IP into the UI-facing lifecycle. A
 /// TEMP-DISABLED network almost always means a wrong passphrase, which is the
 /// single most useful failure to surface.
 async fn derive_wifi_state(iface: &str, wpa: &WpaStatus, ip: &str) -> String {
-    match wpa.state.as_str() {
-        "COMPLETED" => {
-            if ip.is_empty() {
-                "acquiring_ip"
-            } else {
-                "connected"
-            }
-        }
-        "SCANNING" | "AUTHENTICATING" | "ASSOCIATING" | "ASSOCIATED" | "4WAY_HANDSHAKE"
-        | "GROUP_HANDSHAKE" => "associating",
-        _ => {
-            if wpa_network_temp_disabled(iface).await {
-                "auth_failed"
-            } else {
-                "disconnected"
-            }
-        }
-    }
-    .to_string()
+    // Only query the extra TEMP-DISABLED flag when not already connected.
+    let temp_disabled = wpa.state != "COMPLETED" && wpa_network_temp_disabled(iface).await;
+    classify_wifi_state(&wpa.state, !ip.is_empty(), temp_disabled).to_string()
 }
 
 /// True when a configured network is in the `[TEMP-DISABLED]` state — the
@@ -1724,6 +1732,57 @@ fn validate_client_arg(field: &str, value: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wifi_state_completed_maps_by_ip() {
+        assert_eq!(classify_wifi_state("COMPLETED", true, false), "connected");
+        assert_eq!(
+            classify_wifi_state("COMPLETED", false, false),
+            "acquiring_ip"
+        );
+    }
+
+    #[test]
+    fn wifi_state_temp_disabled_beats_retry_states() {
+        // Regression: after WRONG_KEY the network is TEMP-DISABLED but wpa_supplicant
+        // cycles back through SCANNING/ASSOCIATING while retrying — it must surface as
+        // auth_failed, not a perpetual "associating".
+        assert_eq!(classify_wifi_state("SCANNING", false, true), "auth_failed");
+        assert_eq!(
+            classify_wifi_state("ASSOCIATING", false, true),
+            "auth_failed"
+        );
+        assert_eq!(
+            classify_wifi_state("DISCONNECTED", false, true),
+            "auth_failed"
+        );
+    }
+
+    #[test]
+    fn wifi_state_first_attempt_is_associating() {
+        // Before any failure the network is not temp-disabled → normal progress.
+        assert_eq!(
+            classify_wifi_state("ASSOCIATING", false, false),
+            "associating"
+        );
+        assert_eq!(
+            classify_wifi_state("4WAY_HANDSHAKE", false, false),
+            "associating"
+        );
+        assert_eq!(classify_wifi_state("SCANNING", false, false), "associating");
+    }
+
+    #[test]
+    fn wifi_state_idle_is_disconnected() {
+        assert_eq!(
+            classify_wifi_state("DISCONNECTED", false, false),
+            "disconnected"
+        );
+        assert_eq!(
+            classify_wifi_state("INACTIVE", false, false),
+            "disconnected"
+        );
+    }
 
     #[test]
     fn hat_detection_covers_tricky_cases() {

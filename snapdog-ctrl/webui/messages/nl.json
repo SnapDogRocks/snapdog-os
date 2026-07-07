@@ -63,6 +63,7 @@
     "save": "Opslaan",
     "soundcard": "Geluidskaart",
     "defaultSoundcard": "Standaard",
+    "customSoundcard": "Aangepast…",
     "mixerSoftware": "Software (digitaal)",
     "mixerHardware": "Hardware (DAC)",
     "mixerNone": "Geen (server regelt)",
@@ -177,7 +178,10 @@
     "manualProceed": "Proceed & Upload Image",
     "manualUploadButton": "Choose Update File...",
     "manualUploading": "Uploading system image...",
-    "uploadError": "Upload failed. Please ensure the file is correct and not corrupted."
+    "uploadError": "Upload failed. Please ensure the file is correct and not corrupted.",
+    "confirmInstall": "Ja, installeren & herstarten",
+    "cancel": "Annuleren",
+    "updateTimeout": "Update verlopen (time-out)"
   },
   "server": {
     "title": "Server",

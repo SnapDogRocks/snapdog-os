@@ -63,6 +63,7 @@
     "save": "Enregistrer",
     "soundcard": "Carte son",
     "defaultSoundcard": "Par défaut",
+    "customSoundcard": "Personnalisé…",
     "mixerSoftware": "Logiciel (numérique)",
     "mixerHardware": "Matériel (DAC)",
     "mixerNone": "Aucun (serveur contrôle)",
@@ -177,7 +178,10 @@
     "manualProceed": "Proceed & Upload Image",
     "manualUploadButton": "Choose Update File...",
     "manualUploading": "Uploading system image...",
-    "uploadError": "Upload failed. Please ensure the file is correct and not corrupted."
+    "uploadError": "Upload failed. Please ensure the file is correct and not corrupted.",
+    "confirmInstall": "Oui, installer & redémarrer",
+    "cancel": "Annuler",
+    "updateTimeout": "Délai de mise à jour dépassé"
   },
   "server": {
     "title": "Serveur",

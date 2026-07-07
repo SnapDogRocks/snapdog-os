@@ -63,6 +63,7 @@
     "save": "Speichern",
     "soundcard": "Soundkarte",
     "defaultSoundcard": "Standard",
+    "customSoundcard": "Benutzerdefiniert…",
     "mixerSoftware": "Software (digital)",
     "mixerHardware": "Hardware (DAC)",
     "mixerNone": "Keine (Server steuert)",
@@ -177,7 +178,10 @@
     "manualProceed": "Fortfahren & Image hochladen",
     "manualUploadButton": "Update-Datei auswählen...",
     "manualUploading": "System-Image wird hochgeladen...",
-    "uploadError": "Upload failed. Bitte stellen Sie sicher, dass die Datei korrekt und nicht beschädigt ist."
+    "uploadError": "Upload failed. Bitte stellen Sie sicher, dass die Datei korrekt und nicht beschädigt ist.",
+    "confirmInstall": "Ja, installieren & neu starten",
+    "cancel": "Abbrechen",
+    "updateTimeout": "Zeitüberschreitung beim Update"
   },
   "server": {
     "title": "Server",

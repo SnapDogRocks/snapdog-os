@@ -11,6 +11,12 @@ image boot.vfat {
 image data.ext4 {
 	ext4 {
 		label = "data"
+		# 4 KiB blocks (mke2fs -b 4096), not the default 1 KiB for a small 128 MiB
+		# fs. The first-boot resize grows THIS filesystem online with resize2fs,
+		# and the online-resize ceiling is set by the reserved GDT blocks baked in
+		# here: 1 KiB blocks cap online growth at ~32 GiB, 4 KiB blocks raise it
+		# to ~128 GiB — enough to fill a 64 GiB card (and typical larger ones).
+		extraargs = "-b 4096"
 	}
 
 	size = 128M

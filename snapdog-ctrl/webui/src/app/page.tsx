@@ -15,6 +15,7 @@ import {
   type WifiNetwork,
   type AudioConfig,
   type ClientConfig,
+  type Soundcard,
   type SshConfig,
   type ServerConfig,
   type ServerStatus,
@@ -593,7 +594,8 @@ function AudioTab() {
 function ClientTab() {
   const t = useTranslations("client");
   const [config, setConfig] = useState<ClientConfig>({ server_url: "", host_id: "", soundcard: "default", mixer: "", latency: 0 });
-  const [soundcards, setSoundcards] = useState<string[]>([]);
+  const [soundcards, setSoundcards] = useState<Soundcard[]>([]);
+  const [manualCustomSoundcard, setManualCustomSoundcard] = useState(false);
   const [servers, setServers] = useState<{ name: string; host: string; port: number }[]>([]);
   const [scanning, setScanning] = useState(true);
   const [manualHost, setManualHost] = useState("");
@@ -603,7 +605,13 @@ function ClientTab() {
   const [serverRunning, setServerRunning] = useState(false);
   const [connectionMode, setConnectionMode] = useState<"auto" | "manual">("auto");
   const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "failed">("idle");
-  
+
+  // Soundcard picker: a dropdown of detected cards, with a "Custom…" escape.
+  // Custom mode auto-engages when a saved value isn't "default" or a listed card.
+  const soundcardKnown =
+    config.soundcard === "default" || soundcards.some((sc) => sc.device === config.soundcard);
+  const soundcardCustom = manualCustomSoundcard || (!soundcardKnown && config.soundcard !== "");
+
   const hostIdFieldId = useId();
   const soundcardId = useId();
   const mixerId = useId();
@@ -982,13 +990,32 @@ function ClientTab() {
             </Field>
             
             <Field label={t("soundcard")} htmlFor={soundcardId}>
-              {soundcards.length > 0 ? (
-                <Select id={soundcardId} value={config.soundcard} onChange={(e) => setConfig({ ...config, soundcard: e.target.value })}>
-                  <option value="default">{t("defaultSoundcard")}</option>
-                  {soundcards.map((sc, i) => (<option key={i} value={`hw:${i}`}>{sc}</option>))}
-                </Select>
-              ) : (
-                <Input id={soundcardId} value={config.soundcard} onChange={(e) => setConfig({ ...config, soundcard: e.target.value })} placeholder="default" />
+              <Select
+                id={soundcardId}
+                value={soundcardCustom ? "__custom__" : config.soundcard}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === "__custom__") {
+                    setManualCustomSoundcard(true);
+                  } else {
+                    setManualCustomSoundcard(false);
+                    setConfig({ ...config, soundcard: v });
+                  }
+                }}
+              >
+                <option value="default">{t("defaultSoundcard")}</option>
+                {soundcards.map((sc) => (
+                  <option key={sc.device} value={sc.device}>{sc.name} ({sc.device})</option>
+                ))}
+                <option value="__custom__">{t("customSoundcard")}</option>
+              </Select>
+              {soundcardCustom && (
+                <Input
+                  className="mt-2"
+                  value={config.soundcard === "default" ? "" : config.soundcard}
+                  onChange={(e) => setConfig({ ...config, soundcard: e.target.value })}
+                  placeholder="hw:0"
+                />
               )}
             </Field>
             
@@ -1154,6 +1181,9 @@ function UpdateTab() {
   const [channel, setChannel] = useState("stable");
   const [phase, setPhase] = useState<"idle" | "downloading" | "verifying" | "installing" | "rebooting" | "reconnecting" | "done" | "failed">("idle");
   const [rolledBack, setRolledBack] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const channelId = useId();
   const cardId = useId();
 
@@ -1176,26 +1206,49 @@ function UpdateTab() {
   }, []);
 
   const performUpdate = useCallback(() => {
-    if (!window.confirm(t("updateConfirm"))) return;
-    setPhase("downloading");
-    api.triggerUpdate().catch(() => { setPhase("failed"); });
-    setTimeout(() => setPhase("verifying"), 3000);
-    setTimeout(() => setPhase("installing"), 6000);
-    setTimeout(() => {
-      setPhase("rebooting");
-      const startTime = Date.now();
-      const poll = setInterval(async () => {
-        if (Date.now() - startTime > 120000) { clearInterval(poll); setPhase("failed"); return; }
-        try {
-          setPhase("reconnecting");
-          const sys = await api.getSystem();
+    setPhase("installing");
+    setProgress(null);
+    setErrorMsg(null);
+    let sawInstalling = false;
+    let resolvedOk = false;
+    const started = Date.now();
+    // Drive the UI from the real RAUC operation (GET /update/status), not timers.
+    const poll = setInterval(async () => {
+      if (Date.now() - started > 20 * 60 * 1000) {
+        clearInterval(poll);
+        setErrorMsg(t("updateTimeout"));
+        setPhase("failed");
+        return;
+      }
+      try {
+        const s = await api.getUpdateStatus();
+        if (s.last_error) {
           clearInterval(poll);
-          if (update && sys.version === update.current_version) { setRolledBack(true); setPhase("failed"); }
-          else { setPhase("done"); }
-        } catch { /* still rebooting */ }
-      }, 3000);
-    }, 10000);
-  }, [t, update]);
+          setErrorMsg(s.last_error);
+          setPhase("failed");
+        } else if (s.operation === "installing") {
+          sawInstalling = true;
+          setProgress(s.progress?.percentage ?? null);
+        } else if (s.operation === "idle" && (sawInstalling || (resolvedOk && Date.now() - started > 8000))) {
+          // Installed to the inactive slot; user activates it via "Reboot now".
+          clearInterval(poll);
+          setPhase("done");
+        }
+      } catch {
+        /* device busy mid-install — keep polling */
+      }
+    }, 1500);
+    // Kick off the install; a start failure (bad bundle, unreachable) rejects here.
+    api.triggerUpdate()
+      .then(() => {
+        resolvedOk = true;
+      })
+      .catch((e: unknown) => {
+        clearInterval(poll);
+        setErrorMsg(e instanceof Error ? e.message : String(e));
+        setPhase("failed");
+      });
+  }, [t]);
 
   const triggerFileSelect = useCallback(() => {
     fileInputRef.current?.click();
@@ -1255,7 +1308,7 @@ function UpdateTab() {
         )}
 
         {phase !== "idle" && phase !== "done" && phase !== "failed" && (
-          <UpdatePhaseIndicator label={t(`phase_${phase}`)} />
+          <UpdatePhaseIndicator label={`${t(`phase_${phase}`)}${progress != null ? ` — ${progress}%` : ""}`} />
         )}
         {phase === "done" && (
           <div className="rounded-lg bg-green-500/10 p-4 text-sm space-y-3" role="status">
@@ -1268,21 +1321,30 @@ function UpdateTab() {
           </div>
         )}
         {phase === "failed" && !rolledBack && (
-          <div className="rounded-lg bg-destructive/10 p-4 text-sm" role="alert">
+          <div className="rounded-lg bg-destructive/10 p-4 text-sm space-y-1" role="alert">
             <p className="font-medium text-destructive">{t("updateFailed")}</p>
+            {errorMsg && <p className="text-xs text-muted-foreground break-words">{errorMsg}</p>}
           </div>
         )}
 
         {phase === "idle" && (
           <>
-            {update?.available ? (
+            {confirming ? (
+              <div className="flex flex-col gap-3 rounded-lg bg-primary/10 p-4" role="alertdialog" aria-label={t("updateConfirm")}>
+                <p className="text-sm font-medium">{t("updateConfirm")}</p>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={() => { setConfirming(false); performUpdate(); }}>{t("confirmInstall")}</Button>
+                  <Button variant="outline" size="sm" onClick={() => setConfirming(false)}>{t("cancel")}</Button>
+                </div>
+              </div>
+            ) : update?.available ? (
               <div className="flex flex-col gap-3 rounded-lg bg-primary/10 p-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium">{t("updateAvailable")}</p>
-                    <p className="text-xs text-muted-foreground">{update.current_version} → {update.latest_version}</p>
+                    <p className="text-xs text-muted-foreground">{update.current_version}{update.latest_version ? ` → ${update.latest_version}` : ""}</p>
                   </div>
-                  <Button size="sm" onClick={performUpdate}>{t("installUpdate")}</Button>
+                  <Button size="sm" onClick={() => setConfirming(true)}>{t("installUpdate")}</Button>
                 </div>
                 <div className="text-xs font-semibold flex items-center gap-1 border-t border-primary/20 pt-2 text-green-600 dark:text-green-400">
                   {update.signature_verified ? t("signatureVerified") : t("signatureUnverified")}
@@ -1293,9 +1355,9 @@ function UpdateTab() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium">{t("downgradeAvailable")}</p>
-                    <p className="text-xs text-muted-foreground">{update.current_version} → {update.latest_version}</p>
+                    <p className="text-xs text-muted-foreground">{update.current_version}{update.latest_version ? ` → ${update.latest_version}` : ""}</p>
                   </div>
-                  <Button variant="outline" size="sm" onClick={performUpdate}>{t("installVersion")}</Button>
+                  <Button variant="outline" size="sm" onClick={() => setConfirming(true)}>{t("installVersion")}</Button>
                 </div>
                 <div className="text-xs font-semibold flex items-center gap-1 border-t border-border pt-2 text-green-600 dark:text-green-400">
                   {update.signature_verified ? t("signatureVerified") : t("signatureUnverified")}

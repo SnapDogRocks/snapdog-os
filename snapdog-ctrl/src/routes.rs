@@ -3,7 +3,7 @@
 
 use axum::{
     Extension, Json, Router,
-    extract::{Query, Request},
+    extract::{DefaultBodyLimit, Query, Request},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post, put},
@@ -66,9 +66,18 @@ pub fn api() -> Router {
         .route("/system/update", post(post_update))
         .route("/system/update/check", get(get_update_check))
         .route("/system/update/status", get(get_update_status))
-        .route("/system/update/upload", post(post_update_upload))
+        // Firmware/image uploads stream a whole rootfs (tens of MB to ~GB) to
+        // disk — lift axum's 2 MB DefaultBodyLimit or the body is silently
+        // truncated (rauc then rejects it as "Signature size exceeds bundle size").
+        .route(
+            "/system/update/upload",
+            post(post_update_upload).layer(DefaultBodyLimit::disable()),
+        )
         .route("/system/update/install", post(post_update_install))
-        .route("/system/update/flash-raw", post(post_flash_raw_upload))
+        .route(
+            "/system/update/flash-raw",
+            post(post_flash_raw_upload).layer(DefaultBodyLimit::disable()),
+        )
         .route(
             "/system/update/flash-raw/confirm",
             post(post_flash_raw_confirm),
@@ -330,8 +339,12 @@ mod mock_handlers {
     pub async fn get_update_check() -> Json<UpdateCheckResponse> {
         Json(UpdateCheckResponse {
             available: true,
+            installable: true,
             current_version: env!("CARGO_PKG_VERSION").into(),
+            latest_version: "9.9.9".into(),
             channel: "stable".into(),
+            is_downgrade: false,
+            signature_verified: true,
             bundle_url: "https://update.snapdog.cc/os/bundles/pi4.raucb".into(),
         })
     }
@@ -758,11 +771,18 @@ async fn post_reboot() -> StatusCode {
     StatusCode::ACCEPTED
 }
 
+// Serialized API DTO consumed by the web UI — the boolean fields mirror the
+// TypeScript `UpdateCheck` shape, so they can't be collapsed into an enum.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Serialize)]
 pub struct UpdateCheckResponse {
     pub available: bool,
+    pub installable: bool,
     pub current_version: String,
+    pub latest_version: String,
     pub channel: String,
+    pub is_downgrade: bool,
+    pub signature_verified: bool,
     pub bundle_url: String,
 }
 
@@ -833,10 +853,19 @@ async fn post_update() -> StatusCode {
     StatusCode::ACCEPTED
 }
 
+/// Where the uploaded RAUC bundle is staged. Must live on a mount shared with the
+/// rauc D-Bus service — NOT /tmp: snapdog-ctrl runs with `PrivateTmp=yes`, so a
+/// bundle written to its private /tmp is invisible to rauc (install fails with
+/// "No such file or directory"). The writable /data partition is shared by all
+/// services and has ample space.
+const UPDATE_BUNDLE_PATH: &str = "/data/update.raucb";
+
 async fn post_update_upload(
     mut multipart: axum::extract::Multipart,
 ) -> Result<StatusCode, StatusCode> {
-    let dest = "/tmp/update.raucb";
+    use tokio::io::AsyncWriteExt;
+
+    let dest = UPDATE_BUNDLE_PATH;
     let _ = tokio::fs::remove_file(dest).await;
 
     let mut file = match tokio::fs::File::create(dest).await {
@@ -847,22 +876,45 @@ async fn post_update_upload(
         }
     };
 
-    while let Ok(Some(mut field)) = multipart.next_field().await {
-        while let Ok(Some(chunk)) = field.chunk().await {
-            use tokio::io::AsyncWriteExt;
-            if let Err(e) = file.write_all(&chunk).await {
-                tracing::error!("Failed to write chunk: {e}");
-                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    while let Some(mut field) = multipart.next_field().await.map_err(|e| {
+        tracing::error!("upload: reading multipart failed: {e}");
+        StatusCode::BAD_REQUEST
+    })? {
+        // Drain the field explicitly so a stream error (e.g. a dropped
+        // connection) fails the request instead of silently truncating the file
+        // and returning success — a partial bundle makes rauc reject the install.
+        loop {
+            match field.chunk().await {
+                Ok(Some(chunk)) => {
+                    if let Err(e) = file.write_all(&chunk).await {
+                        tracing::error!("upload: write chunk failed: {e}");
+                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                    }
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    tracing::error!("upload: reading chunk failed: {e}");
+                    return Err(StatusCode::BAD_REQUEST);
+                }
             }
         }
     }
 
+    if let Err(e) = file.flush().await {
+        tracing::error!("upload: flush failed: {e}");
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
     Ok(StatusCode::OK)
 }
 
 async fn post_update_install() -> StatusCode {
-    // Install the uploaded bundle
-    if let Err(e) = system::rauc_install("/tmp/update.raucb").await {
+    // Install the uploaded bundle (staged on shared /data, see UPDATE_BUNDLE_PATH).
+    // rauc's D-Bus InstallBundle is ASYNCHRONOUS: install_bundle() returns as soon
+    // as the install is triggered, not when it completes. So we must NOT delete the
+    // staged bundle here — rauc reads it in the background and removing it mid-install
+    // fails with "No such file". The next upload clears the stale bundle before
+    // writing a new one.
+    if let Err(e) = system::rauc_install(UPDATE_BUNDLE_PATH).await {
         tracing::error!("post_update_install: {e}");
         return StatusCode::INTERNAL_SERVER_ERROR;
     }
@@ -1153,6 +1205,15 @@ async fn put_audio(
 
 // --- Client ---
 
+/// An ALSA playback device offered in the client soundcard dropdown.
+#[derive(Serialize, Clone)]
+pub struct Soundcard {
+    /// ALSA device string passed to `--soundcard` (e.g. `hw:0`).
+    pub device: String,
+    /// Human-readable card name for the dropdown label.
+    pub name: String,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ClientConfig {
     pub server_url: String,
@@ -1165,7 +1226,7 @@ pub struct ClientConfig {
     #[serde(skip_deserializing)]
     pub running: bool,
     #[serde(skip_deserializing)]
-    pub available_soundcards: Vec<String>,
+    pub available_soundcards: Vec<Soundcard>,
 }
 
 async fn get_client() -> Json<ClientConfig> {

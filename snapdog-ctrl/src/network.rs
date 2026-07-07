@@ -131,6 +131,15 @@ pub async fn stop_ap() -> Result<()> {
     Ok(())
 }
 
+/// Start the `WiFi` client (`wpa_supplicant`) for the detected interface.
+/// Used at boot when `WiFi` is already configured but AP mode was never entered
+/// (nothing else brings the supplicant up in that path).
+pub async fn start_wifi_client() -> Result<()> {
+    let iface = detect_wifi_interface().await;
+    tracing::info!("Starting WiFi client on interface {iface}");
+    run("systemctl", &["start", &format!("wpa_supplicant@{iface}")]).await
+}
+
 /// Connect to a `WiFi` network.
 pub async fn connect_wifi(
     ssid: &str,

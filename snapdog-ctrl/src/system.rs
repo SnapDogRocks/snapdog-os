@@ -160,6 +160,18 @@ pub async fn set_system(hostname: Option<String>, channel: Option<String>) -> Re
 }
 
 pub async fn reboot() {
+    // If a RAUC tryboot trial is armed (a bundle was just installed to the
+    // inactive slot), boot it via the RPi one-shot tryboot flag so a failed trial
+    // auto-reverts to the committed slot on the next normal boot. systemd on this
+    // image cannot set the tryboot flag, so use the RESTART2 helper (runs with the
+    // ctrl's CAP_SYS_BOOT). Otherwise a plain reboot, which always lands on the
+    // committed slot.
+    if tokio::fs::metadata("/boot/tryboot.txt").await.is_ok() {
+        tracing::info!("Tryboot trial armed — rebooting into it via the one-shot tryboot flag");
+        // Reboots immediately via RESTART2 (ctrl carries CAP_SYS_BOOT). If it
+        // returns (e.g. missing capability), we fall through to a normal reboot.
+        let _ = run_cmd("/usr/lib/rauc/tryboot-reboot", &[]).await;
+    }
     let _ = run_cmd("systemctl", &["reboot"]).await;
 }
 

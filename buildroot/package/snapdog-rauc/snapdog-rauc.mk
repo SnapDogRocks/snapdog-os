@@ -9,6 +9,14 @@
 SNAPDOG_ROOT_DEV ?= /dev/mmcblk0p
 SNAPDOG_RAUC_DEPENDENCIES = rauc
 
+# Small helper that issues reboot(2) RESTART2 "0 tryboot" (systemd cannot set the
+# RPi tryboot flag on this image).
+define SNAPDOG_RAUC_BUILD_CMDS
+	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -Os \
+		-o $(@D)/tryboot-reboot \
+		$(BR2_EXTERNAL_SNAPDOG_PATH)/package/snapdog-rauc/tryboot-reboot.c
+endef
+
 define SNAPDOG_RAUC_INSTALL_TARGET_CMDS
 	# system.conf (substitute board compatible)
 	mkdir -p $(TARGET_DIR)/etc/rauc
@@ -24,6 +32,14 @@ define SNAPDOG_RAUC_INSTALL_TARGET_CMDS
 	# Custom bootloader backend
 	$(INSTALL) -D -m 0755 $(BR2_EXTERNAL_SNAPDOG_PATH)/package/snapdog-rauc/boot-handler.sh \
 		$(TARGET_DIR)/usr/lib/rauc/boot-handler.sh
+
+	# mark-good + tryboot commit/reconcile (run by rauc-mark-good.service)
+	$(INSTALL) -D -m 0755 $(BR2_EXTERNAL_SNAPDOG_PATH)/package/snapdog-rauc/rauc-commit.sh \
+		$(TARGET_DIR)/opt/snapdog/bin/rauc-commit
+
+	# tryboot RESTART2 helper (invoked by snapdog-ctrl, which carries CAP_SYS_BOOT)
+	$(INSTALL) -D -m 0755 $(@D)/tryboot-reboot \
+		$(TARGET_DIR)/usr/lib/rauc/tryboot-reboot
 endef
 
 define SNAPDOG_RAUC_INSTALL_INIT_SYSTEMD
@@ -32,6 +48,10 @@ define SNAPDOG_RAUC_INSTALL_INIT_SYSTEMD
 	mkdir -p $(TARGET_DIR)/etc/systemd/system/multi-user.target.wants
 	ln -sf /usr/lib/systemd/system/rauc-mark-good.service \
 		$(TARGET_DIR)/etc/systemd/system/multi-user.target.wants/rauc-mark-good.service
+
+	# OnFailure target for snapdog-ctrl (reverts a crash-looping tryboot trial).
+	$(INSTALL) -D -m 0644 $(BR2_EXTERNAL_SNAPDOG_PATH)/package/snapdog-rauc/rauc-trial-failed.service \
+		$(TARGET_DIR)/usr/lib/systemd/system/rauc-trial-failed.service
 endef
 
 $(eval $(generic-package))

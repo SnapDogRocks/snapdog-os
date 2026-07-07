@@ -1,0 +1,13 @@
+[Unit]
+Description=Revert a failed OTA tryboot trial
+# Fired via OnFailure= from snapdog-ctrl.service when the ctrl reaches the failed
+# state. If an OTA trial is in progress (/boot/tryboot.txt present) the trial slot
+# failed to bring the ctrl up, so reboot NORMALLY (not tryboot) — which reads
+# cmdline.txt and lands on the committed slot, reverting the trial. rauc-mark-good
+# then cleans up the trial files and marks the failed slot bad. On the committed
+# slot (no trial) this does nothing, so a transient ctrl failure never loops.
+# On-device verified: a hard-broken trial ctrl reverts to the committed slot.
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '[ -f /boot/tryboot.txt ] && { echo "OTA trial failed to start snapdog-ctrl — rebooting to the committed slot"; systemctl reboot; } || true'

@@ -1129,6 +1129,14 @@ async fn get_wifi() -> Json<WifiInfo> {
 }
 
 async fn put_wifi(Json(body): Json<WifiConfig>) -> StatusCode {
+    // A non-empty passphrase must be a valid WPA length (8..=63). Reject early with
+    // 400 rather than persist a config wpa_supplicant can't parse — a psk="" config
+    // breaks the supplicant for ALL operations, scanning included. An empty
+    // passphrase is a valid open network (handled as key_mgmt=NONE downstream).
+    let pw_len = body.password.chars().count();
+    if pw_len != 0 && !(8..=63).contains(&pw_len) {
+        return StatusCode::BAD_REQUEST;
+    }
     let static_cfg =
         body.mode
             .as_deref()

@@ -454,6 +454,10 @@ function NetworkTab() {
   // hidden/manual network the security is unknown, so keep it (blank means open).
   const passwordHidden = selectedNetwork?.security === "open";
   const effectivePassword = passwordHidden ? "" : password;
+  // Open networks need no key; secured ones require a valid WPA passphrase (8–63).
+  // Gates the connect button so a blank/short password can't be submitted (the
+  // backend would 400 it, and a psk="" config would otherwise break the supplicant).
+  const passwordValid = passwordHidden || (password.length >= 8 && password.length <= 63);
 
   // Cancel any in-flight connect poll and reset feedback (on any edit/selection).
   const resetConnect = () => {
@@ -678,7 +682,7 @@ function NetworkTab() {
             <Button
               size="sm"
               onClick={() => void connect()}
-              disabled={!effectiveSsid || connectState === "submitting" || connectState === "connecting"}
+              disabled={!effectiveSsid || !passwordValid || connectState === "submitting" || connectState === "connecting"}
               aria-busy={connectState === "submitting" || connectState === "connecting"}
             >
               {connectState === "submitting" ? t("submitting") : t("connect")}

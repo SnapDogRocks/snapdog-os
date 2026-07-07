@@ -214,6 +214,45 @@ async fn ensure_base_wpa_conf(iface: &str, country: &str) -> Result<()> {
     write_config(&path, &base).await
 }
 
+/// Minimum/maximum length of a WPA-PSK passphrase, per the 802.11i spec (a 64-hex
+/// raw PSK is not accepted here — the setup UI collects a passphrase).
+const WPA_PASSPHRASE_LEN: std::ops::RangeInclusive<usize> = 8..=63;
+
+/// Build a `wpa_supplicant` config for one network.
+///
+/// An EMPTY passphrase means an open network → `key_mgmt=NONE` with no `psk`
+/// line. Emitting `psk=""` + `key_mgmt=WPA-PSK` (the old unconditional path) makes
+/// wpa_supplicant reject the ENTIRE file ("Invalid passphrase length 0"), which
+/// leaves the supplicant unable to start for ANY operation — including scanning —
+/// until the config is cleared by hand. A non-empty passphrase must be 8..=63
+/// characters; anything else is rejected here rather than persisted as a config
+/// that bricks WiFi.
+fn build_wpa_config(ssid: &str, password: &str, country: &str) -> Result<String> {
+    let ssid = wpa_quoted_string("ssid", ssid)?;
+    let country = sanitize_country(country);
+
+    // scan_ssid=1 so hidden SSIDs (not in beacons) are probed for and associated.
+    let network = if password.is_empty() {
+        format!("network={{\n  ssid=\"{ssid}\"\n  scan_ssid=1\n  key_mgmt=NONE\n}}\n")
+    } else {
+        // Length is checked on the RAW passphrase; wpa_supplicant validates the
+        // unescaped value, so escaping must not change the counted length.
+        let len = password.chars().count();
+        anyhow::ensure!(
+            WPA_PASSPHRASE_LEN.contains(&len),
+            "WiFi passphrase must be 8–63 characters (got {len})"
+        );
+        let psk = wpa_quoted_string("password", password)?;
+        format!(
+            "network={{\n  ssid=\"{ssid}\"\n  scan_ssid=1\n  psk=\"{psk}\"\n  key_mgmt=WPA-PSK\n}}\n"
+        )
+    };
+
+    Ok(format!(
+        "ctrl_interface=/var/run/wpa_supplicant\nupdate_config=1\ncountry={country}\np2p_disabled=1\n\n{network}"
+    ))
+}
+
 /// Connect to a `WiFi` network. Writes the supplicant + networkd config and then
 /// tears the setup AP down on a short delay so the HTTP response reaches the
 /// browser first (its link to the AP dies with the teardown). Returns as soon as
@@ -229,15 +268,7 @@ pub async fn connect_wifi(
     if let Some(config) = static_ip {
         validate_static_config(config)?;
     }
-    let ssid = wpa_quoted_string("ssid", ssid)?;
-    let password = wpa_quoted_string("password", password)?;
-    let country = sanitize_country(country);
-
-    // scan_ssid=1 so hidden SSIDs (not in beacons) are probed for and associated.
-    let wpa = format!(
-        "ctrl_interface=/var/run/wpa_supplicant\nupdate_config=1\ncountry={country}\np2p_disabled=1\n\n\
-         network={{\n  ssid=\"{ssid}\"\n  scan_ssid=1\n  psk=\"{password}\"\n  key_mgmt=WPA-PSK\n}}\n"
-    );
+    let wpa = build_wpa_config(ssid, password, country)?;
     write_config(&wpa_conf_path(&iface), &wpa).await?;
 
     // Write networkd config for wifi
@@ -602,5 +633,32 @@ mod tests {
         assert_eq!(sanitize_country("bad"), "DE");
         assert_eq!(sanitize_country("D\nE"), "DE");
         assert_eq!(sanitize_country(""), "DE");
+    }
+
+    #[test]
+    fn build_wpa_config_open_network_uses_key_mgmt_none() {
+        // Empty passphrase => open network. Must NOT emit psk="" — that makes
+        // wpa_supplicant reject the whole file and breaks every operation (scans too).
+        let cfg = build_wpa_config("CoffeeShop", "", "DE").unwrap();
+        assert!(cfg.contains("key_mgmt=NONE"));
+        assert!(!cfg.contains("psk="));
+        assert!(cfg.contains("ssid=\"CoffeeShop\""));
+    }
+
+    #[test]
+    fn build_wpa_config_secured_network_writes_psk() {
+        let cfg = build_wpa_config("Home", "supersecret", "DE").unwrap();
+        assert!(cfg.contains("psk=\"supersecret\""));
+        assert!(cfg.contains("key_mgmt=WPA-PSK"));
+        assert!(!cfg.contains("psk=\"\""));
+    }
+
+    #[test]
+    fn build_wpa_config_rejects_out_of_range_passphrase() {
+        assert!(build_wpa_config("Home", "short", "DE").is_err()); // 5 chars
+        assert!(build_wpa_config("Home", &"x".repeat(64), "DE").is_err());
+        // Boundaries are valid.
+        assert!(build_wpa_config("Home", "12345678", "DE").is_ok()); // 8
+        assert!(build_wpa_config("Home", &"y".repeat(63), "DE").is_ok()); // 63
     }
 }

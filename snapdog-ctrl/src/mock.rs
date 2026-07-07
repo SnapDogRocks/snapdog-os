@@ -167,6 +167,12 @@ impl MockState {
             dns: "1.1.1.1".into(),
             signal: -52,
             mode: "dhcp".into(),
+            state: if s.wifi_connected {
+                "connected"
+            } else {
+                "disconnected"
+            }
+            .into(),
         }
     }
 
@@ -216,6 +222,8 @@ impl MockState {
                     security: "open".into(),
                 },
             ],
+            status: "ok".into(),
+            ap_active: false,
         }
     }
 

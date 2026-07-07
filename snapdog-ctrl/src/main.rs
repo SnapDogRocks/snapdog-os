@@ -134,33 +134,52 @@ async fn build_app() -> Router {
         let _ = network::configure_resolved().await;
 
         let softap = system::get_softap_config().await;
+
+        // WiFi already configured: nothing has started the supplicant on this
+        // path yet, so bring the client up and we're done (no AP).
+        if network::is_wifi_configured().await {
+            if let Err(e) = network::start_wifi_client().await {
+                tracing::error!("Failed to start WiFi client: {e}");
+            }
+            return;
+        }
+
         if !softap.enabled {
             return;
         }
 
-        let wifi_configured = network::is_wifi_configured().await;
-        let eth_has_link = has_network_link().await;
-
-        if !wifi_configured && !eth_has_link {
-            tracing::info!("No network configured — starting setup AP");
-            if let Err(e) = network::start_ap(&softap.password).await {
-                tracing::error!("Failed to start AP: {e}");
+        // No WiFi configured. Give a wired link a chance to obtain a REAL IP
+        // before deciding — carrier-up-but-no-DHCP must NOT suppress the setup AP,
+        // or the device is unreachable with no way in.
+        let wait_for_ip_secs: u64 = 30;
+        for _ in 0..(wait_for_ip_secs / 3) {
+            if system::has_connectivity().await {
+                tracing::info!("Functional network present — not starting setup AP");
                 return;
             }
-            // Auto-close AP when a network interface comes up
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                if network::is_wifi_configured().await || has_network_link().await {
-                    tracing::info!("Network connected — stopping setup AP");
-                    let _ = network::stop_ap().await;
-                    break;
-                }
-            }
-        } else if wifi_configured {
-            // WiFi is configured but we never entered (and left) AP mode, so
-            // nothing has started the supplicant yet — bring the client up.
-            if let Err(e) = network::start_wifi_client().await {
-                tracing::error!("Failed to start WiFi client: {e}");
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        }
+
+        tracing::info!("No functional network after {wait_for_ip_secs}s — starting setup AP");
+        if let Err(e) = network::start_ap(&softap.password, &softap.country).await {
+            tracing::error!("Failed to start AP: {e}");
+            return;
+        }
+        // Log the passphrase to the console so a first-join is possible out-of-band
+        // (the AP password is never exposed on the LAN, see get_softap_view).
+        tracing::warn!(
+            "Setup AP '{}' is up — join with passphrase: {}",
+            network::ap_ssid().await,
+            softap.password
+        );
+        // Auto-close the AP once real connectivity appears (idempotent stop_ap;
+        // connect_wifi's deferred teardown may beat us to it).
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            if system::has_connectivity().await {
+                tracing::info!("Network connected — stopping setup AP");
+                let _ = network::stop_ap().await;
+                break;
             }
         }
     });
@@ -233,18 +252,4 @@ async fn build_app() -> Router {
         .layer(CompressionLayer::new())
         .layer(axum::Extension(now_playing))
         .layer(TraceLayer::new_for_http())
-}
-
-#[cfg(not(debug_assertions))]
-async fn has_network_link() -> bool {
-    let ifaces = network::detect_ethernet_interfaces().await;
-    for iface in ifaces {
-        let path = format!("/sys/class/net/{iface}/carrier");
-        if let Ok(val) = tokio::fs::read_to_string(&path).await {
-            if val.trim() == "1" {
-                return true;
-            }
-        }
-    }
-    false
 }

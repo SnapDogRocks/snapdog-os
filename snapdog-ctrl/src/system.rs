@@ -283,21 +283,57 @@ pub async fn get_wifi() -> WifiInfo {
     let wpa = wpa_status(&iface).await;
     let signal = wifi_signal(&iface).await.unwrap_or_default();
     let connected = wpa.state == "COMPLETED" || status.connected;
+    let ip = if status.ip.is_empty() {
+        wpa.ip.clone()
+    } else {
+        status.ip.clone()
+    };
+    let state = derive_wifi_state(&iface, &wpa, &ip).await;
 
     WifiInfo {
         connected,
         ssid: wpa.ssid,
-        ip: if status.ip.is_empty() {
-            wpa.ip
-        } else {
-            status.ip
-        },
+        ip,
         subnet: status.subnet,
         gateway: status.gateway,
         dns: status.dns,
         signal,
         mode: read_network_mode(WIFI_NETWORK).await,
+        state,
     }
+}
+
+/// Map `wpa_supplicant`'s `wpa_state` + IP into the UI-facing lifecycle. A
+/// TEMP-DISABLED network almost always means a wrong passphrase, which is the
+/// single most useful failure to surface.
+async fn derive_wifi_state(iface: &str, wpa: &WpaStatus, ip: &str) -> String {
+    match wpa.state.as_str() {
+        "COMPLETED" => {
+            if ip.is_empty() {
+                "acquiring_ip"
+            } else {
+                "connected"
+            }
+        }
+        "SCANNING" | "AUTHENTICATING" | "ASSOCIATING" | "ASSOCIATED" | "4WAY_HANDSHAKE"
+        | "GROUP_HANDSHAKE" => "associating",
+        _ => {
+            if wpa_network_temp_disabled(iface).await {
+                "auth_failed"
+            } else {
+                "disconnected"
+            }
+        }
+    }
+    .to_string()
+}
+
+/// True when a configured network is in the `[TEMP-DISABLED]` state — the
+/// supplicant's signal for repeated auth/handshake failure (wrong PSK).
+async fn wpa_network_temp_disabled(iface: &str) -> bool {
+    command_stdout("wpa_cli", &["-i", iface, "list_networks"])
+        .await
+        .is_ok_and(|o| o.contains("TEMP-DISABLED"))
 }
 
 pub async fn set_wifi(
@@ -305,7 +341,8 @@ pub async fn set_wifi(
     password: &str,
     static_cfg: Option<&crate::network::StaticConfig>,
 ) -> Result<()> {
-    crate::network::connect_wifi(ssid, password, static_cfg).await
+    let country = get_softap_config().await.country;
+    crate::network::connect_wifi(ssid, password, &country, static_cfg).await
 }
 
 pub async fn delete_wifi() -> Result<()> {
@@ -313,20 +350,51 @@ pub async fn delete_wifi() -> Result<()> {
 }
 
 pub async fn wifi_scan() -> WifiScanResult {
-    let networks = crate::network::scan_networks().await.unwrap_or_else(|e| {
-        tracing::warn!("WiFi scan failed: {e:#}");
-        Vec::new()
-    });
-    WifiScanResult {
-        networks: networks
-            .into_iter()
-            .map(|n| WifiNetwork {
-                ssid: n.ssid,
-                signal: n.signal,
-                security: n.security,
-            })
-            .collect(),
+    let ap_active = crate::network::is_ap_active().await;
+    match crate::network::scan_networks().await {
+        Ok(networks) => WifiScanResult {
+            networks: networks
+                .into_iter()
+                .map(|n| WifiNetwork {
+                    ssid: n.ssid,
+                    signal: n.signal,
+                    security: n.security,
+                })
+                .collect(),
+            status: "ok".into(),
+            ap_active,
+        },
+        Err(e) => {
+            tracing::warn!("WiFi scan failed: {e:#}");
+            WifiScanResult {
+                networks: Vec::new(),
+                status: if ap_active {
+                    "unavailable_ap_mode"
+                } else {
+                    "error"
+                }
+                .into(),
+                ap_active,
+            }
+        }
     }
+}
+
+/// True when the device has a working way in besides the setup AP: `WiFi`
+/// associated, or an ethernet interface with an IPv4 address. Used to guard
+/// against disabling the setup AP into a permanent lockout.
+pub async fn has_connectivity() -> bool {
+    let wifi = get_wifi().await;
+    if wifi.connected && !wifi.ip.is_empty() {
+        return true;
+    }
+    for iface in crate::network::detect_ethernet_interfaces().await {
+        let (ip, _) = ipv4_address(&iface).await.unwrap_or_default();
+        if !ip.is_empty() {
+            return true;
+        }
+    }
+    false
 }
 
 #[derive(Default)]
@@ -1273,22 +1341,91 @@ pub async fn set_auto_update(config: AutoUpdateConfig) -> Result<()> {
 pub struct SoftApConfig {
     pub enabled: bool,
     pub password: String,
+    #[serde(default = "default_country")]
+    pub country: String,
+}
+
+fn default_country() -> String {
+    crate::network::DEFAULT_COUNTRY.to_string()
+}
+
+/// Read-only view for GET — never leaks the passphrase onto the LAN. It's
+/// included only while the setup AP is active (the requester is on the AP and
+/// already knows it, and needs it shown on the setup page).
+#[derive(serde::Serialize)]
+pub struct SoftApView {
+    pub enabled: bool,
+    pub ssid: String,
+    pub country: String,
+    pub password: Option<String>,
+}
+
+/// A random 12-char passphrase over an unambiguous alphabet (no 0/o/1/l), so
+/// each device ships with a unique default instead of a shared hardcoded one.
+/// It is logged to the console at AP start for out-of-band first-join retrieval.
+fn gen_ap_password() -> String {
+    const ALPHABET: &[u8] = b"abcdefghijkmnpqrstuvwxyz23456789";
+    let mut buf = [0u8; 12];
+    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+        use std::io::Read as _;
+        let _ = f.read_exact(&mut buf);
+    }
+    buf.iter()
+        .map(|b| ALPHABET[(*b as usize) % ALPHABET.len()] as char)
+        .collect()
 }
 
 pub async fn get_softap_config() -> SoftApConfig {
     let content = read_file(CTRL_CONFIG).await.unwrap_or_default();
     let doc: toml_edit::DocumentMut = content.parse().unwrap_or_default();
     let ap = doc.get("softap");
+    let enabled = ap
+        .and_then(|t| t.get("enabled"))
+        .and_then(toml_edit::Item::as_bool)
+        .unwrap_or(true);
+    let country = ap
+        .and_then(|t| t.get("country"))
+        .and_then(|v| v.as_str())
+        .unwrap_or(crate::network::DEFAULT_COUNTRY)
+        .to_string();
+    let stored = ap
+        .and_then(|t| t.get("password"))
+        .and_then(|v| v.as_str())
+        .filter(|p| !p.is_empty());
+    let password = if let Some(p) = stored {
+        p.to_string()
+    } else {
+        // First access with no stored passphrase → generate + persist a unique one.
+        let pw = gen_ap_password();
+        let cfg = SoftApConfig {
+            enabled,
+            password: pw.clone(),
+            country: country.clone(),
+        };
+        if let Err(e) = set_softap_config(cfg).await {
+            tracing::warn!("failed to persist generated AP password: {e:#}");
+        }
+        pw
+    };
     SoftApConfig {
-        enabled: ap
-            .and_then(|t| t.get("enabled"))
-            .and_then(toml_edit::Item::as_bool)
-            .unwrap_or(true),
-        password: ap
-            .and_then(|t| t.get("password"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("snapdog123")
-            .to_string(),
+        enabled,
+        password,
+        country,
+    }
+}
+
+pub async fn get_softap_view() -> SoftApView {
+    let cfg = get_softap_config().await;
+    let password = if crate::network::is_ap_active().await {
+        Some(cfg.password)
+    } else {
+        None
+    };
+    SoftApView {
+        enabled: cfg.enabled,
+        ssid: crate::network::ap_ssid().await,
+        country: cfg.country,
+        password,
     }
 }
 
@@ -1301,6 +1438,7 @@ pub async fn set_softap_config(config: SoftApConfig) -> Result<()> {
         .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
     ap["enabled"] = toml_edit::value(config.enabled);
     ap["password"] = toml_edit::value(&config.password);
+    ap["country"] = toml_edit::value(&config.country);
 
     if let Some(parent) = std::path::Path::new(CTRL_CONFIG).parent() {
         tokio::fs::create_dir_all(parent).await?;

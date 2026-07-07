@@ -1066,6 +1066,9 @@ pub struct WifiInfo {
     pub dns: String,
     pub signal: i32,
     pub mode: String,
+    /// Connection lifecycle for UI feedback:
+    /// `disconnected` | `associating` | `auth_failed` | `acquiring_ip` | `connected`.
+    pub state: String,
 }
 
 #[derive(Deserialize)]
@@ -1098,6 +1101,11 @@ pub struct WifiNetwork {
 #[derive(Serialize)]
 pub struct WifiScanResult {
     pub networks: Vec<WifiNetwork>,
+    /// `ok` (scan ran) | `unavailable_ap_mode` (single radio busy as setup AP) |
+    /// `error` (scan failed). Lets the UI explain an empty list instead of showing
+    /// a blank void.
+    pub status: String,
+    pub ap_active: bool,
 }
 
 async fn get_network() -> Json<NetworkOverview> {
@@ -1135,7 +1143,9 @@ async fn put_wifi(Json(body): Json<WifiConfig>) -> StatusCode {
         tracing::error!("put_wifi: {e}");
         return StatusCode::INTERNAL_SERVER_ERROR;
     }
-    StatusCode::OK
+    // 202: config accepted; association happens asynchronously and the setup AP
+    // is torn down on a short delay. The client polls GET /network/wifi (state).
+    StatusCode::ACCEPTED
 }
 
 async fn delete_wifi() -> StatusCode {
@@ -1150,19 +1160,36 @@ async fn post_wifi_scan() -> Json<WifiScanResult> {
     Json(system::wifi_scan().await)
 }
 
-async fn get_softap() -> Json<system::SoftApConfig> {
-    Json(system::get_softap_config().await)
+/// Never returns the AP passphrase — only whether it's still the generated
+/// default, plus the SSID + country for display.
+async fn get_softap() -> Json<system::SoftApView> {
+    Json(system::get_softap_view().await)
 }
 
-async fn put_softap(Json(body): Json<system::SoftApConfig>) -> StatusCode {
+async fn put_softap(Json(body): Json<system::SoftApConfig>) -> impl axum::response::IntoResponse {
     if body.password.len() < 8 || body.password.contains('\n') || body.password.contains('\r') {
-        return StatusCode::BAD_REQUEST;
+        return (
+            StatusCode::BAD_REQUEST,
+            "password must be at least 8 characters",
+        )
+            .into_response();
+    }
+    // Lockout guard: refuse to disable the setup AP unless the device currently
+    // has a working way in (wifi associated or ethernet with an IP), otherwise it
+    // becomes permanently unreachable.
+    if !body.enabled && !system::has_connectivity().await {
+        return (
+            StatusCode::CONFLICT,
+            "cannot disable the setup access point: the device has no other working \
+             connection (connect WiFi or plug in ethernet first)",
+        )
+            .into_response();
     }
     if let Err(e) = system::set_softap_config(body).await {
         tracing::error!("put_softap: {e}");
-        return StatusCode::INTERNAL_SERVER_ERROR;
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
-    StatusCode::OK
+    StatusCode::OK.into_response()
 }
 
 // --- Audio ---

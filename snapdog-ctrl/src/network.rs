@@ -2,9 +2,12 @@
 // Copyright (C) 2026 Fabian Schmieder
 
 use std::net::Ipv4Addr;
+use std::sync::OnceLock;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tokio::process::Command;
+use tokio::sync::Mutex;
 
 const HOSTAPD_CONF: &str = "/etc/hostapd/hostapd.conf";
 pub const ETH_NETWORK_PATH: &str = "/etc/systemd/network/10-ethernet.network";
@@ -21,6 +24,21 @@ const AP_PREFIX: u8 = 24;
 /// DHCP pool inside the AP subnet: first-host offset and number of leases.
 const AP_DHCP_POOL_OFFSET: u32 = 100;
 const AP_DHCP_POOL_SIZE: u32 = 100;
+/// Default regulatory country when none is configured. Governs both the AP
+/// (hostapd) and client (`wpa_supplicant`) radio behaviour.
+pub const DEFAULT_COUNTRY: &str = "DE";
+/// How long `connect_wifi` waits before tearing the setup AP down, so the HTTP
+/// response reaches the browser BEFORE its link to the AP drops.
+const AP_TEARDOWN_GRACE: Duration = Duration::from_millis(1500);
+
+/// Serializes every AP teardown. Both `connect_wifi`'s deferred task and the
+/// boot auto-close loop can call `stop_ap` concurrently; without this they race
+/// on hostapd/networkd (double-stop, half-applied config). The teardown is also
+/// idempotent (a no-op when the AP is already down).
+fn ap_teardown_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
 fn wpa_conf_path(iface: &str) -> String {
     format!("/etc/wpa_supplicant/wpa_supplicant-{iface}.conf")
@@ -69,27 +87,60 @@ pub async fn is_wifi_configured() -> bool {
         .is_ok_and(|c| c.contains("network="))
 }
 
-/// Start temporary AP mode for initial setup.
-pub async fn start_ap(password: &str) -> Result<()> {
-    let iface = detect_wifi_interface().await;
-    tracing::info!("Starting temporary AP mode on interface {iface}");
-
-    // Derive unique SSID from last 4 hex chars of MAC
-    let address_path = format!("/sys/class/net/{iface}/address");
-    let ssid = tokio::fs::read_to_string(&address_path)
+/// True while the device is serving the setup access point. A single-radio Pi
+/// cannot beacon as an AP and run a managed-mode client scan at the same time,
+/// so callers use this to explain why a scan is unavailable rather than return
+/// an empty list. Checks both the live hostapd unit and the networkd AP profile
+/// (either is authoritative depending on how far a teardown has progressed).
+pub async fn is_ap_active() -> bool {
+    if tokio::fs::try_exists(AP_NETWORK).await.unwrap_or(false) {
+        return true;
+    }
+    Command::new("systemctl")
+        .args(["is-active", "--quiet", "hostapd"])
+        .status()
         .await
-        .map_or_else(|_| "SnapDog-Setup".into(), |mac| derive_ssid(&mac));
+        .is_ok_and(|s| s.success())
+}
 
-    // Write hostapd config
+/// The setup-AP SSID for this device: `SnapDog-<last 4 MAC hex>`.
+pub async fn ap_ssid() -> String {
+    let iface = detect_wifi_interface().await;
+    let address_path = format!("/sys/class/net/{iface}/address");
+    tokio::fs::read_to_string(&address_path)
+        .await
+        .map_or_else(|_| "SnapDog-Setup".into(), |mac| derive_ssid(&mac))
+}
+
+/// Sanitize a caller-supplied regulatory country to an uppercase ISO-3166 alpha-2
+/// (two ASCII letters), falling back to the default. Prevents config injection
+/// via the country field.
+fn sanitize_country(country: &str) -> String {
+    let c = country.trim();
+    if c.len() == 2 && c.chars().all(|ch| ch.is_ascii_alphabetic()) {
+        c.to_ascii_uppercase()
+    } else {
+        DEFAULT_COUNTRY.to_string()
+    }
+}
+
+/// Start temporary AP mode for initial setup.
+pub async fn start_ap(password: &str, country: &str) -> Result<()> {
+    let iface = detect_wifi_interface().await;
+    let country = sanitize_country(country);
+    tracing::info!("Starting temporary AP mode on interface {iface} (country {country})");
+
+    let ssid = ap_ssid().await;
+
+    // Write hostapd config. country_code + ieee80211d let the radio honour the
+    // regulatory domain (needs wireless-regdb in the image).
     let hostapd = format!(
-        "interface={iface}\ndriver=nl80211\nssid={ssid}\nhw_mode=g\nchannel=6\n\
-         ieee80211n=1\nwmm_enabled=1\nwpa=2\nwpa_passphrase={password}\n\
+        "interface={iface}\ndriver=nl80211\nssid={ssid}\ncountry_code={country}\nieee80211d=1\n\
+         hw_mode=g\nchannel=6\nieee80211n=1\nwmm_enabled=1\nwpa=2\nwpa_passphrase={password}\n\
          wpa_key_mgmt=WPA-PSK\nrsn_pairwise=CCMP\n"
     );
     write_config(HOSTAPD_CONF, &hostapd).await?;
 
-    // networkd owns addressing: it brings the interface up, assigns the static AP
-    // address and runs the DHCP server. No raw `ip` calls.
     // networkd owns addressing on the AP interface too: static address, built-in
     // DHCP server, and the RFC 8910 captive-portal URL (DHCP option 114) for
     // modern clients. ConfigureWithoutCarrier so it applies before hostapd brings
@@ -115,8 +166,14 @@ pub async fn start_ap(password: &str) -> Result<()> {
     Ok(())
 }
 
-/// Stop AP mode and switch to `WiFi` client mode.
+/// Stop AP mode and switch to `WiFi` client mode. Idempotent and serialized:
+/// safe to call from both `connect_wifi` and the boot auto-close loop.
 pub async fn stop_ap() -> Result<()> {
+    let _guard = ap_teardown_lock().lock().await;
+    if !is_ap_active().await {
+        tracing::debug!("stop_ap: AP already down, nothing to do");
+        return Ok(());
+    }
     let iface = detect_wifi_interface().await;
     tracing::info!("Stopping AP mode on interface {iface}, switching to client");
     let _ = run("systemctl", &["stop", "hostapd"]).await;
@@ -137,13 +194,34 @@ pub async fn stop_ap() -> Result<()> {
 pub async fn start_wifi_client() -> Result<()> {
     let iface = detect_wifi_interface().await;
     tracing::info!("Starting WiFi client on interface {iface}");
+    ensure_base_wpa_conf(&iface, DEFAULT_COUNTRY).await?;
     run("systemctl", &["start", &format!("wpa_supplicant@{iface}")]).await
 }
 
-/// Connect to a `WiFi` network.
+/// Ensure a minimal `wpa_supplicant` config exists so the per-interface supplicant
+/// can start (and expose its control socket) even before any network is saved.
+/// Without this, `wpa_supplicant@<iface>` exits 255 (no config) and scans on an
+/// otherwise-idle device return nothing because there is no control socket.
+async fn ensure_base_wpa_conf(iface: &str, country: &str) -> Result<()> {
+    let path = wpa_conf_path(iface);
+    if tokio::fs::try_exists(&path).await.unwrap_or(false) {
+        return Ok(());
+    }
+    let country = sanitize_country(country);
+    let base = format!(
+        "ctrl_interface=/var/run/wpa_supplicant\nupdate_config=1\ncountry={country}\np2p_disabled=1\n"
+    );
+    write_config(&path, &base).await
+}
+
+/// Connect to a `WiFi` network. Writes the supplicant + networkd config and then
+/// tears the setup AP down on a short delay so the HTTP response reaches the
+/// browser first (its link to the AP dies with the teardown). Returns as soon as
+/// the config is persisted — association progress is observed via `WifiState`.
 pub async fn connect_wifi(
     ssid: &str,
     password: &str,
+    country: &str,
     static_ip: Option<&StaticConfig>,
 ) -> Result<()> {
     let iface = detect_wifi_interface().await;
@@ -153,10 +231,12 @@ pub async fn connect_wifi(
     }
     let ssid = wpa_quoted_string("ssid", ssid)?;
     let password = wpa_quoted_string("password", password)?;
+    let country = sanitize_country(country);
 
+    // scan_ssid=1 so hidden SSIDs (not in beacons) are probed for and associated.
     let wpa = format!(
-        "ctrl_interface=/var/run/wpa_supplicant\nupdate_config=1\ncountry=DE\np2p_disabled=1\n\n\
-         network={{\n  ssid=\"{ssid}\"\n  psk=\"{password}\"\n  key_mgmt=WPA-PSK\n}}\n"
+        "ctrl_interface=/var/run/wpa_supplicant\nupdate_config=1\ncountry={country}\np2p_disabled=1\n\n\
+         network={{\n  ssid=\"{ssid}\"\n  scan_ssid=1\n  psk=\"{password}\"\n  key_mgmt=WPA-PSK\n}}\n"
     );
     write_config(&wpa_conf_path(&iface), &wpa).await?;
 
@@ -175,7 +255,14 @@ pub async fn connect_wifi(
     );
     write_config(WIFI_NETWORK, &network).await?;
 
-    stop_ap().await?;
+    // Defer the AP teardown so the caller's 202 response lands before the AP (and
+    // the client's connection to it) goes away.
+    tokio::spawn(async move {
+        tokio::time::sleep(AP_TEARDOWN_GRACE).await;
+        if let Err(e) = stop_ap().await {
+            tracing::warn!("deferred AP teardown after connect failed: {e:#}");
+        }
+    });
     Ok(())
 }
 
@@ -194,55 +281,106 @@ pub async fn disconnect_wifi() -> Result<()> {
     Ok(())
 }
 
-/// Scan for available `WiFi` networks.
+/// Scan for available `WiFi` networks. Errors (rather than returning an empty
+/// list) so the caller can tell "nothing nearby" from "scan impossible right
+/// now" — most importantly the single-radio/AP-mode case, which the caller maps
+/// to a distinct status. Ensures a supplicant with a control socket is up first,
+/// otherwise `wpa_cli` has nothing to talk to.
 pub async fn scan_networks() -> Result<Vec<ScannedNetwork>> {
+    anyhow::ensure!(
+        !is_ap_active().await,
+        "cannot scan while the setup access point is active (single radio)"
+    );
     let iface = detect_wifi_interface().await;
+    ensure_supplicant_running(&iface).await?;
+
     // Trigger scan
     let _ = Command::new("wpa_cli")
         .args(["-i", &iface, "scan"])
         .output()
         .await;
 
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 
     let output = Command::new("wpa_cli")
         .args(["-i", &iface, "scan_results"])
         .output()
         .await
         .context("wpa_cli scan_results failed")?;
+    anyhow::ensure!(
+        output.status.success(),
+        "wpa_cli scan_results failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let networks = stdout
-        .lines()
-        .skip(1) // header line
-        .filter_map(|line| {
-            let parts: Vec<&str> = line.split('\t').collect();
-            if parts.len() >= 5 {
-                let signal = parts[2].parse::<i32>().unwrap_or(-100);
-                let flags = parts[3];
-                let ssid = parts[4].to_string();
-                if ssid.is_empty() {
-                    return None;
+    // Dedupe by SSID keeping the strongest signal (a network on 2.4+5 GHz or
+    // multiple APs shows up several times).
+    let mut best: std::collections::HashMap<String, ScannedNetwork> =
+        std::collections::HashMap::new();
+    for line in stdout.lines().skip(1) {
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() < 5 {
+            continue;
+        }
+        let signal = parts[2].parse::<i32>().unwrap_or(-100);
+        let security = parse_security(parts[3]);
+        let ssid = parts[4].to_string();
+        if ssid.is_empty() {
+            continue; // hidden network — beacon carries no SSID
+        }
+        best.entry(ssid.clone())
+            .and_modify(|n| {
+                if signal > n.signal {
+                    n.signal = signal;
+                    n.security.clone_from(&security);
                 }
-                let security = if flags.contains("WPA") {
-                    "wpa2"
-                } else if flags.contains("WEP") {
-                    "wep"
-                } else {
-                    "open"
-                };
-                Some(ScannedNetwork {
-                    ssid,
-                    signal,
-                    security: security.into(),
-                })
-            } else {
-                None
-            }
-        })
-        .collect();
-
+            })
+            .or_insert(ScannedNetwork {
+                ssid,
+                signal,
+                security,
+            });
+    }
+    let mut networks: Vec<ScannedNetwork> = best.into_values().collect();
+    networks.sort_by_key(|n| std::cmp::Reverse(n.signal));
     Ok(networks)
+}
+
+/// Map a `wpa_supplicant` `scan_results` flags field to a coarse security label the
+/// UI renders (lock icon + "WPA3"/"WPA2"/"Open"). Order matters: WPA3 (SAE)
+/// before WPA2 before WPA.
+fn parse_security(flags: &str) -> String {
+    let f = flags.to_ascii_uppercase();
+    if f.contains("SAE") || f.contains("WPA3") {
+        "wpa3".into()
+    } else if f.contains("WPA2") || f.contains("RSN") {
+        "wpa2".into()
+    } else if f.contains("WPA") {
+        "wpa".into()
+    } else if f.contains("WEP") {
+        "wep".into()
+    } else {
+        "open".into()
+    }
+}
+
+/// Ensure the per-interface supplicant is running so `wpa_cli` has a control
+/// socket. Idempotent; only acts when not in AP mode.
+async fn ensure_supplicant_running(iface: &str) -> Result<()> {
+    let active = Command::new("systemctl")
+        .args(["is-active", "--quiet", &format!("wpa_supplicant@{iface}")])
+        .status()
+        .await
+        .is_ok_and(|s| s.success());
+    if active {
+        return Ok(());
+    }
+    ensure_base_wpa_conf(iface, DEFAULT_COUNTRY).await?;
+    run("systemctl", &["start", &format!("wpa_supplicant@{iface}")]).await?;
+    // Give the control socket a moment to appear.
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    Ok(())
 }
 
 /// Configure ethernet (DHCP or static).
@@ -389,5 +527,23 @@ mod tests {
         assert_eq!(derive_ssid(""), "SnapDog-Setup");
         assert_eq!(derive_ssid("12"), "SnapDog-Setup");
         assert_eq!(derive_ssid("not-a-mac-address"), "SnapDog-Setup");
+    }
+
+    #[test]
+    fn parse_security_ranks_strongest_first() {
+        assert_eq!(parse_security("[WPA2-PSK-CCMP][WPS][ESS]"), "wpa2");
+        assert_eq!(parse_security("[WPA2-SAE-CCMP][ESS]"), "wpa3");
+        assert_eq!(parse_security("[WPA-PSK-TKIP][ESS]"), "wpa");
+        assert_eq!(parse_security("[WEP][ESS]"), "wep");
+        assert_eq!(parse_security("[ESS]"), "open");
+    }
+
+    #[test]
+    fn sanitize_country_validates() {
+        assert_eq!(sanitize_country("de"), "DE");
+        assert_eq!(sanitize_country("US"), "US");
+        assert_eq!(sanitize_country("bad"), "DE");
+        assert_eq!(sanitize_country("D\nE"), "DE");
+        assert_eq!(sanitize_country(""), "DE");
     }
 }

@@ -255,14 +255,25 @@ pub async fn connect_wifi(
     );
     write_config(WIFI_NETWORK, &network).await?;
 
-    // Defer the AP teardown so the caller's 202 response lands before the AP (and
-    // the client's connection to it) goes away.
-    tokio::spawn(async move {
-        tokio::time::sleep(AP_TEARDOWN_GRACE).await;
-        if let Err(e) = stop_ap().await {
-            tracing::warn!("deferred AP teardown after connect failed: {e:#}");
-        }
-    });
+    // Apply the new network. During setup the AP is up: defer its teardown so the
+    // caller's 202 response reaches the browser BEFORE its AP link drops (the
+    // teardown then brings the supplicant up on the new config). On the LAN
+    // (no AP, e.g. adding WiFi while on ethernet) there is no link to protect and
+    // nothing else restarts the supplicant, so apply the new config now.
+    if is_ap_active().await {
+        tokio::spawn(async move {
+            tokio::time::sleep(AP_TEARDOWN_GRACE).await;
+            if let Err(e) = stop_ap().await {
+                tracing::warn!("deferred AP teardown after connect failed: {e:#}");
+            }
+        });
+    } else {
+        run(
+            "systemctl",
+            &["restart", &format!("wpa_supplicant@{iface}")],
+        )
+        .await?;
+    }
     Ok(())
 }
 

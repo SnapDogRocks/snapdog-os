@@ -18,6 +18,12 @@ define SNAPDOG_RAUC_BUILD_CMDS
 endef
 
 define SNAPDOG_RAUC_INSTALL_TARGET_CMDS
+	# The RAUC compatible must be board-specific (snapdog-os-<board>) so a bundle
+	# for one Pi model can never install on another. Fail loudly rather than bake a
+	# board-less "snapdog-os-" that silently accepts any board's bundle. Every build
+	# path sets it: release.yml (per matrix board) + dev/docker-compose.yml (pi4).
+	test -n "$(SNAPDOG_BOARD)" || { echo "snapdog-rauc: SNAPDOG_BOARD is empty — set it (e.g. SNAPDOG_BOARD=pi4); see dev/docker-compose.yml and .github/workflows/release.yml" >&2; exit 1; }
+
 	# system.conf (substitute board compatible)
 	mkdir -p $(TARGET_DIR)/etc/rauc
 	sed -e 's/@SNAPDOG_BOARD@/$(SNAPDOG_BOARD)/' \

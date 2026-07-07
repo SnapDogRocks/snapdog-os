@@ -231,8 +231,8 @@ impl UpgradeManager {
                     saw_installing = true;
                     if let Some(prog) = status.progress {
                         ui_poll.update_message(format!(
-                            "Installing: {:.1}% ({})",
-                            prog.percent, prog.message
+                            "Installing: {}% ({})",
+                            prog.percentage, prog.message
                         ));
                     }
                 }
@@ -887,5 +887,37 @@ mod tests {
 
         let reason = expectation.success_reason(&system_info("1.0.0", 42), None);
         assert!(reason.is_some_and(|r| r == "device rebooted"));
+    }
+
+    #[test]
+    fn installing_status_with_percentage_progress_decodes() {
+        // Regression: the device populates progress as {"percentage": <int>, ...}
+        // ONLY while installing. A field mismatch (percent vs percentage) failed the
+        // whole status decode on every poll during the install window, so
+        // `saw_installing` was never set and the client waited forever for an install
+        // that had already finished. This is the exact body observed on-device.
+        let body = r#"{"operation":"installing","progress":{"percentage":40,"message":"Determining target install group done."},"last_error":"","slots":[]}"#;
+        let status: crate::client::UpdateStatus =
+            serde_json::from_str(body).expect("installing status must decode");
+        assert_eq!(status.operation, "installing");
+        let prog = status.progress.expect("progress present while installing");
+        assert_eq!(prog.percentage, 40);
+        assert_eq!(
+            classify_install_status(&status.operation, &status.last_error, false),
+            InstallPoll::Installing
+        );
+    }
+
+    #[test]
+    fn malformed_progress_never_blocks_operation() {
+        // Defense-in-depth: a display-only progress field of an unexpected shape must
+        // degrade to None, never failing the decode of the whole status — otherwise
+        // `operation` (which drives the state machine) becomes unreadable.
+        let body =
+            r#"{"operation":"installing","progress":{"percent":99.5},"last_error":"","slots":[]}"#;
+        let status: crate::client::UpdateStatus =
+            serde_json::from_str(body).expect("a mismatched progress shape must not fail decode");
+        assert_eq!(status.operation, "installing");
+        assert!(status.progress.is_none());
     }
 }

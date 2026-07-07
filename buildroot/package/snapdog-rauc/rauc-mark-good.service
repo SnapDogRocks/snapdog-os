@@ -1,12 +1,15 @@
 [Unit]
 Description=Mark RAUC slot as good after successful boot
+# Wants (not Requires): always run so rauc-commit's health gate decides whether
+# to commit; a failed ctrl must not tear this unit down before the gate runs.
 After=snapdog-ctrl.service
-Requires=snapdog-ctrl.service
+Wants=snapdog-ctrl.service
 ConditionPathExists=/usr/bin/rauc
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/rauc status mark-good
+# Marks the booted slot good AND commits/reconciles a pending tryboot trial.
+ExecStart=/opt/snapdog/bin/rauc-commit
 
 [Install]
 WantedBy=multi-user.target

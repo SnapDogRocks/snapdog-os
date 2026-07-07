@@ -8,7 +8,7 @@ pub enum UpgradeError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("HTTP client error: {0}")]
+    #[error("HTTP client error: {}", describe_http_error(.0))]
     Http(#[from] reqwest::Error),
 
     #[error("invalid SnapDog URL: {0}")]
@@ -65,6 +65,27 @@ pub enum UpgradeError {
 
 pub type Result<T> = std::result::Result<T, UpgradeError>;
 
+/// reqwest's Display for a transport failure is opaque — e.g. "error sending
+/// request for url (X)" with no hint at the real cause. Walk the error's source
+/// chain and append the deepest cause (typically the OS error, like
+/// "No route to host (os error 65)") so the user sees what actually failed.
+fn describe_http_error(err: &reqwest::Error) -> String {
+    let mut msg = err.to_string();
+    let mut deepest: Option<String> = None;
+    let mut source = std::error::Error::source(err);
+    while let Some(s) = source {
+        deepest = Some(s.to_string());
+        source = s.source();
+    }
+    if let Some(cause) = deepest {
+        if !msg.contains(cause.as_str()) {
+            use std::fmt::Write as _;
+            let _ = write!(msg, ": {cause}");
+        }
+    }
+    msg
+}
+
 impl UpgradeError {
     pub const fn code(&self) -> &'static str {
         match self {
@@ -86,8 +107,16 @@ impl UpgradeError {
         }
     }
 
-    pub const fn hint(&self) -> Option<&'static str> {
+    pub fn hint(&self) -> Option<&'static str> {
         match self {
+            Self::Http(e) if e.is_connect() => Some(
+                "Could not reach the target. Check the URL and that the device is online. If you \
+                 recently changed VPN/Wi-Fi, a stale neighbor-cache entry can cause \"no route to \
+                 host\" — flush it (macOS: `sudo arp -d <device-ip>`) or bounce the interface.",
+            ),
+            Self::Http(e) if e.is_timeout() => {
+                Some("The target did not respond in time. Check device power and connectivity.")
+            }
             Self::InvalidBaseUrl(_) => Some("Use an absolute URL such as http://snapdog.local."),
             Self::NonInteractiveInputRequired { hint, .. } => Some(hint),
             Self::Unauthorized => {

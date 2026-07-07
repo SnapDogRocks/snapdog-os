@@ -27,7 +27,11 @@ CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_ADMIN CAP_SYS_BOOT
 NoNewPrivileges=yes
 ProtectSystem=full
 ReadWritePaths=/boot /data /etc/default /etc/hostapd /etc/hostname /etc/localtime /etc/snapdog-os.auto-update /etc/snapdog-os.channel /etc/ssh /etc/systemd /etc/wpa_supplicant /root/.ssh
-PrivateTmp=yes
+# NO PrivateTmp: the ctrl shells out to `wpa_cli`/`hostapd_cli`, which create their
+# client reply socket in /tmp. Under PrivateTmp the ctrl's /tmp is namespaced, so
+# wpa_supplicant/hostapd (outside that namespace) can't deliver replies and EVERY
+# wpa_cli call fails (verified on-device: WiFi scan/status broke). OTA staging uses
+# /data (not /tmp), so nothing needs the isolation.
 
 [Install]
 WantedBy=multi-user.target

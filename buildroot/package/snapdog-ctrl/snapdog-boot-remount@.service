@@ -1,0 +1,10 @@
+[Unit]
+Description=Remount /boot %I
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+ExecStart=/bin/mount -o remount,%I /boot
+CapabilityBoundingSet=CAP_SYS_ADMIN
+AmbientCapabilities=CAP_SYS_ADMIN
+NoNewPrivileges=yes

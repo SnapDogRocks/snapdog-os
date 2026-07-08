@@ -26,8 +26,8 @@ impl RpiTuningDriver {
     async fn write_cmdline(&self, content: &str) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
-            let _ = tokio::process::Command::new("mount")
-                .args(["-o", "remount,rw", "/boot"])
+            let _ = tokio::process::Command::new("systemctl")
+                .args(["start", "snapdog-boot-remount@rw.service"])
                 .output()
                 .await;
         }
@@ -43,8 +43,8 @@ impl RpiTuningDriver {
 
         #[cfg(target_os = "linux")]
         {
-            let _ = tokio::process::Command::new("mount")
-                .args(["-o", "remount,ro", "/boot"])
+            let _ = tokio::process::Command::new("systemctl")
+                .args(["start", "snapdog-boot-remount@ro.service"])
                 .output()
                 .await;
         }

@@ -36,8 +36,8 @@ pub async fn read() -> Result<String> {
 pub async fn write(content: &str) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
-        let _ = tokio::process::Command::new("mount")
-            .args(["-o", "remount,rw", "/boot"])
+        let _ = tokio::process::Command::new("systemctl")
+            .args(["start", "snapdog-boot-remount@rw.service"])
             .output()
             .await;
     }
@@ -54,8 +54,8 @@ pub async fn write(content: &str) -> Result<()> {
 
     #[cfg(target_os = "linux")]
     {
-        let _ = tokio::process::Command::new("mount")
-            .args(["-o", "remount,ro", "/boot"])
+        let _ = tokio::process::Command::new("systemctl")
+            .args(["start", "snapdog-boot-remount@ro.service"])
             .output()
             .await;
     }

@@ -9,7 +9,12 @@ config BR2_PACKAGE_SNAPDOG_OS_ALL
 	select BR2_PACKAGE_COPY_OVERLAYS if BR2_PACKAGE_RPI_FIRMWARE
 	select BR2_PACKAGE_CONFIGTXT if BR2_PACKAGE_RPI_FIRMWARE
 	select BR2_PACKAGE_CONFIGTXT_QUIET if BR2_PACKAGE_RPI_FIRMWARE
-	select BR2_PACKAGE_CONFIGTXT_EEPROM if BR2_PACKAGE_RPI_FIRMWARE
+	# NOTE: BR2_PACKAGE_CONFIGTXT_EEPROM is intentionally NOT selected. It writes
+	# force_eeprom_read=0, which disables the firmware's boot-time HAT ID EEPROM
+	# read — so /proc/device-tree/hat is never populated and DAC auto-detection
+	# (snapdog-ctrl detect_hat_overlay) can never identify a HAT (e.g. HiFiBerry
+	# Amp100). Leaving it unset keeps the RPi default (force_eeprom_read=1) so HATs
+	# with an EEPROM are detected. Enable it only for boards that lack an EEPROM.
 	select BR2_PACKAGE_RASPI_WIFI if BR2_PACKAGE_RPI_FIRMWARE
 	select BR2_PACKAGE_SNAPDOG_CLIENT
 	select BR2_PACKAGE_SNAPDOG_SERVER

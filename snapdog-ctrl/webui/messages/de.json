@@ -72,7 +72,7 @@
       "password": "AP-Passwort",
       "passwordHint": "Mindestens 8 Zeichen (WPA2).",
       "country": "WLAN-Land",
-      "countryHint": "Zweistelliger Ländercode für die Funkregulierung (z. B. DE).",
+      "countryHint": "WLAN-Regulierungsdomäne – gilt für den Setup-AP und für WLAN-Verbindungen.",
       "saveError": "Einrichtungs-Access-Point konnte nicht gespeichert werden.",
       "saved": "Gespeichert"
     }
@@ -171,7 +171,11 @@
     "importRebootWarning": "Gerät startet nach dem Import neu.",
     "importConfirm": "Importieren & Neustarten",
     "importing": "Importiere...",
-    "files": "Dateien"
+    "files": "Dateien",
+    "copyLogs": "Kopieren",
+    "copied": "Kopiert",
+    "saved": "Gespeichert",
+    "timezoneSaveError": "Zeitzone konnte nicht gespeichert werden."
   },
   "update": {
     "title": "Firmware-Update",

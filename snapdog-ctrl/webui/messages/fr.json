@@ -72,7 +72,7 @@
       "password": "Mot de passe de l'AP",
       "passwordHint": "Au moins 8 caractères (WPA2).",
       "country": "Pays Wi-Fi",
-      "countryHint": "Code pays réglementaire à deux lettres (p. ex. DE).",
+      "countryHint": "Domaine réglementaire Wi-Fi — s'applique au point d'accès de configuration et aux connexions Wi-Fi.",
       "saveError": "Impossible d'enregistrer le point d'accès de configuration.",
       "saved": "Enregistré"
     }
@@ -171,7 +171,11 @@
     "importRebootWarning": "L'appareil redémarrera après l'import.",
     "importConfirm": "Importer et redémarrer",
     "importing": "Import en cours...",
-    "files": "fichiers"
+    "files": "fichiers",
+    "copyLogs": "Copier",
+    "copied": "Copié",
+    "saved": "Enregistré",
+    "timezoneSaveError": "Impossible d'enregistrer le fuseau horaire."
   },
   "update": {
     "title": "Mise à jour",

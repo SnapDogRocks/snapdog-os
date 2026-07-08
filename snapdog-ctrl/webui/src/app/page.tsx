@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useId, useRef } from "react";
-import { useTranslations } from "next-intl";
+import { useState, useEffect, useCallback, useId, useRef, useMemo } from "react";
+import { useTranslations, useLocale } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -768,8 +768,19 @@ function NetworkTab() {
   );
 }
 
+// Common Wi-Fi regulatory domains (ISO-3166 alpha-2). Region names are localised
+// at render time via Intl.DisplayNames, so this stays a plain code list.
+const WIFI_COUNTRIES = [
+  "AR", "AT", "AU", "BE", "BG", "BR", "CA", "CH", "CL", "CN", "CZ", "DE", "DK",
+  "EE", "ES", "FI", "FR", "GB", "GR", "HK", "HR", "HU", "IE", "IL", "IN", "IS",
+  "IT", "JP", "KR", "LT", "LU", "LV", "MX", "MY", "NL", "NO", "NZ", "PH", "PL",
+  "PT", "RO", "RS", "RU", "SE", "SG", "SI", "SK", "TH", "TR", "TW", "UA", "US",
+  "VN", "ZA",
+];
+
 function SoftApCard() {
   const t = useTranslations("network.softap");
+  const locale = useLocale();
   const id = useId();
   const [view, setView] = useState<import("@/lib/api").SoftApView | null>(null);
   const [enabled, setEnabled] = useState(true);
@@ -778,6 +789,21 @@ function SoftApCard() {
   const [status, setStatus] = useState<"idle" | "saved">("idle");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const countryOptions = useMemo(() => {
+    let dn: Intl.DisplayNames | undefined;
+    try {
+      dn = new Intl.DisplayNames([locale], { type: "region" });
+    } catch {
+      dn = undefined;
+    }
+    const list = WIFI_COUNTRIES.map((code) => ({ code, name: dn?.of(code) ?? code }));
+    // Keep the persisted value selectable even if it's outside the curated list.
+    if (country && !list.some((c) => c.code === country)) {
+      list.push({ code: country, name: dn?.of(country) ?? country });
+    }
+    return list.sort((a, b) => a.name.localeCompare(b.name, locale));
+  }, [locale, country]);
 
   useEffect(() => {
     api.getSoftap().then((v) => {
@@ -859,15 +885,21 @@ function SoftApCard() {
 
         <div className="flex flex-col gap-1.5">
           <label htmlFor={`${id}-cc`} className="text-sm text-muted-foreground">{t("country")}</label>
-          <Input
+          <Select
             id={`${id}-cc`}
             value={country}
-            onChange={(e) => setCountry(e.target.value.toUpperCase().slice(0, 2))}
-            onBlur={saveField}
-            maxLength={2}
-            className="w-24 uppercase"
-            autoComplete="off"
-          />
+            onChange={(e) => {
+              const cc = e.target.value;
+              setCountry(cc);
+              // Persist immediately, but only when the AP password is valid — an
+              // empty/short password would be rejected by the backend.
+              if (password.length >= 8) void persist({ enabled, password, country: cc });
+            }}
+          >
+            {countryOptions.map((c) => (
+              <option key={c.code} value={c.code}>{c.name} ({c.code})</option>
+            ))}
+          </Select>
           <p className="text-xs text-muted-foreground">{t("countryHint")}</p>
         </div>
 
@@ -1473,6 +1505,8 @@ function TimezoneCard() {
   const t = useTranslations("system");
   const [timezone, setTimezone] = useState("");
   const [available, setAvailable] = useState<string[]>([]);
+  const [status, setStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const [error, setError] = useState("");
   const tzId = useId();
   const cardId = useId();
 
@@ -1483,20 +1517,42 @@ function TimezoneCard() {
     }).catch(() => {});
   }, []);
 
+  // Timezone is saved on selection (no separate Save button); surface the result
+  // so the change is visibly confirmed and failures don't pass silently.
+  const save = async (tz: string) => {
+    const previous = timezone;
+    setTimezone(tz);
+    setError("");
+    setStatus("saving");
+    try {
+      await api.setTimezone(tz);
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+    } catch (e) {
+      setTimezone(previous); // revert to the last persisted value
+      setStatus("idle");
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   if (!available.length) return null;
 
   return (
     <Card title={t("timezone")} id={cardId}>
       <Field label={t("timezoneSelect")} htmlFor={tzId}>
-        <Select id={tzId} value={timezone} onChange={(e) => {
-          setTimezone(e.target.value);
-          api.setTimezone(e.target.value);
-        }}>
+        <Select id={tzId} value={timezone} disabled={status === "saving"} onChange={(e) => void save(e.target.value)}>
           {available.map((tz) => (
             <option key={tz} value={tz}>{tz}</option>
           ))}
         </Select>
       </Field>
+      {error && (
+        <div className="mt-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive" role="status">
+          <p className="font-medium">{t("timezoneSaveError")}</p>
+          <p className="mt-0.5 opacity-90">{error}</p>
+        </div>
+      )}
+      {status === "saved" && !error && <p className="mt-2 text-xs text-green-600">{t("saved")}</p>}
     </Card>
   );
 }
@@ -1506,6 +1562,7 @@ function LogsCard() {
   const [logs, setLogs] = useState<string[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [filter, setFilter] = useState("all");
+  const [copied, setCopied] = useState(false);
   const cardId = useId();
   const filterId = useId();
 
@@ -1518,6 +1575,33 @@ function LogsCard() {
 
   useEffect(() => { fetchLogs(); }, [fetchLogs]);
 
+  const copyLogs = async () => {
+    if (!logs.length) return;
+    const text = logs.join("\n");
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        // The device is reached over plain HTTP on the LAN, which is not a secure
+        // context — navigator.clipboard is unavailable there, so fall back to a
+        // hidden textarea + execCommand("copy").
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* clipboard unsupported — leave the label unchanged */
+    }
+  };
+
   return (
     <Card title={t("logs")} id={cardId}>
       <div className="space-y-2">
@@ -1526,6 +1610,9 @@ function LogsCard() {
             <Button variant="outline" size="sm" onClick={fetchLogs}>{t("refreshLogs")}</Button>
             <Button variant="outline" size="sm" onClick={() => setExpanded(!expanded)}>
               {expanded ? t("collapseLogs") : t("expandLogs")}
+            </Button>
+            <Button variant="outline" size="sm" onClick={copyLogs} disabled={!logs.length}>
+              {copied ? t("copied") : t("copyLogs")}
             </Button>
           </div>
           <div className="flex-1 min-w-[200px]">
@@ -2008,7 +2095,7 @@ function RawFlashSection() {
 
 function AutoUpdateSettings() {
   const t = useTranslations("update");
-  const [config, setConfig] = useState({ enabled: true, channel: "stable", interval: "daily", time: "04:00" });
+  const [config, setConfig] = useState({ enabled: true, channel: "release", interval: "daily", time: "04:00" });
   const channelId = useId();
   const intervalId = useId();
   const timeId = useId();
@@ -2034,7 +2121,7 @@ function AutoUpdateSettings() {
     <div className="space-y-3 border-t border-border pt-3">
       <Field label={t("channel")} htmlFor={channelId}>
         <Select id={channelId} value={config.channel} onChange={(e) => saveChannel(e.target.value)}>
-          <option value="stable">{t("stable")}</option>
+          <option value="release">{t("stable")}</option>
           <option value="beta">{t("beta")}</option>
         </Select>
       </Field>

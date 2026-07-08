@@ -72,7 +72,7 @@
       "password": "AP-wachtwoord",
       "passwordHint": "Minimaal 8 tekens (WPA2).",
       "country": "Wifi-land",
-      "countryHint": "Tweeletterige regelgevingslandcode (bijv. DE).",
+      "countryHint": "Wi-Fi-regelgevingsdomein — geldt voor het setup-AP en Wi-Fi-verbindingen.",
       "saveError": "Kan het installatie-toegangspunt niet opslaan.",
       "saved": "Opgeslagen"
     }
@@ -171,7 +171,11 @@
     "importRebootWarning": "Apparaat herstart na import.",
     "importConfirm": "Importeren & herstarten",
     "importing": "Importeren...",
-    "files": "bestanden"
+    "files": "bestanden",
+    "copyLogs": "Kopiëren",
+    "copied": "Gekopieerd",
+    "saved": "Opgeslagen",
+    "timezoneSaveError": "Kan de tijdzone niet opslaan."
   },
   "update": {
     "title": "Firmware-update",

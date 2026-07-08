@@ -26,10 +26,14 @@ impl RpiTuningDriver {
     async fn write_cmdline(&self, content: &str) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
-            let _ = tokio::process::Command::new("systemctl")
-                .args(["start", "snapdog-boot-remount@rw.service"])
-                .output()
-                .await;
+            let status = tokio::process::Command::new("systemctl")
+                .args(["start", "snapdog-boot-remount-rw.service"])
+                .status()
+                .await
+                .context("failed to execute systemd remount-rw helper")?;
+            if !status.success() {
+                anyhow::bail!("systemd remount-rw helper failed with exit code: {status}");
+            }
         }
 
         let write_res = async {
@@ -43,10 +47,17 @@ impl RpiTuningDriver {
 
         #[cfg(target_os = "linux")]
         {
-            let _ = tokio::process::Command::new("systemctl")
-                .args(["start", "snapdog-boot-remount@ro.service"])
-                .output()
+            let status = tokio::process::Command::new("systemctl")
+                .args(["start", "snapdog-boot-remount-ro.service"])
+                .status()
                 .await;
+            if let Err(e) = status {
+                tracing::error!("failed to execute systemd remount-ro helper: {e}");
+            } else if let Ok(s) = status {
+                if !s.success() {
+                    tracing::error!("systemd remount-ro helper failed with exit code: {s}");
+                }
+            }
         }
 
         write_res

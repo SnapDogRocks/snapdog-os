@@ -1277,12 +1277,30 @@ async fn read_localtime_zone() -> Option<String> {
     None
 }
 
+/// Read the zone via `timedatectl show`. Only reliable when `/etc/localtime` is a
+/// single symlink straight into `zoneinfo/` (or a copied file) — see
+/// [`read_localtime_zone`] for why it can't see our `/data` indirection — so it is
+/// used as a fallback for environments configured via `timedatectl set-timezone`.
+async fn timedatectl_zone() -> Option<String> {
+    let out = tokio::process::Command::new("timedatectl")
+        .args(["show", "--property=Timezone", "--value"])
+        .output()
+        .await
+        .ok()?;
+    let zone = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!zone.is_empty()).then_some(zone)
+}
+
 pub async fn get_timezone() -> TimezoneInfo {
-    // Read from the localtime symlink chain, not `timedatectl show` (see
-    // read_localtime_zone). Fall back to UTC when nothing is configured so the
-    // dropdown lands on UTC rather than the first alphabetical zone
-    // (Africa/Abidjan), which reads as an unintended selection.
-    let current = read_localtime_zone().await.unwrap_or_else(|| "UTC".into());
+    // Prefer the localtime symlink chain (see read_localtime_zone), then fall back
+    // to `timedatectl show` for environments where /etc/localtime is a plain copied
+    // file configured via `timedatectl set-timezone` (the set_timezone fallback),
+    // and finally to UTC so the dropdown lands on UTC rather than the first
+    // alphabetical zone (Africa/Abidjan), which reads as an unintended selection.
+    let current = match read_localtime_zone().await {
+        Some(zone) => zone,
+        None => timedatectl_zone().await.unwrap_or_else(|| "UTC".into()),
+    };
 
     let available = tokio::process::Command::new("timedatectl")
         .args(["list-timezones"])

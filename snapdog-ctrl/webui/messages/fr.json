@@ -45,7 +45,37 @@
     "subnet": "Sous-réseau",
     "gateway": "Passerelle",
     "dns": "DNS",
-    "save": "Enregistrer"
+    "save": "Enregistrer",
+    "rescan": "Rechercher à nouveau",
+    "otherNetwork": "Autre réseau / réseau caché…",
+    "hiddenSsidHint": "Saisissez le nom exact (sensible à la casse).",
+    "openNetwork": "Réseau ouvert",
+    "secured": "Sécurisé",
+    "signalAria": "{ssid}, signal {dbm} dBm",
+    "bannerApMode": "Vous êtes sur le réseau de configuration. Saisissez ci-dessous le nom de votre réseau Wi-Fi.",
+    "bannerScanError": "Impossible de rechercher les réseaux Wi-Fi. Saisissez les informations du réseau manuellement.",
+    "bannerNoneFound": "Aucun réseau trouvé. Relancez la recherche ou saisissez votre réseau manuellement.",
+    "submitting": "Enregistrement…",
+    "connecting": "Connexion en cours… cela peut prendre jusqu'à 30 secondes.",
+    "connectSuccess": "Connecté à {ssid} — {ip}",
+    "authFailed": "Échec de la connexion — vérifiez votre mot de passe et réessayez.",
+    "connectTimeout": "Toujours pas connecté. Veuillez réessayer.",
+    "connectError": "Impossible d'appliquer les paramètres : {reason}",
+    "apRedirectTitle": "Paramètres enregistrés",
+    "apRedirectBody": "Cet appareil bascule vers votre réseau Wi-Fi, le réseau de configuration va donc disparaître. Reconnectez votre téléphone ou ordinateur à votre Wi-Fi habituel, puis ouvrez http://snapdog.local pour continuer.",
+    "softap": {
+      "title": "Point d'accès de configuration",
+      "description": "Crée un réseau Wi-Fi temporaire à chaque démarrage lorsqu'aucun Wi-Fi n'est configuré et qu'aucun Ethernet n'est connecté. Il s'arrête automatiquement dès qu'une connexion est établie.",
+      "enable": "Activer l'AP de configuration",
+      "networkName": "Nom du réseau (SSID)",
+      "passphrase": "Phrase secrète",
+      "password": "Mot de passe de l'AP",
+      "passwordHint": "Au moins 8 caractères (WPA2).",
+      "country": "Pays Wi-Fi",
+      "countryHint": "Domaine réglementaire Wi-Fi — s'applique au point d'accès de configuration et aux connexions Wi-Fi.",
+      "saveError": "Impossible d'enregistrer le point d'accès de configuration.",
+      "saved": "Enregistré"
+    }
   },
   "audio": {
     "title": "Audio",
@@ -53,7 +83,12 @@
     "dacOverlay": "Overlay DAC",
     "detectedCard": "Carte détectée",
     "autoDetect": "Détection auto (HAT EEPROM)",
-    "soundcard": "Carte son"
+    "soundcard": "Carte son",
+    "detected": "Détecté",
+    "apply": "Appliquer",
+    "usingDetected": "Utilisation du DAC détecté",
+    "autoDetectResult": "La détection auto a trouvé",
+    "autoDetectNone": "La détection auto est activée — aucun périphérique audio détecté pour l'instant."
   },
   "client": {
     "title": "Client",
@@ -136,7 +171,11 @@
     "importRebootWarning": "L'appareil redémarrera après l'import.",
     "importConfirm": "Importer et redémarrer",
     "importing": "Import en cours...",
-    "files": "fichiers"
+    "files": "fichiers",
+    "copyLogs": "Copier",
+    "copied": "Copié",
+    "saved": "Enregistré",
+    "timezoneSaveError": "Impossible d'enregistrer le fuseau horaire."
   },
   "update": {
     "title": "Mise à jour",
@@ -172,7 +211,7 @@
     "manualDesc": "Upload and flash a local system image directly without online checks.",
     "manualWarningTitle": "⚠️ CRITICAL SYSTEM WARNING: MANUAL FLASH",
     "manualWarningDesc1": "Manual flashing bypasses automatic online signature and compatibility checks. Flashing an incorrect, corrupted, or unsupported system image WILL permanently damage or brick your device.",
-    "manualWarningDesc2": "Make sure you have a valid update package (.tar.gz) specifically compiled for your hardware revision. Proceed ONLY if you are absolutely sure of the image's source and integrity.",
+    "manualWarningDesc2": "Assurez-vous de disposer d'un bundle de mise à jour RAUC (.raucb) valide, conçu pour votre révision matérielle. RAUC vérifie toujours la signature du bundle lors de l'installation, mais aucune vérification de version ou de compatibilité en ligne n'est effectuée. Ne continuez QUE si vous êtes sûr de la source et de l'intégrité de l'image.",
     "manualConfirmCheckbox": "I accept the risks of permanent device damage/data loss.",
     "manualCancel": "Cancel",
     "manualProceed": "Proceed & Upload Image",
@@ -181,7 +220,13 @@
     "uploadError": "Upload failed. Please ensure the file is correct and not corrupted.",
     "confirmInstall": "Oui, installer & redémarrer",
     "cancel": "Annuler",
-    "updateTimeout": "Délai de mise à jour dépassé"
+    "updateTimeout": "Délai de mise à jour dépassé",
+    "phase_uploading": "Téléversement de la mise à jour...",
+    "rebootToActivate": "Redémarrez pour activer la nouvelle version.",
+    "rebootNow": "Redémarrer maintenant",
+    "later": "Plus tard",
+    "reconnectTimeout": "L'appareil n'est pas revenu en ligne à temps. La mise à jour a peut-être été annulée — rechargez la page et vérifiez la version en cours d'exécution.",
+    "serverUnreachable": "Impossible de vérifier les mises à jour pour le moment."
   },
   "server": {
     "title": "Serveur",

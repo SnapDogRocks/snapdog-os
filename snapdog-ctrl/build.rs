@@ -11,15 +11,30 @@ fn main() {
     println!("cargo:rerun-if-changed=webui/next.config.ts");
     println!("cargo:rerun-if-changed=../.git/HEAD");
 
-    // Git version
+    // Version, aligned with the release-please flow. release-please owns the
+    // authoritative version in Cargo.toml (CARGO_PKG_VERSION) and tags each ctrl
+    // release `snapdog-ctrl-v<x.y.z>`. We `git describe` restricted to that tag
+    // prefix so dev builds get a `<x.y.z>-<n>-g<sha>` suffix off the *ctrl* tag —
+    // NOT the repo's OS-level `v<x.y.z>` tags, which a bare `--tags` would pick by
+    // commit distance and mislabel ctrl with the OS version. The `snapdog-ctrl-v`
+    // prefix is stripped for display; fall back to CARGO_PKG_VERSION when git is
+    // unavailable (e.g. the release build container) or no matching tag exists.
     let git_version = Command::new("git")
-        .args(["describe", "--tags", "--always", "--dirty"])
+        .args([
+            "describe",
+            "--tags",
+            "--match",
+            "snapdog-ctrl-v*",
+            "--dirty",
+        ])
         .output()
         .ok()
         .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|v| !v.is_empty())
         .map_or_else(
             || env!("CARGO_PKG_VERSION").to_string(),
-            |o| String::from_utf8_lossy(&o.stdout).trim().to_string(),
+            |v| v.trim_start_matches("snapdog-ctrl-v").to_string(),
         );
     println!("cargo:rustc-env=SNAPDOG_CTRL_VERSION={git_version}");
 

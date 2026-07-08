@@ -15,6 +15,7 @@ mkdir -p "$DATA/hostapd"
 mkdir -p "$DATA/systemd/network"
 mkdir -p "$DATA/systemd/resolved.conf.d"
 mkdir -p "$DATA/systemd/system/updater.timer.d"
+mkdir -p "$DATA/systemd/system/snapdog-client.service.d"
 mkdir -p "$DATA/ssh"
 
 # Write defaults if not already present
@@ -23,7 +24,10 @@ if [ ! -f "$DATA/snapdog-os.channel" ]; then
   if grep -q "beta" /etc/snapdog-os.version 2>/dev/null; then
     echo "beta" > "$DATA/snapdog-os.channel"
   else
-    echo "stable" > "$DATA/snapdog-os.channel"
+    # "release" is the stable channel's name everywhere it's published (CI, CDN,
+    # manifest latest-release.json); seeding "stable" here made system info show a
+    # channel that no manifest exists for.
+    echo "release" > "$DATA/snapdog-os.channel"
   fi
 fi
 [ -f "$DATA/snapdog-os.auto-update" ] || printf 'enabled=true\ninterval=daily\ntime=03:00\n' > "$DATA/snapdog-os.auto-update"

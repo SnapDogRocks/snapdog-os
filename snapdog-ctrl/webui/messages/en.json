@@ -45,7 +45,37 @@
     "subnet": "Subnet",
     "gateway": "Gateway",
     "dns": "DNS",
-    "save": "Save"
+    "save": "Save",
+    "rescan": "Rescan",
+    "otherNetwork": "Other / hidden network…",
+    "hiddenSsidHint": "Type the exact name (case-sensitive).",
+    "openNetwork": "Open network",
+    "secured": "Secured",
+    "signalAria": "{ssid}, signal {dbm} dBm",
+    "bannerApMode": "You're on the setup network. Type your Wi-Fi network's name below.",
+    "bannerScanError": "Couldn't scan for Wi-Fi networks. Enter your network details manually.",
+    "bannerNoneFound": "No networks found. Rescan, or enter your network manually.",
+    "submitting": "Saving…",
+    "connecting": "Connecting… this can take up to 30 seconds.",
+    "connectSuccess": "Connected to {ssid} — {ip}",
+    "authFailed": "Couldn't connect — check your password and try again.",
+    "connectTimeout": "Still not connected. Please try again.",
+    "connectError": "Couldn't apply the settings: {reason}",
+    "apRedirectTitle": "Settings saved",
+    "apRedirectBody": "This device is switching to your Wi-Fi network, so the setup network will disappear. Reconnect your phone or computer to your normal Wi-Fi, then open http://snapdog.local to continue.",
+    "softap": {
+      "title": "Setup Access Point",
+      "description": "Creates a temporary Wi-Fi network on each boot when no Wi-Fi is configured and no Ethernet is connected. It stops automatically once a connection is established.",
+      "enable": "Enable Setup AP",
+      "networkName": "Network name (SSID)",
+      "passphrase": "Passphrase",
+      "password": "AP Password",
+      "passwordHint": "Minimum 8 characters (WPA2).",
+      "country": "Wi-Fi Country",
+      "countryHint": "Wi-Fi regulatory domain — applies to both the setup AP and Wi-Fi connections.",
+      "saveError": "Couldn't save the setup access point.",
+      "saved": "Saved"
+    }
   },
   "audio": {
     "title": "Audio",
@@ -53,7 +83,12 @@
     "dacOverlay": "DAC Overlay",
     "detectedCard": "Detected Card",
     "autoDetect": "Auto-detect (HAT EEPROM)",
-    "soundcard": "Soundcard"
+    "soundcard": "Soundcard",
+    "detected": "Detected",
+    "apply": "Apply",
+    "usingDetected": "Using detected DAC",
+    "autoDetectResult": "Auto-detect resolved to",
+    "autoDetectNone": "Auto-detect is on — no audio device detected yet."
   },
   "client": {
     "title": "Client",
@@ -131,7 +166,11 @@
     "importRebootWarning": "Device will reboot after import.",
     "importConfirm": "Import & Reboot",
     "importing": "Importing...",
-    "files": "files"
+    "files": "files",
+    "copyLogs": "Copy",
+    "copied": "Copied",
+    "saved": "Saved",
+    "timezoneSaveError": "Couldn't save the timezone."
   },
   "update": {
     "title": "Firmware Update",
@@ -167,7 +206,7 @@
     "manualDesc": "Upload and flash a local system image directly without online checks.",
     "manualWarningTitle": "⚠️ CRITICAL SYSTEM WARNING: MANUAL FLASH",
     "manualWarningDesc1": "Manual flashing bypasses automatic online signature and compatibility checks. Flashing an incorrect, corrupted, or unsupported system image WILL permanently damage or brick your device.",
-    "manualWarningDesc2": "Make sure you have a valid update package (.tar.gz) specifically compiled for your hardware revision. Proceed ONLY if you are absolutely sure of the image's source and integrity.",
+    "manualWarningDesc2": "Make sure you have a valid RAUC update bundle (.raucb) built for your hardware revision. RAUC still verifies the bundle signature at install time, but there is no online version/compatibility check. Proceed ONLY if you are sure of the image's source and integrity.",
     "manualConfirmCheckbox": "I accept the risks of permanent device damage/data loss.",
     "manualCancel": "Cancel",
     "manualProceed": "Proceed & Upload Image",
@@ -176,7 +215,13 @@
     "uploadError": "Upload failed. Please ensure the file is correct and not corrupted.",
     "confirmInstall": "Yes, install & reboot",
     "cancel": "Cancel",
-    "updateTimeout": "Update timed out"
+    "updateTimeout": "Update timed out",
+    "phase_uploading": "Uploading update...",
+    "rebootToActivate": "Reboot to activate the new version.",
+    "rebootNow": "Reboot now",
+    "later": "Later",
+    "reconnectTimeout": "The device did not come back online in time. It may have rolled back — reload the page and check the running version.",
+    "serverUnreachable": "Couldn't check for updates right now."
   },
   "server": {
     "title": "Server",

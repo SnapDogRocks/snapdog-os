@@ -1239,22 +1239,68 @@ pub async fn get_logs(service: Option<String>) -> LogsResponse {
 
 // --- Timezone ---
 
-pub async fn get_timezone() -> TimezoneInfo {
-    let mut current = tokio::process::Command::new("timedatectl")
+/// Extract the IANA zone name (e.g. `Europe/Berlin`) from a resolved localtime
+/// path such as `/usr/share/zoneinfo/Europe/Berlin` or
+/// `/usr/share/zoneinfo/posix/Europe/Berlin`.
+fn zone_from_path(path: &str) -> Option<String> {
+    let after = path.rsplit_once("zoneinfo/")?.1;
+    // `canonicalize` may resolve through the parallel posix/ or right/ hierarchies.
+    let after = after
+        .strip_prefix("posix/")
+        .or_else(|| after.strip_prefix("right/"))
+        .unwrap_or(after);
+    let zone = after.trim_matches('/');
+    (!zone.is_empty()).then(|| zone.to_string())
+}
+
+/// Read the configured zone name from the localtime symlink chain.
+///
+/// `timedatectl show` only follows a single symlink level, so with the read-only
+/// rootfs indirection `/etc/localtime -> /data/localtime -> zoneinfo/<tz>` it sees
+/// `/data/localtime` (not a zoneinfo path) and reports an empty zone — making a
+/// persisted timezone read back as UTC. Read the target ourselves: prefer the
+/// direct symlink (a clean `zoneinfo/<tz>`), falling back to the fully-resolved
+/// canonical path.
+async fn read_localtime_zone() -> Option<String> {
+    for path in ["/data/localtime", "/etc/localtime"] {
+        if let Ok(target) = tokio::fs::read_link(path).await {
+            if let Some(z) = zone_from_path(&target.to_string_lossy()) {
+                return Some(z);
+            }
+        }
+        if let Ok(real) = tokio::fs::canonicalize(path).await {
+            if let Some(z) = zone_from_path(&real.to_string_lossy()) {
+                return Some(z);
+            }
+        }
+    }
+    None
+}
+
+/// Read the zone via `timedatectl show`. Only reliable when `/etc/localtime` is a
+/// single symlink straight into `zoneinfo/` (or a copied file) — see
+/// [`read_localtime_zone`] for why it can't see our `/data` indirection — so it is
+/// used as a fallback for environments configured via `timedatectl set-timezone`.
+async fn timedatectl_zone() -> Option<String> {
+    let out = tokio::process::Command::new("timedatectl")
         .args(["show", "--property=Timezone", "--value"])
         .output()
         .await
-        .ok()
-        .map_or_else(
-            || "UTC".into(),
-            |o| String::from_utf8_lossy(&o.stdout).trim().to_string(),
-        );
-    // When no timezone is configured, timedatectl reports an empty value; default
-    // to UTC so the dropdown lands on UTC rather than the first alphabetical zone
-    // (Africa/Abidjan) which reads as an unintended selection.
-    if current.is_empty() {
-        current = "UTC".into();
-    }
+        .ok()?;
+    let zone = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!zone.is_empty()).then_some(zone)
+}
+
+pub async fn get_timezone() -> TimezoneInfo {
+    // Prefer the localtime symlink chain (see read_localtime_zone), then fall back
+    // to `timedatectl show` for environments where /etc/localtime is a plain copied
+    // file configured via `timedatectl set-timezone` (the set_timezone fallback),
+    // and finally to UTC so the dropdown lands on UTC rather than the first
+    // alphabetical zone (Africa/Abidjan), which reads as an unintended selection.
+    let current = match read_localtime_zone().await {
+        Some(zone) => zone,
+        None => timedatectl_zone().await.unwrap_or_else(|| "UTC".into()),
+    };
 
     let available = tokio::process::Command::new("timedatectl")
         .args(["list-timezones"])
@@ -1996,5 +2042,25 @@ mod tests {
             parse_resolv_conf_dns("nameserver 9.9.9.9\nnameserver 149.112.112.112\n"),
             "9.9.9.9 149.112.112.112"
         );
+    }
+
+    #[test]
+    fn zone_from_path_extracts_iana_name() {
+        assert_eq!(
+            zone_from_path("/usr/share/zoneinfo/Europe/Berlin").as_deref(),
+            Some("Europe/Berlin")
+        );
+        // canonicalize() can resolve through the parallel posix/ hierarchy.
+        assert_eq!(
+            zone_from_path("/usr/share/zoneinfo/posix/Europe/Berlin").as_deref(),
+            Some("Europe/Berlin")
+        );
+        assert_eq!(
+            zone_from_path("../usr/share/zoneinfo/UTC").as_deref(),
+            Some("UTC")
+        );
+        // Not a zoneinfo path (the one-level /data/localtime target) → no zone.
+        assert_eq!(zone_from_path("/data/localtime"), None);
+        assert_eq!(zone_from_path("/usr/share/zoneinfo/"), None);
     }
 }

@@ -175,7 +175,8 @@
     "copyLogs": "Copier",
     "copied": "Copié",
     "saved": "Enregistré",
-    "timezoneSaveError": "Impossible d'enregistrer le fuseau horaire."
+    "timezoneSaveError": "Impossible d'enregistrer le fuseau horaire.",
+    "hostname": "Nom d'hôte"
   },
   "update": {
     "title": "Mise à jour",
@@ -353,6 +354,15 @@
     "disableOnboardAudio": "Désactiver l'Audio Intégré",
     "disableOnboardAudioDesc": "Désactive la prise jack 3.5 mm par défaut et les contrôleurs audio HDMI pour éviter les conflits.",
     "exclusiveCore": "Cœur Audio Exclusif",
-    "exclusiveCoreDesc": "Isole le cœur 3 du processeur et verrouille la fréquence d'horloge pour une lecture sans saccades (nécessite un redémarrage)."
+    "exclusiveCoreDesc": "Isole le cœur CPU 3 et verrouille la fréquence pour une lecture sans coupure.",
+    "rebootNote": "Toutes les modifications prennent effet après un redémarrage.",
+    "pending": "en attente",
+    "apply": "Appliquer les modifications",
+    "discard": "Abandonner",
+    "applyPrompt": "Ces modifications nécessitent un redémarrage. Redémarrer maintenant ou appliquer au prochain redémarrage ?",
+    "rebootNow": "Redémarrer maintenant",
+    "applyLater": "Au prochain redémarrage",
+    "cancel": "Annuler",
+    "awaitingReboot": "Enregistré. Les modifications s'appliqueront au prochain redémarrage."
   }
 }

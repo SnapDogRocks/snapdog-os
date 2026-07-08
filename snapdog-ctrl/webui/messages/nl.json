@@ -175,7 +175,8 @@
     "copyLogs": "Kopiëren",
     "copied": "Gekopieerd",
     "saved": "Opgeslagen",
-    "timezoneSaveError": "Kan de tijdzone niet opslaan."
+    "timezoneSaveError": "Kan de tijdzone niet opslaan.",
+    "hostname": "Hostnaam"
   },
   "update": {
     "title": "Firmware-update",
@@ -353,6 +354,15 @@
     "disableOnboardAudio": "Onboard Audio Uitschakelen",
     "disableOnboardAudioDesc": "Schakelt de standaard 3.5mm jack & HDMI-audio uit om conflicten te voorkomen.",
     "exclusiveCore": "Exclusieve Audiokern",
-    "exclusiveCoreDesc": "Isoleert CPU-kern 3 en vergrendelt de kloksnelheid voor stabiele audio (vereist herstart)."
+    "exclusiveCoreDesc": "Isoleert CPU-kern 3 en vergrendelt de kloksnelheid voor haperingsvrije weergave.",
+    "rebootNote": "Alle wijzigingen worden pas na een herstart actief.",
+    "pending": "in behandeling",
+    "apply": "Wijzigingen toepassen",
+    "discard": "Verwerpen",
+    "applyPrompt": "Deze wijzigingen vereisen een herstart. Nu herstarten of bij de volgende herstart toepassen?",
+    "rebootNow": "Nu herstarten",
+    "applyLater": "Bij volgende herstart",
+    "cancel": "Annuleren",
+    "awaitingReboot": "Opgeslagen. Wijzigingen worden bij de volgende herstart actief."
   }
 }

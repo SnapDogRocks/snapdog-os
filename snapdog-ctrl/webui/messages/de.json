@@ -175,7 +175,8 @@
     "copyLogs": "Kopieren",
     "copied": "Kopiert",
     "saved": "Gespeichert",
-    "timezoneSaveError": "Zeitzone konnte nicht gespeichert werden."
+    "timezoneSaveError": "Zeitzone konnte nicht gespeichert werden.",
+    "hostname": "Hostname"
   },
   "update": {
     "title": "Firmware-Update",
@@ -353,6 +354,15 @@
     "disableOnboardAudio": "Onboard-Audio deaktivieren",
     "disableOnboardAudioDesc": "Deaktiviert den analogen Klinkenanschluss und HDMI-Sound, um Konflikte zu vermeiden.",
     "exclusiveCore": "Exklusiver Audiokern",
-    "exclusiveCoreDesc": "Isoliert den CPU-Kern 3 und sperrt die Taktfrequenz für eine ruckelfreie Wiedergabe (erfordert Neustart)."
+    "exclusiveCoreDesc": "Isoliert CPU-Kern 3 und fixiert den Takt für unterbrechungsfreie Wiedergabe.",
+    "rebootNote": "Alle Änderungen werden erst nach einem Neustart wirksam.",
+    "pending": "ausstehend",
+    "apply": "Änderungen anwenden",
+    "discard": "Verwerfen",
+    "applyPrompt": "Diese Änderungen werden erst nach einem Neustart wirksam. Jetzt neu starten oder beim nächsten Neustart anwenden?",
+    "rebootNow": "Jetzt neu starten",
+    "applyLater": "Beim nächsten Neustart",
+    "cancel": "Abbrechen",
+    "awaitingReboot": "Gespeichert. Änderungen werden beim nächsten Neustart wirksam."
   }
 }

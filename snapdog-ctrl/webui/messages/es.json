@@ -83,7 +83,12 @@
     "dacOverlay": "Overlay DAC",
     "detectedCard": "Tarjeta detectada",
     "autoDetect": "Detección automática (HAT EEPROM)",
-    "soundcard": "Tarjeta de sonido"
+    "soundcard": "Tarjeta de sonido",
+    "detected": "Detectado",
+    "apply": "Aplicar",
+    "usingDetected": "Usando el DAC detectado",
+    "autoDetectResult": "La detección automática determinó",
+    "autoDetectNone": "La detección automática está activada — aún no se ha detectado ningún dispositivo de audio."
   },
   "client": {
     "title": "Cliente",
@@ -202,7 +207,7 @@
     "manualDesc": "Upload and flash a local system image directly without online checks.",
     "manualWarningTitle": "⚠️ CRITICAL SYSTEM WARNING: MANUAL FLASH",
     "manualWarningDesc1": "Manual flashing bypasses automatic online signature and compatibility checks. Flashing an incorrect, corrupted, or unsupported system image WILL permanently damage or brick your device.",
-    "manualWarningDesc2": "Make sure you have a valid update package (.tar.gz) specifically compiled for your hardware revision. Proceed ONLY if you are absolutely sure of the image's source and integrity.",
+    "manualWarningDesc2": "Asegúrese de tener un paquete de actualización RAUC (.raucb) válido y compilado para su revisión de hardware. RAUC sigue verificando la firma del paquete durante la instalación, pero no se realiza ninguna comprobación de versión o compatibilidad en línea. Continúe SOLO si está seguro del origen y la integridad de la imagen.",
     "manualConfirmCheckbox": "I accept the risks of permanent device damage/data loss.",
     "manualCancel": "Cancel",
     "manualProceed": "Proceed & Upload Image",
@@ -211,7 +216,13 @@
     "uploadError": "Upload failed. Please ensure the file is correct and not corrupted.",
     "confirmInstall": "Sí, instalar y reiniciar",
     "cancel": "Cancelar",
-    "updateTimeout": "Tiempo de actualización agotado"
+    "updateTimeout": "Tiempo de actualización agotado",
+    "phase_uploading": "Subiendo actualización...",
+    "rebootToActivate": "Reinicie para activar la nueva versión.",
+    "rebootNow": "Reiniciar ahora",
+    "later": "Más tarde",
+    "reconnectTimeout": "El dispositivo no volvió a conectarse a tiempo. Es posible que se haya revertido — recargue la página y compruebe la versión en ejecución.",
+    "serverUnreachable": "No se pudo comprobar si hay actualizaciones en este momento."
   },
   "server": {
     "title": "Servidor",

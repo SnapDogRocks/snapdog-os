@@ -83,7 +83,12 @@
     "dacOverlay": "DAC Overlay",
     "detectedCard": "Erkannte Karte",
     "autoDetect": "Automatisch (HAT EEPROM)",
-    "soundcard": "Soundkarte"
+    "soundcard": "Soundkarte",
+    "detected": "Erkannt",
+    "apply": "Übernehmen",
+    "usingDetected": "Erkannter DAC wird verwendet",
+    "autoDetectResult": "Automatische Erkennung ergab",
+    "autoDetectNone": "Automatische Erkennung ist aktiv — noch kein Audiogerät erkannt."
   },
   "client": {
     "title": "Client",
@@ -202,7 +207,7 @@
     "manualDesc": "Laden Sie ein lokales System-Image direkt hoch und flashen Sie es ohne Online-Prüfungen.",
     "manualWarningTitle": "⚠️ KRITISCHE SYSTEMWARNUNG: MANUELLES FLASHEN",
     "manualWarningDesc1": "Das manuelle Flashen umgeht die automatische Online-Signatur und Kompatibilitätsprüfungen. Das Flashen eines fehlerhaften, beschädigten oder nicht unterstützten System-Images beschädigt Ihr Gerät dauerhaft (Brick).",
-    "manualWarningDesc2": "Stellen Sie sicher, dass Sie ein gültiges Update-Paket (.tar.gz) haben, das speziell für Ihre Hardware-Revision kompiliert wurde. Fahren Sie NUR fort, wenn Sie sich über die Quelle und Integrität des Images absolut sicher sind.",
+    "manualWarningDesc2": "Stellen Sie sicher, dass Sie ein gültiges RAUC-Update-Bundle (.raucb) haben, das für Ihre Hardware-Revision erstellt wurde. RAUC überprüft beim Installieren weiterhin die Signatur des Bundles, es findet jedoch keine Online-Prüfung von Version und Kompatibilität statt. Fahren Sie NUR fort, wenn Sie sich über Quelle und Integrität des Images sicher sind.",
     "manualConfirmCheckbox": "Ich akzeptiere das Risiko von dauerhaften Hardwareschäden und Datenverlust.",
     "manualCancel": "Abbrechen",
     "manualProceed": "Fortfahren & Image hochladen",
@@ -211,7 +216,13 @@
     "uploadError": "Upload failed. Bitte stellen Sie sicher, dass die Datei korrekt und nicht beschädigt ist.",
     "confirmInstall": "Ja, installieren & neu starten",
     "cancel": "Abbrechen",
-    "updateTimeout": "Zeitüberschreitung beim Update"
+    "updateTimeout": "Zeitüberschreitung beim Update",
+    "phase_uploading": "Update wird hochgeladen...",
+    "rebootToActivate": "Starten Sie neu, um die neue Version zu aktivieren.",
+    "rebootNow": "Jetzt neu starten",
+    "later": "Später",
+    "reconnectTimeout": "Das Gerät ist nicht rechtzeitig wieder online gegangen. Möglicherweise wurde es zurückgesetzt — laden Sie die Seite neu und prüfen Sie die laufende Version.",
+    "serverUnreachable": "Nach Updates konnte gerade nicht gesucht werden."
   },
   "server": {
     "title": "Server",

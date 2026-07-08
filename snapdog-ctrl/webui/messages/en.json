@@ -83,7 +83,12 @@
     "dacOverlay": "DAC Overlay",
     "detectedCard": "Detected Card",
     "autoDetect": "Auto-detect (HAT EEPROM)",
-    "soundcard": "Soundcard"
+    "soundcard": "Soundcard",
+    "detected": "Detected",
+    "apply": "Apply",
+    "usingDetected": "Using detected DAC",
+    "autoDetectResult": "Auto-detect resolved to",
+    "autoDetectNone": "Auto-detect is on — no audio device detected yet."
   },
   "client": {
     "title": "Client",
@@ -197,7 +202,7 @@
     "manualDesc": "Upload and flash a local system image directly without online checks.",
     "manualWarningTitle": "⚠️ CRITICAL SYSTEM WARNING: MANUAL FLASH",
     "manualWarningDesc1": "Manual flashing bypasses automatic online signature and compatibility checks. Flashing an incorrect, corrupted, or unsupported system image WILL permanently damage or brick your device.",
-    "manualWarningDesc2": "Make sure you have a valid update package (.tar.gz) specifically compiled for your hardware revision. Proceed ONLY if you are absolutely sure of the image's source and integrity.",
+    "manualWarningDesc2": "Make sure you have a valid RAUC update bundle (.raucb) built for your hardware revision. RAUC still verifies the bundle signature at install time, but there is no online version/compatibility check. Proceed ONLY if you are sure of the image's source and integrity.",
     "manualConfirmCheckbox": "I accept the risks of permanent device damage/data loss.",
     "manualCancel": "Cancel",
     "manualProceed": "Proceed & Upload Image",
@@ -206,7 +211,13 @@
     "uploadError": "Upload failed. Please ensure the file is correct and not corrupted.",
     "confirmInstall": "Yes, install & reboot",
     "cancel": "Cancel",
-    "updateTimeout": "Update timed out"
+    "updateTimeout": "Update timed out",
+    "phase_uploading": "Uploading update...",
+    "rebootToActivate": "Reboot to activate the new version.",
+    "rebootNow": "Reboot now",
+    "later": "Later",
+    "reconnectTimeout": "The device did not come back online in time. It may have rolled back — reload the page and check the running version.",
+    "serverUnreachable": "Couldn't check for updates right now."
   },
   "server": {
     "title": "Server",

@@ -168,11 +168,34 @@ pub async fn reboot() {
     // committed slot.
     if tokio::fs::metadata("/boot/tryboot.txt").await.is_ok() {
         tracing::info!("Tryboot trial armed — rebooting into it via the one-shot tryboot flag");
+        // Record the version we are trialing so the next boot's reconcile can
+        // confirm it (or mark it bad on a rollback). This makes WebUI-triggered
+        // installs covered by rollback tracking + the known-bad reinstall guard,
+        // exactly like the auto-updater — recorded here (only when a trial is
+        // actually armed) so it covers both the online and manual-upload paths.
+        if let Some(v) = pending_trial_version().await {
+            record_pending_update(&v).await;
+        }
         // Reboots immediately via RESTART2 (ctrl carries CAP_SYS_BOOT). If it
         // returns (e.g. missing capability), we fall through to a normal reboot.
         let _ = run_cmd("/usr/lib/rauc/tryboot-reboot", &[]).await;
     }
     let _ = run_cmd("systemctl", &["reboot"]).await;
+}
+
+/// Bundle version of the inactive rootfs slot — the one a tryboot trial boots
+/// next. Used to record the pending-update marker at reboot time.
+async fn pending_trial_version() -> Option<String> {
+    let slots = crate::rauc::Rauc::connect()
+        .await
+        .ok()?
+        .slot_status()
+        .await
+        .ok()?;
+    slots
+        .into_iter()
+        .find(|s| !s.booted && s.class == "rootfs" && !s.version.is_empty())
+        .map(|s| s.version)
 }
 
 /// Install a RAUC bundle from a local path or URL.
@@ -942,26 +965,29 @@ pub async fn detect_board() -> String {
 }
 
 pub async fn check_update() -> UpdateCheckResponse {
-    let current = read_file("/etc/snapdog-os.version")
-        .await
-        .unwrap_or_default()
-        .trim()
-        .to_string();
+    let current = current_os_version().await;
     let config = get_auto_update().await;
     let url = bundle_url(&config.channel).await;
-
-    // Check if bundle URL is reachable (HEAD request)
-    let available = tokio::process::Command::new("curl")
-        .args(["-sfI", "--max-time", "5", &url])
-        .output()
-        .await
-        .is_ok_and(|o| o.status.success());
 
     // RAUC verifies the bundle signature against the device keyring at install
     // time (`rauc install` refuses an unsigned or untrusted bundle), so when the
     // keyring is present the update is guaranteed to be cryptographically
     // verified before it is applied.
     let signature_verified = tokio::fs::metadata("/etc/rauc/ca.cert.pem").await.is_ok();
+
+    // Compare the running version to the channel MANIFEST version (the SSOT for
+    // what the channel points at) rather than treating mere URL reachability as
+    // "an update exists". `available` = a strictly newer version is published;
+    // `is_downgrade` = the channel points at an OLDER version than we run.
+    // When the manifest is unreachable, `latest_version` is left empty and the UI
+    // presents that as "cannot reach the update server" (NOT "up to date").
+    let remote = remote_channel_version(&config.channel).await;
+    let (available, is_downgrade, latest_version) = match remote {
+        Some(r) if version_is_newer(&r, &current) => (true, false, r),
+        Some(r) if version_is_newer(&current, &r) => (false, true, r),
+        Some(r) => (false, false, r), // same version — up to date
+        None => (false, false, String::new()), // manifest unknown/unreachable
+    };
 
     UpdateCheckResponse {
         available,
@@ -971,11 +997,9 @@ pub async fn check_update() -> UpdateCheckResponse {
         } else {
             current
         },
-        // The channel bundle URL is version-less, so the remote version is not
-        // known without downloading the bundle; left empty (UI hides the arrow).
-        latest_version: String::new(),
+        latest_version,
         channel: config.channel,
-        is_downgrade: false,
+        is_downgrade,
         signature_verified,
         bundle_url: url,
     }
@@ -1214,7 +1238,7 @@ pub async fn get_logs(service: Option<String>) -> LogsResponse {
 // --- Timezone ---
 
 pub async fn get_timezone() -> TimezoneInfo {
-    let current = tokio::process::Command::new("timedatectl")
+    let mut current = tokio::process::Command::new("timedatectl")
         .args(["show", "--property=Timezone", "--value"])
         .output()
         .await
@@ -1223,6 +1247,12 @@ pub async fn get_timezone() -> TimezoneInfo {
             || "UTC".into(),
             |o| String::from_utf8_lossy(&o.stdout).trim().to_string(),
         );
+    // When no timezone is configured, timedatectl reports an empty value; default
+    // to UTC so the dropdown lands on UTC rather than the first alphabetical zone
+    // (Africa/Abidjan) which reads as an unintended selection.
+    if current.is_empty() {
+        current = "UTC".into();
+    }
 
     let available = tokio::process::Command::new("timedatectl")
         .args(["list-timezones"])

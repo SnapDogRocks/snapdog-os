@@ -411,6 +411,10 @@ function NetworkTab() {
   const [scanning, setScanning] = useState(true);
   // Selection: a scanned SSID, MANUAL_SSID for "other / hidden", or "" (none yet).
   const [selection, setSelection] = useState("");
+  // Latest scan + WiFi status, mirrored into refs so the two independent async
+  // loads can pre-select the connected network regardless of which lands first.
+  const networksRef = useRef<WifiNetwork[]>([]);
+  const wifiStatusRef = useRef<import("@/lib/api").WifiStatus | null>(null);
   const [manualSsid, setManualSsid] = useState("");
   const [password, setPassword] = useState("");
   const [wifiMode, setWifiMode] = useState<"dhcp" | "static">("dhcp");
@@ -466,14 +470,20 @@ function NetworkTab() {
   };
 
   const applyScan = useCallback((r: import("@/lib/api").WifiScanResult) => {
+    networksRef.current = r.networks;
     setNetworks(r.networks);
     setScanStatus(r.status);
     setApActive(r.ap_active);
-    // Keep the manual field reachable immediately when there's nothing to pick.
     setSelection((prev) => {
-      if (r.networks.length === 0) return MANUAL_SSID;
+      // Preserve an explicit choice (manual, or a still-visible pick).
       if (prev === MANUAL_SSID || r.networks.some((n) => n.ssid === prev)) return prev;
-      return "";
+      // Otherwise pre-select the currently-connected network if it's in range
+      // (the WiFi status may or may not have loaded yet — getWifi's callback
+      // retries this once it has).
+      const w = wifiStatusRef.current;
+      if (w?.connected && w.ssid && r.networks.some((n) => n.ssid === w.ssid)) return w.ssid;
+      // Keep the manual field reachable immediately when there's nothing to pick.
+      return r.networks.length === 0 ? MANUAL_SSID : "";
     });
   }, []);
 
@@ -482,11 +492,31 @@ function NetworkTab() {
     api.scanWifi().then(applyScan).catch(() => setScanStatus("error")).finally(() => setScanning(false));
   }, [applyScan]);
 
+  // Pre-select the network the device is CONNECTED to once BOTH the scan and the
+  // WiFi status are loaded and it's in range — but only when nothing is selected
+  // yet (never overrides the user's pick). Done from the load callbacks (not a
+  // reactive effect) to avoid the set-state-in-effect cascading-render lint; the
+  // refs bridge the two independent async loads regardless of which lands first.
+  const preselectConnected = useCallback(() => {
+    const nets = networksRef.current;
+    const w = wifiStatusRef.current;
+    if (!w?.connected || !w.ssid || !nets.some((n) => n.ssid === w.ssid)) return;
+    setSelection((prev) => (prev === "" ? w.ssid : prev));
+  }, []);
+
   useEffect(() => {
     api.scanWifi().then(applyScan).catch(() => setScanStatus("error")).finally(() => setScanning(false));
     api.getWifi().then((w) => {
+      wifiStatusRef.current = w;
       setWifiStatus(w);
       if (w.mode) setWifiMode(w.mode);
+      // Pre-load the static fields (like Ethernet does) so re-saving while on
+      // static mode doesn't clobber the persisted IP/gateway/DNS with blanks.
+      if (w.ip) setWifiIp(w.ip);
+      if (w.subnet) setWifiSubnet(w.subnet);
+      if (w.gateway) setWifiGateway(w.gateway);
+      if (w.dns) setWifiDns(w.dns);
+      preselectConnected(); // pre-select if the scan already populated the list
     }).catch(() => {});
     api.getEthernet().then((e) => {
       setEthStatus(e);
@@ -497,7 +527,7 @@ function NetworkTab() {
       if (e.dns) setEthDns(e.dns);
     }).catch(() => {});
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [applyScan]);
+  }, [applyScan, preselectConnected]);
 
   // Submit → (202) connecting → poll GET /wifi ≤30s → success | auth_failed | timeout.
   // Special case: if we reached the device over the setup AP, that AP tears down
@@ -872,22 +902,34 @@ function AudioTab() {
   const detectedName = config.detected_hat
     ? config.available_overlays.find((o) => o.id === config.detected_hat)?.name ?? config.detected_hat
     : null;
+  // The "Auto-Detect" overlay row has an empty id. When it's active, surface what
+  // detection actually resolved to (the EEPROM HAT if any, else the live ALSA
+  // card, else "nothing yet") so the user can see the outcome.
+  const isAutoDetect = config.overlay === "";
+  const autoResult = detectedName ?? (config.detected_card || null);
 
   return (
     <Card title={t("title")} id={cardId}>
       <div className="space-y-3">
-        {detectedName && config.overlay !== config.detected_hat && (
+        {isAutoDetect ? (
+          <div className="rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground" role="status">
+            {autoResult ? (
+              <span>{t("autoDetectResult")}: <strong className="text-foreground">{autoResult}</strong></span>
+            ) : (
+              t("autoDetectNone")
+            )}
+          </div>
+        ) : detectedName && config.overlay !== config.detected_hat ? (
           <div className="flex items-center justify-between rounded-lg bg-blue-500/10 px-3 py-2 text-xs text-blue-800 dark:text-blue-300">
-            <span>Detected: <strong>{detectedName}</strong></span>
+            <span>{t("detected")}: <strong>{detectedName}</strong></span>
             <Button size="xs" variant="outline" onClick={() => {
               api.setAudio(config.detected_hat);
               setConfig({ ...config, overlay: config.detected_hat });
-            }}>Apply</Button>
+            }}>{t("apply")}</Button>
           </div>
-        )}
-        {detectedName && config.overlay === config.detected_hat && (
-          <p className="text-xs text-green-600">✓ Using detected DAC: {detectedName}</p>
-        )}
+        ) : detectedName && config.overlay === config.detected_hat ? (
+          <p className="text-xs text-green-600">✓ {t("usingDetected")}: {detectedName}</p>
+        ) : null}
         <Field label={t("dacOverlay")} htmlFor={overlayId}>
           <Select
             id={overlayId}
@@ -951,9 +993,10 @@ function ClientTab() {
     Promise.all([api.getClient(), api.scanServers()])
       .then(([c, r]) => {
         setConfig(c);
+        setClientEnabled(c.server_url !== "__disabled__"); // reflect persisted enable state
         if (c.available_soundcards) setSoundcards(c.available_soundcards);
         setServers(r.servers);
-        
+
         // Smart mode detection
         if (c.server_url && c.server_url !== "__disabled__") {
           const match = c.server_url.match(/^tcp:\/\/(.+):(\d+)$/);
@@ -975,6 +1018,7 @@ function ClientTab() {
         // Resilient fallback in case Promise.all fails
         api.getClient().then((c) => {
           setConfig(c);
+          setClientEnabled(c.server_url !== "__disabled__");
           if (c.available_soundcards) setSoundcards(c.available_soundcards);
           setConnectionMode(c.server_url ? "manual" : "auto");
           const match = c.server_url.match(/^tcp:\/\/(.+):(\d+)$/);
@@ -1061,7 +1105,14 @@ function ClientTab() {
           <Switch id={enableId} checked={clientEnabled} onCheckedChange={async (checked) => {
             setClientEnabled(checked);
             try {
-              if (checked) { await api.setClient(config); } else { await api.setClient({ ...config, server_url: "__disabled__" }); }
+              if (checked) {
+                // Enabling: clear the disabled sentinel so we don't re-persist it.
+                const next = { ...config, server_url: config.server_url === "__disabled__" ? "" : config.server_url };
+                setConfig(next);
+                await api.setClient(next);
+              } else {
+                await api.setClient({ ...config, server_url: "__disabled__" });
+              }
             } catch { setClientEnabled(!checked); }
           }} />
         </div>
@@ -1501,26 +1552,24 @@ function UpdateTab() {
   const t = useTranslations("update");
   const [update, setUpdate] = useState<import("@/lib/api").UpdateCheck | null>(null);
   const [checking, setChecking] = useState(false);
-  const [channel, setChannel] = useState("stable");
-  const [phase, setPhase] = useState<"idle" | "downloading" | "verifying" | "installing" | "rebooting" | "reconnecting" | "done" | "failed">("idle");
+  const [phase, setPhase] = useState<"idle" | "uploading" | "downloading" | "verifying" | "installing" | "rebooting" | "reconnecting" | "done" | "failed">("idle");
   const [rolledBack, setRolledBack] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const channelId = useId();
   const cardId = useId();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [showWarningGate, setShowWarningGate] = useState(false);
   const [acceptedRisks, setAcceptedRisks] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(false);
+  // null = not uploading; 0..1 = fraction sent (or -1 when total is unknown).
+  const [uploadFraction, setUploadFraction] = useState<number | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   useEffect(() => {
     api.checkUpdate().then(setUpdate).catch(() => {});
     api.getUpdateStatus().then((s) => { if (s.rolled_back) setRolledBack(true); }).catch(() => {});
-    api.getSystem().then((s) => setChannel(s.channel)).catch(() => {});
   }, []);
 
   const checkForUpdate = useCallback(() => {
@@ -1528,49 +1577,101 @@ function UpdateTab() {
     api.checkUpdate().then(setUpdate).catch(() => {}).finally(() => setChecking(false));
   }, []);
 
+  // Poll GET /update/status until the async RAUC install truly completes. RAUC's
+  // InstallBundle returns on TRIGGER, not completion, so both install paths must
+  // watch the operation transition installing→idle (and surface last_error) rather
+  // than treating the 202 as "done". Resolves on success, rejects with the reason.
+  const pollInstallToCompletion = useCallback(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        const started = Date.now();
+        let sawInstalling = false;
+        const poll = setInterval(async () => {
+          if (Date.now() - started > 20 * 60 * 1000) {
+            clearInterval(poll);
+            reject(new Error(t("updateTimeout")));
+            return;
+          }
+          try {
+            const s = await api.getUpdateStatus();
+            if (s.last_error) {
+              clearInterval(poll);
+              reject(new Error(s.last_error));
+            } else if (s.operation === "installing") {
+              sawInstalling = true;
+              setProgress(s.progress?.percentage ?? null);
+              // Reflect RAUC's sub-step so the indicator isn't stuck on "installing".
+              const m = (s.progress?.message ?? "").toLowerCase();
+              if (m.includes("download")) setPhase("downloading");
+              else if (m.includes("verif") || m.includes("check") || m.includes("signature")) setPhase("verifying");
+              else setPhase("installing");
+            } else if (s.operation === "idle" && sawInstalling) {
+              // Written + verified to the inactive slot; activated via "Reboot now".
+              clearInterval(poll);
+              resolve();
+            } else if (s.operation === "idle" && !sawInstalling && Date.now() - started > 20000) {
+              // 20s after trigger and RAUC never entered "installing" → it never
+              // started (unreachable bundle / refused); fail instead of hang or lie.
+              clearInterval(poll);
+              reject(new Error(t("updateFailed")));
+            }
+          } catch {
+            /* device busy mid-install — keep polling */
+          }
+        }, 1500);
+      }),
+    [t],
+  );
+
   const performUpdate = useCallback(() => {
     setPhase("installing");
     setProgress(null);
     setErrorMsg(null);
-    let sawInstalling = false;
-    let resolvedOk = false;
+    // triggerUpdate returns once the install is TRIGGERED; poll for real completion.
+    api.triggerUpdate()
+      .then(() => pollInstallToCompletion())
+      .then(() => setPhase("done"))
+      .catch((e: unknown) => {
+        setErrorMsg(e instanceof Error ? e.message : String(e));
+        setPhase("failed");
+      });
+  }, [pollInstallToCompletion]);
+
+  // Activate the freshly-installed slot and confirm the device returns. Drives
+  // rebooting → reconnecting, waits for the device to actually drop then come back,
+  // and reports a rollback (bootloader reverted) instead of silently going idle.
+  const rebootAndVerify = useCallback(() => {
+    setPhase("rebooting");
+    setErrorMsg(null);
+    api.reboot().catch(() => {}); // the reboot kills the connection — expected.
+    setPhase("reconnecting");
     const started = Date.now();
-    // Drive the UI from the real RAUC operation (GET /update/status), not timers.
+    let sawOffline = false;
     const poll = setInterval(async () => {
-      if (Date.now() - started > 20 * 60 * 1000) {
+      if (Date.now() - started > 3 * 60 * 1000) {
         clearInterval(poll);
-        setErrorMsg(t("updateTimeout"));
+        setErrorMsg(t("reconnectTimeout"));
         setPhase("failed");
         return;
       }
       try {
         const s = await api.getUpdateStatus();
-        if (s.last_error) {
-          clearInterval(poll);
-          setErrorMsg(s.last_error);
+        // Only trust an "online" reading after we've seen it go offline, else we'd
+        // match the still-running pre-reboot instance and finish too early.
+        if (!sawOffline) return;
+        clearInterval(poll);
+        if (s.rolled_back) {
+          setRolledBack(true);
+          setErrorMsg(t("rollbackDetail"));
           setPhase("failed");
-        } else if (s.operation === "installing") {
-          sawInstalling = true;
-          setProgress(s.progress?.percentage ?? null);
-        } else if (s.operation === "idle" && (sawInstalling || (resolvedOk && Date.now() - started > 8000))) {
-          // Installed to the inactive slot; user activates it via "Reboot now".
-          clearInterval(poll);
-          setPhase("done");
+        } else {
+          api.checkUpdate().then(setUpdate).catch(() => {});
+          setPhase("idle");
         }
       } catch {
-        /* device busy mid-install — keep polling */
+        sawOffline = true; // device went down — reboot in progress
       }
-    }, 1500);
-    // Kick off the install; a start failure (bad bundle, unreachable) rejects here.
-    api.triggerUpdate()
-      .then(() => {
-        resolvedOk = true;
-      })
-      .catch((e: unknown) => {
-        clearInterval(poll);
-        setErrorMsg(e instanceof Error ? e.message : String(e));
-        setPhase("failed");
-      });
+    }, 2000);
   }, [t]);
 
   const triggerFileSelect = useCallback(() => {
@@ -1600,25 +1701,39 @@ function UpdateTab() {
 
   const startManualFlash = useCallback(() => {
     if (!selectedFile) return;
-    setUploadProgress(true);
+    let stage: "upload" | "install" = "upload";
+    setUploadFraction(-1);
     setUploadError(null);
-    api.uploadUpdate(selectedFile)
+    setPhase("uploading");
+    // Stage 1: upload (with progress). A failure here keeps the modal open + inline.
+    api.uploadUpdate(selectedFile, (f) => setUploadFraction(f ?? -1))
       .then(() => {
-        setPhase("installing");
+        // Upload done — close the modal, move into the install lifecycle.
         setShowWarningGate(false);
         setSelectedFile(null);
         setAcceptedRisks(false);
-        return api.installUpdate();
+        setUploadFraction(null);
+        setPhase("installing");
+        setProgress(null);
+        setErrorMsg(null);
+        stage = "install";
+        // Stage 2: trigger the async install, then poll to REAL completion instead
+        // of declaring "done" on the 202 while rauc is still writing the slot.
+        return api.installUpdate().then(() => pollInstallToCompletion());
       })
-      .then(() => {
-        setPhase("done");
-      })
-      .catch((err) => {
-        console.error(err);
-        setUploadError(t("uploadError"));
-        setUploadProgress(false);
+      .then(() => setPhase("done"))
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (stage === "upload") {
+          setUploadError(t("uploadError"));
+          setUploadFraction(null);
+        } else {
+          // Install-stage failure — modal already closed, surface in the panel.
+          setErrorMsg(msg);
+          setPhase("failed");
+        }
       });
-  }, [selectedFile, t]);
+  }, [selectedFile, pollInstallToCompletion, t]);
 
   return (
     <Card title={t("title")} id={cardId}>
@@ -1631,15 +1746,19 @@ function UpdateTab() {
         )}
 
         {phase !== "idle" && phase !== "done" && phase !== "failed" && (
-          <UpdatePhaseIndicator label={`${t(`phase_${phase}`)}${progress != null ? ` — ${progress}%` : ""}`} />
+          <UpdatePhaseIndicator label={`${t(`phase_${phase}`)}${
+            phase === "uploading" && uploadFraction != null && uploadFraction >= 0
+              ? ` — ${Math.round(uploadFraction * 100)}%`
+              : progress != null ? ` — ${progress}%` : ""
+          }`} />
         )}
         {phase === "done" && (
           <div className="rounded-lg bg-green-500/10 p-4 text-sm space-y-3" role="status">
             <p className="font-medium text-green-700 dark:text-green-400">{t("updateSuccess")}</p>
-            <p className="text-xs text-muted-foreground">Reboot to activate the new version.</p>
+            <p className="text-xs text-muted-foreground">{t("rebootToActivate")}</p>
             <div className="flex gap-2">
-              <Button size="sm" onClick={() => { api.reboot(); setPhase("idle"); }}>Reboot now</Button>
-              <Button variant="outline" size="sm" onClick={() => setPhase("idle")}>Later</Button>
+              <Button size="sm" onClick={rebootAndVerify}>{t("rebootNow")}</Button>
+              <Button variant="outline" size="sm" onClick={() => setPhase("idle")}>{t("later")}</Button>
             </div>
           </div>
         )}
@@ -1655,6 +1774,12 @@ function UpdateTab() {
             {confirming ? (
               <div className="flex flex-col gap-3 rounded-lg bg-primary/10 p-4" role="alertdialog" aria-label={t("updateConfirm")}>
                 <p className="text-sm font-medium">{t("updateConfirm")}</p>
+                {update?.latest_version && (
+                  <p className="text-xs font-mono text-muted-foreground">{update.current_version} → {update.latest_version}</p>
+                )}
+                {update && !update.signature_verified && (
+                  <p className="text-xs font-medium text-destructive">{t("signatureUnverified")}</p>
+                )}
                 <div className="flex gap-2">
                   <Button size="sm" onClick={() => { setConfirming(false); performUpdate(); }}>{t("confirmInstall")}</Button>
                   <Button variant="outline" size="sm" onClick={() => setConfirming(false)}>{t("cancel")}</Button>
@@ -1667,9 +1792,9 @@ function UpdateTab() {
                     <p className="text-sm font-medium">{t("updateAvailable")}</p>
                     <p className="text-xs text-muted-foreground">{update.current_version}{update.latest_version ? ` → ${update.latest_version}` : ""}</p>
                   </div>
-                  <Button size="sm" onClick={() => setConfirming(true)}>{t("installUpdate")}</Button>
+                  <Button size="sm" disabled={!update.installable} onClick={() => setConfirming(true)}>{t("installUpdate")}</Button>
                 </div>
-                <div className="text-xs font-semibold flex items-center gap-1 border-t border-primary/20 pt-2 text-green-600 dark:text-green-400">
+                <div className={`text-xs font-semibold flex items-center gap-1 border-t pt-2 ${update.signature_verified ? "border-primary/20 text-green-600 dark:text-green-400" : "border-destructive/30 text-destructive"}`}>
                   {update.signature_verified ? t("signatureVerified") : t("signatureUnverified")}
                 </div>
               </div>
@@ -1680,21 +1805,25 @@ function UpdateTab() {
                     <p className="text-sm font-medium">{t("downgradeAvailable")}</p>
                     <p className="text-xs text-muted-foreground">{update.current_version}{update.latest_version ? ` → ${update.latest_version}` : ""}</p>
                   </div>
-                  <Button variant="outline" size="sm" onClick={() => setConfirming(true)}>{t("installVersion")}</Button>
+                  <Button variant="outline" size="sm" disabled={!update.installable} onClick={() => setConfirming(true)}>{t("installVersion")}</Button>
                 </div>
-                <div className="text-xs font-semibold flex items-center gap-1 border-t border-border pt-2 text-green-600 dark:text-green-400">
+                <div className={`text-xs font-semibold flex items-center gap-1 border-t pt-2 ${update.signature_verified ? "border-border text-green-600 dark:text-green-400" : "border-destructive/30 text-destructive"}`}>
                   {update.signature_verified ? t("signatureVerified") : t("signatureUnverified")}
                 </div>
               </div>
-            ) : update ? (
+            ) : update && update.latest_version ? (
               <div className="flex flex-col gap-2 rounded-lg bg-muted/20 p-4">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <StatusDot connected label={t("upToDate")} />
                   <span>{t("upToDate")}</span>
                 </div>
                 <div className="text-xs font-semibold flex items-center gap-1 text-green-600 dark:text-green-400 border-t border-border/50 pt-2">
-                  {update.signature_verified ? t("signatureVerified") : t("signatureUnverified")}
+                  {t("signatureVerified")}
                 </div>
+              </div>
+            ) : update ? (
+              <div className="rounded-lg bg-muted/20 p-4 text-sm text-muted-foreground" role="status">
+                {t("serverUnreachable")}
               </div>
             ) : null}
             <Button variant="outline" size="sm" onClick={checkForUpdate} disabled={checking} aria-busy={checking}>
@@ -1703,12 +1832,9 @@ function UpdateTab() {
           </>
         )}
 
-        <Field label={t("channel")} htmlFor={channelId}>
-          <Select id={channelId} value={channel} onChange={(e) => { setChannel(e.target.value); api.setSystem({ channel: e.target.value }); }}>
-            <option value="stable">{t("stable")}</option>
-            <option value="beta">{t("beta")}</option>
-          </Select>
-        </Field>
+        {/* Channel lives in AutoUpdateSettings (always visible) — it is the single
+            source of truth the backend uses for both manual check/install and
+            auto-update, so there is no separate decoupled selector here. */}
         <AutoUpdateSettings />
 
         {phase === "idle" && (
@@ -1733,7 +1859,7 @@ function UpdateTab() {
                   type="file"
                   ref={fileInputRef}
                   className="hidden"
-                  accept=".tar.gz,.zip"
+                  accept=".raucb"
                   onChange={handleFileSelected}
                 />
               </div>
@@ -1789,17 +1915,21 @@ function UpdateTab() {
                   setUploadError(null);
                   if (fileInputRef.current) fileInputRef.current.value = "";
                 }}
-                disabled={uploadProgress}
+                disabled={uploadFraction !== null}
               >
                 {t("manualCancel")}
               </Button>
               <Button
                 variant="destructive"
                 onClick={startManualFlash}
-                disabled={!acceptedRisks || uploadProgress}
+                disabled={!acceptedRisks || uploadFraction !== null}
                 className="font-bold"
               >
-                {uploadProgress ? t("manualUploading") : t("manualProceed")}
+                {uploadFraction !== null
+                  ? uploadFraction >= 0
+                    ? `${t("manualUploading")} ${Math.round(uploadFraction * 100)}%`
+                    : t("manualUploading")
+                  : t("manualProceed")}
               </Button>
             </div>
           </div>
@@ -1891,21 +2021,29 @@ function AutoUpdateSettings() {
     setConfig(updated);
     api.setAutoUpdate(updated);
   };
+  // The channel is the single source of truth the backend uses for BOTH manual
+  // check/install and auto-update, so it is always visible (not gated on the
+  // auto-update toggle). Also mirror it to the OS channel file so the settings
+  // export / system view stay consistent.
+  const saveChannel = (channel: string) => {
+    save({ ...config, channel });
+    api.setSystem({ channel }).catch(() => {});
+  };
 
   return (
     <div className="space-y-3 border-t border-border pt-3">
+      <Field label={t("channel")} htmlFor={channelId}>
+        <Select id={channelId} value={config.channel} onChange={(e) => saveChannel(e.target.value)}>
+          <option value="stable">{t("stable")}</option>
+          <option value="beta">{t("beta")}</option>
+        </Select>
+      </Field>
       <div className="flex items-center justify-between">
         <span className="text-sm text-muted-foreground">{t("autoUpdate")}</span>
         <Switch checked={config.enabled} onCheckedChange={(enabled) => save({ ...config, enabled })} />
       </div>
       {config.enabled && (
         <>
-          <Field label={t("channel")} htmlFor={channelId}>
-            <Select id={channelId} value={config.channel} onChange={(e) => save({ ...config, channel: e.target.value })}>
-              <option value="stable">Stable</option>
-              <option value="beta">Beta</option>
-            </Select>
-          </Field>
           <Field label={t("checkInterval")} htmlFor={intervalId}>
             <Select id={intervalId} value={config.interval} onChange={(e) => save({ ...config, interval: e.target.value })}>
               <option value="daily">{t("daily")}</option>
@@ -2181,13 +2319,25 @@ function HardwareTuningCard() {
 function SystemTab() {
   const t = useTranslations("system");
   const [info, setInfo] = useState<SystemInfo | null>(null);
+  const [hostname, setHostname] = useState("");
   const cardId = useId();
+  const hostnameId = useId();
 
   useEffect(() => {
-    api.getSystem().then(setInfo).catch(() => {});
+    api.getSystem().then((s) => { setInfo(s); setHostname(s.hostname); }).catch(() => {});
   }, []);
 
   if (!info) return <Skeleton className="h-32 w-full" aria-label={t("loading")} />;
+
+  const saveHostname = () => {
+    const h = hostname.trim();
+    if (h && h !== info.hostname) {
+      api.setSystem({ hostname: h }).catch(() => {});
+      setInfo({ ...info, hostname: h });
+    } else {
+      setHostname(info.hostname); // revert empty/unchanged edits
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -2198,6 +2348,18 @@ function SystemTab() {
       <HardwareTuningCard />
       <Card title={t("title")} id={cardId}>
         <div className="space-y-4">
+          <Field label={t("hostname")} htmlFor={hostnameId}>
+            <Input
+              id={hostnameId}
+              value={hostname}
+              onChange={(e) => setHostname(e.target.value)}
+              onBlur={saveHostname}
+              onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+              autoCapitalize="none"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </Field>
           <Field label={t("version")}>
             <p className="font-mono text-xs">{info.version}</p>
           </Field>

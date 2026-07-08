@@ -28,6 +28,9 @@ struct State {
     client: ClientConfig,
     ssh: SshConfig,
     tuning: crate::tuning::TuningConfig,
+    /// When a mock install was last triggered — drives the scripted install
+    /// lifecycle in update_status() so the dev UI exercises the real polling path.
+    install_started: Option<std::time::Instant>,
 }
 
 impl MockState {
@@ -70,6 +73,7 @@ impl MockState {
                     disable_onboard_audio: false,
                     exclusive_audio_core: false,
                 },
+                install_started: None,
             })),
         }
     }
@@ -126,11 +130,50 @@ impl MockState {
     }
 
     pub async fn trigger_update(&self) -> Result<()> {
-        let s = self.inner.lock().await;
+        let mut s = self.inner.lock().await;
         let channel = s.channel.clone();
+        s.install_started = Some(std::time::Instant::now());
         drop(s);
-        tracing::info!("[mock] OTA update triggered for {channel} (no-op)");
+        tracing::info!("[mock] OTA update triggered for {channel} (scripted install)");
         Ok(())
+    }
+
+    /// Arm the scripted install lifecycle (manual upload → install path).
+    pub async fn mock_install(&self) {
+        self.inner.lock().await.install_started = Some(std::time::Instant::now());
+        tracing::info!("[mock] OTA manual install triggered (scripted)");
+    }
+
+    /// Scripted RAUC status: "installing" with climbing progress for ~6s after an
+    /// install is triggered, then "idle" — so the dev UI exercises the real
+    /// installing→idle polling path instead of instantly "completing".
+    pub async fn update_status(&self) -> crate::routes::UpdateStatus {
+        const INSTALL_SECS: f64 = 6.0;
+        let s = self.inner.lock().await;
+        let elapsed = s.install_started.map(|t| t.elapsed().as_secs_f64());
+        drop(s);
+        match elapsed {
+            Some(e) if e < INSTALL_SECS => {
+                let pct = ((e / INSTALL_SECS) * 100.0).min(99.0) as i32;
+                crate::routes::UpdateStatus {
+                    operation: "installing".into(),
+                    progress: Some(crate::rauc::InstallProgress {
+                        percentage: pct,
+                        message: "Copying image to rootfs.0".into(),
+                    }),
+                    last_error: String::new(),
+                    rolled_back: false,
+                    slots: vec![],
+                }
+            }
+            _ => crate::routes::UpdateStatus {
+                operation: "idle".into(),
+                progress: None,
+                last_error: String::new(),
+                rolled_back: false,
+                slots: vec![],
+            },
+        }
     }
 
     pub async fn get_network_overview(&self) -> NetworkOverview {

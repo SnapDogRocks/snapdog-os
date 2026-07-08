@@ -361,8 +361,8 @@ mod mock_handlers {
         tracing::info!("[mock] OTA manual upload completed");
         StatusCode::OK
     }
-    pub async fn update_install(State(_m): State<crate::mock::MockState>) -> StatusCode {
-        tracing::info!("[mock] OTA manual install triggered (extracting & rebooting)");
+    pub async fn update_install(State(m): State<crate::mock::MockState>) -> StatusCode {
+        m.mock_install().await;
         StatusCode::ACCEPTED
     }
     pub async fn m_get_auto_update() -> Json<AutoUpdateConfig> {
@@ -377,13 +377,12 @@ mod mock_handlers {
         tracing::info!("[mock] set auto-update");
         StatusCode::OK
     }
-    pub async fn get_update_status() -> Json<UpdateStatus> {
-        Json(UpdateStatus {
-            operation: "idle".into(),
-            progress: None,
-            last_error: String::new(),
-            slots: vec![],
-        })
+    pub async fn get_update_status(State(m): State<crate::mock::MockState>) -> Json<UpdateStatus> {
+        // Scripted lifecycle so the dev UI exercises the real polling path: after a
+        // mock install is triggered, report "installing" with climbing progress for a
+        // few seconds, then "idle". Without this the frontend (which now polls until
+        // installing→idle) would never observe an install and hang until timeout.
+        Json(m.update_status().await)
     }
     pub async fn factory_reset(State(_m): State<crate::mock::MockState>) -> StatusCode {
         tracing::info!("[mock] factory reset");
@@ -604,7 +603,12 @@ pub fn api_mock(state: crate::mock::MockState) -> Router {
         .route("/system/update", post(h::update))
         .route("/system/update/check", get(h::get_update_check))
         .route("/system/update/status", get(h::get_update_status))
-        .route("/system/update/upload", post(h::update_upload))
+        .route(
+            "/system/update/upload",
+            // Match production: lift the 2 MB DefaultBodyLimit so large dev uploads
+            // behave like a device instead of 413-ing.
+            post(h::update_upload).layer(DefaultBodyLimit::disable()),
+        )
         .route("/system/update/install", post(h::update_install))
         .route(
             "/system/update/auto",
@@ -791,6 +795,10 @@ pub struct UpdateStatus {
     pub operation: String,
     pub progress: Option<crate::rauc::InstallProgress>,
     pub last_error: String,
+    /// True when the most recently installed bundle failed to boot and the
+    /// bootloader auto-reverted to the previous slot (a persisted failed-update
+    /// marker). Lets the UI surface a rollback that happened while it was offline.
+    pub rolled_back: bool,
     pub slots: Vec<crate::rauc::SlotStatus>,
 }
 
@@ -807,17 +815,19 @@ async fn get_update_status() -> Result<Json<UpdateStatus>, StatusCode> {
     } else {
         None
     };
-    let last_error = crate::rauc::Rauc::connect()
-        .await
-        .ok()
-        .and_then(|r| futures_util::FutureExt::now_or_never(r.last_error()))
-        .and_then(Result::ok)
-        .unwrap_or_default();
+    // Await the property read: `now_or_never` polled the pending D-Bus Get once and
+    // almost always got `""`, so a genuine async install failure was never surfaced.
+    let last_error = match crate::rauc::Rauc::connect().await {
+        Ok(r) => r.last_error().await.unwrap_or_default(),
+        Err(_) => String::new(),
+    };
+    let rolled_back = system::last_failed_update().await.is_some();
     let slots = system::rauc_slot_status().await.unwrap_or_default();
     Ok(Json(UpdateStatus {
         operation,
         progress,
         last_error,
+        rolled_back,
         slots,
     }))
 }

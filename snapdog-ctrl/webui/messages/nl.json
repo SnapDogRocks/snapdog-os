@@ -83,7 +83,12 @@
     "dacOverlay": "DAC Overlay",
     "detectedCard": "Gedetecteerde kaart",
     "autoDetect": "Automatisch (HAT EEPROM)",
-    "soundcard": "Geluidskaart"
+    "soundcard": "Geluidskaart",
+    "detected": "Gedetecteerd",
+    "apply": "Toepassen",
+    "usingDetected": "Gedetecteerde DAC wordt gebruikt",
+    "autoDetectResult": "Automatische detectie vond",
+    "autoDetectNone": "Automatische detectie staat aan — nog geen audioapparaat gedetecteerd."
   },
   "client": {
     "title": "Client",
@@ -202,7 +207,7 @@
     "manualDesc": "Upload and flash a local system image directly without online checks.",
     "manualWarningTitle": "⚠️ CRITICAL SYSTEM WARNING: MANUAL FLASH",
     "manualWarningDesc1": "Manual flashing bypasses automatic online signature and compatibility checks. Flashing an incorrect, corrupted, or unsupported system image WILL permanently damage or brick your device.",
-    "manualWarningDesc2": "Make sure you have a valid update package (.tar.gz) specifically compiled for your hardware revision. Proceed ONLY if you are absolutely sure of the image's source and integrity.",
+    "manualWarningDesc2": "Zorg ervoor dat u een geldige RAUC-updatebundle (.raucb) hebt die voor uw hardwarerevisie is gebouwd. RAUC controleert bij de installatie nog steeds de handtekening van de bundle, maar er is geen online versie- of compatibiliteitscontrole. Ga ALLEEN verder als u zeker bent van de bron en integriteit van het image.",
     "manualConfirmCheckbox": "I accept the risks of permanent device damage/data loss.",
     "manualCancel": "Cancel",
     "manualProceed": "Proceed & Upload Image",
@@ -211,7 +216,13 @@
     "uploadError": "Upload failed. Please ensure the file is correct and not corrupted.",
     "confirmInstall": "Ja, installeren & herstarten",
     "cancel": "Annuleren",
-    "updateTimeout": "Update verlopen (time-out)"
+    "updateTimeout": "Update verlopen (time-out)",
+    "phase_uploading": "Update uploaden...",
+    "rebootToActivate": "Herstart om de nieuwe versie te activeren.",
+    "rebootNow": "Nu herstarten",
+    "later": "Later",
+    "reconnectTimeout": "Het apparaat is niet op tijd weer online gekomen. Mogelijk is het teruggedraaid — herlaad de pagina en controleer de actieve versie.",
+    "serverUnreachable": "Kon nu niet op updates controleren."
   },
   "server": {
     "title": "Server",

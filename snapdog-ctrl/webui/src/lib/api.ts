@@ -167,7 +167,8 @@ export interface UpdateStatus {
   operation: string; // "idle" | "installing" | "unknown"
   progress: RaucProgress | null;
   last_error: string;
-  rolled_back?: boolean; // legacy: not currently emitted by the backend
+  /** True when the last-installed bundle failed to boot and the bootloader rolled back. */
+  rolled_back: boolean;
 }
 
 export interface ZoneKnxGos {
@@ -254,16 +255,37 @@ export const api = {
   triggerUpdate: () => request<void>("/api/system/update", { method: "POST" }),
   checkUpdate: () => request<UpdateCheck>("/api/system/update/check"),
   getUpdateStatus: () => request<import("./api").UpdateStatus>("/api/system/update/status"),
-  uploadUpdate: (file: File) => {
-    const formData = new FormData();
-    formData.append("file", file);
-    return fetch("/api/system/update/upload", {
-      method: "POST",
-      body: formData,
-    }).then(res => {
-      if (!res.ok) throw new Error(`Upload failed: ${res.status} ${res.statusText}`);
-    });
-  },
+  // XMLHttpRequest (not fetch) so we get real upload-progress events for the large
+  // bundle. onProgress receives 0..1 (or null when the total is unknown). A stall
+  // watchdog aborts if no progress fires for 30s so a half-open connection surfaces
+  // an error instead of hanging forever.
+  uploadUpdate: (file: File, onProgress?: (fraction: number | null) => void) =>
+    new Promise<void>((resolve, reject) => {
+      const form = new FormData();
+      form.append("file", file);
+      const xhr = new XMLHttpRequest();
+      let stall: ReturnType<typeof setTimeout>;
+      const arm = () => {
+        clearTimeout(stall);
+        stall = setTimeout(() => xhr.abort(), 30000);
+      };
+      xhr.upload.onprogress = (e) => {
+        arm();
+        onProgress?.(e.lengthComputable ? e.loaded / e.total : null);
+      };
+      xhr.onload = () => {
+        clearTimeout(stall);
+        if (xhr.status >= 200 && xhr.status < 300) resolve();
+        else reject(new Error(`Upload failed: ${xhr.status} ${xhr.statusText}`));
+      };
+      xhr.onerror = () => { clearTimeout(stall); reject(new Error("Upload failed: network error")); };
+      xhr.onabort = () => { clearTimeout(stall); reject(new Error("Upload aborted (stalled)")); };
+      const token = getToken();
+      xhr.open("POST", "/api/system/update/upload");
+      if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+      arm();
+      xhr.send(form);
+    }),
   installUpdate: () => request<void>("/api/system/update/install", { method: "POST" }),
   factoryReset: () => request<void>("/api/system/factory-reset", { method: "POST" }),
 

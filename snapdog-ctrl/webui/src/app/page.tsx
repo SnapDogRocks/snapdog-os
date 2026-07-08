@@ -2326,10 +2326,19 @@ function InfoTooltip({ content }: { content: string }) {
   );
 }
 
+const TUNING_KEYS = ["rf_kill_wifi", "rf_kill_bluetooth", "disable_onboard_audio", "exclusive_audio_core"] as const;
+
 function HardwareTuningCard() {
   const t = useTranslations("tuning");
-  const [config, setConfig] = useState<TuningConfig | null>(null);
-  const [saving, setSaving] = useState(false);
+  // Every tuning option writes boot-time config (config.txt dtoverlays/dtparams,
+  // cmdline.txt isolcpus), so none take effect until a reboot. Stage toggles as a
+  // draft and require an explicit Apply that asks whether to reboot now or later.
+  const [saved, setSaved] = useState<TuningConfig | null>(null);
+  const [draft, setDraft] = useState<TuningConfig | null>(null);
+  const [applying, setApplying] = useState(false);
+  const [requester, setRequester] = useState(false);
+  const [awaitingReboot, setAwaitingReboot] = useState(false);
+  const [error, setError] = useState("");
   const cardId = useId();
   const wifiId = useId();
   const btId = useId();
@@ -2337,67 +2346,92 @@ function HardwareTuningCard() {
   const exclusiveCoreId = useId();
 
   const fetchConfig = useCallback(() => {
-    api.getTuning().then(setConfig).catch(() => {});
+    api.getTuning().then((c) => {
+      setSaved(c);
+      setDraft((prev) => prev ?? c); // seed once; never clobber in-progress edits
+    }).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    fetchConfig();
-  }, [fetchConfig]);
-
+  useEffect(() => { fetchConfig(); }, [fetchConfig]);
   useWebSocket("system_changed", fetchConfig);
 
-  if (!config) return <Skeleton className="h-40 w-full" />;
+  if (!saved || !draft) return <Skeleton className="h-40 w-full" />;
 
-  const toggle = async (key: keyof TuningConfig, val: boolean) => {
-    const newConfig = { ...config, [key]: val };
-    setConfig(newConfig);
-    setSaving(true);
+  const dirty = TUNING_KEYS.some((k) => draft[k] !== saved[k]);
+  const set = (key: keyof TuningConfig, val: boolean) => {
+    setError("");
+    setDraft({ ...draft, [key]: val });
+  };
+
+  const apply = async (reboot: boolean) => {
+    setApplying(true);
+    setError("");
     try {
-      await api.setTuning(newConfig);
+      await api.setTuning(draft);
+      setSaved(draft);
+      setRequester(false);
+      if (reboot) {
+        // Persisted to /boot; the reboot reads it. The global "Connection Lost"
+        // overlay covers the device going away and coming back.
+        await api.reboot().catch(() => {});
+      } else {
+        setAwaitingReboot(true);
+      }
     } catch (e) {
-      console.error(e);
-      setConfig(config);
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setSaving(false);
+      setApplying(false);
     }
   };
+
+  const row = (id: string, key: keyof TuningConfig, label: string, desc: string, first = false) => (
+    <div className={`flex items-center justify-between ${first ? "" : "border-t border-border pt-4"}`}>
+      <div className="flex items-center gap-1.5">
+        <label htmlFor={id} className="text-sm font-medium">{label}</label>
+        <InfoTooltip content={desc} />
+        {draft[key] !== saved[key] && (
+          <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400">• {t("pending")}</span>
+        )}
+      </div>
+      <Switch id={id} checked={draft[key]} onCheckedChange={(c) => set(key, c)} disabled={applying} />
+    </div>
+  );
 
   return (
     <Card title={t("title")} id={cardId}>
       <div className="space-y-4">
-        {saving && (
-          <div className="text-xs text-muted-foreground animate-pulse mb-2">
-            {t("saving")}
+        <p className="text-xs text-muted-foreground">{t("rebootNote")}</p>
+        {row(wifiId, "rf_kill_wifi", t("disableWifi"), t("disableWifiDesc"), true)}
+        {row(btId, "rf_kill_bluetooth", t("disableBluetooth"), t("disableBluetoothDesc"))}
+        {row(onboardAudioId, "disable_onboard_audio", t("disableOnboardAudio"), t("disableOnboardAudioDesc"))}
+        {row(exclusiveCoreId, "exclusive_audio_core", t("exclusiveCore"), t("exclusiveCoreDesc"))}
+
+        {error && <div className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive" role="status">{error}</div>}
+
+        {awaitingReboot && !dirty && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300 border-t border-border pt-3" role="status">
+            <span>{t("awaitingReboot")}</span>
+            <Button size="sm" onClick={() => void api.reboot().catch(() => {})}>{t("rebootNow")}</Button>
           </div>
         )}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center">
-            <label htmlFor={wifiId} className="text-sm font-medium">{t("disableWifi")}</label>
-            <InfoTooltip content={t("disableWifiDesc")} />
+
+        {dirty && !requester && (
+          <div className="flex gap-2 border-t border-border pt-4">
+            <Button size="sm" onClick={() => setRequester(true)}>{t("apply")}</Button>
+            <Button size="sm" variant="outline" onClick={() => { setDraft(saved); setError(""); }}>{t("discard")}</Button>
           </div>
-          <Switch id={wifiId} checked={config.rf_kill_wifi} onCheckedChange={(c) => toggle("rf_kill_wifi", c)} disabled={saving} />
-        </div>
-        <div className="flex items-center justify-between border-t border-border pt-4">
-          <div className="flex items-center">
-            <label htmlFor={btId} className="text-sm font-medium">{t("disableBluetooth")}</label>
-            <InfoTooltip content={t("disableBluetoothDesc")} />
+        )}
+
+        {requester && (
+          <div className="space-y-2 border-t border-border pt-4">
+            <p className="text-sm">{t("applyPrompt")}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" onClick={() => void apply(true)} disabled={applying}>{t("rebootNow")}</Button>
+              <Button size="sm" variant="outline" onClick={() => void apply(false)} disabled={applying}>{t("applyLater")}</Button>
+              <Button size="sm" variant="ghost" onClick={() => setRequester(false)} disabled={applying}>{t("cancel")}</Button>
+            </div>
           </div>
-          <Switch id={btId} checked={config.rf_kill_bluetooth} onCheckedChange={(c) => toggle("rf_kill_bluetooth", c)} disabled={saving} />
-        </div>
-        <div className="flex items-center justify-between border-t border-border pt-4">
-          <div className="flex items-center">
-            <label htmlFor={onboardAudioId} className="text-sm font-medium">{t("disableOnboardAudio")}</label>
-            <InfoTooltip content={t("disableOnboardAudioDesc")} />
-          </div>
-          <Switch id={onboardAudioId} checked={config.disable_onboard_audio} onCheckedChange={(c) => toggle("disable_onboard_audio", c)} disabled={saving} />
-        </div>
-        <div className="flex items-center justify-between border-t border-border pt-4">
-          <div className="flex items-center">
-            <label htmlFor={exclusiveCoreId} className="text-sm font-medium">{t("exclusiveCore")}</label>
-            <InfoTooltip content={t("exclusiveCoreDesc")} />
-          </div>
-          <Switch id={exclusiveCoreId} checked={config.exclusive_audio_core} onCheckedChange={(c) => toggle("exclusive_audio_core", c)} disabled={saving} />
-        </div>
+        )}
       </div>
     </Card>
   );

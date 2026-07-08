@@ -170,7 +170,8 @@
     "copyLogs": "Copy",
     "copied": "Copied",
     "saved": "Saved",
-    "timezoneSaveError": "Couldn't save the timezone."
+    "timezoneSaveError": "Couldn't save the timezone.",
+    "hostname": "Hostname"
   },
   "update": {
     "title": "Firmware Update",
@@ -343,6 +344,15 @@
     "disableOnboardAudio": "Disable Onboard Audio",
     "disableOnboardAudioDesc": "Disables default 3.5mm jack & HDMI audio controllers to prevent conflicts.",
     "exclusiveCore": "Exclusive Audio Core",
-    "exclusiveCoreDesc": "Isolates CPU Core 3 and locks clock speed for glitch-free playback (requires reboot)."
+    "exclusiveCoreDesc": "Isolates CPU Core 3 and locks clock speed for glitch-free playback.",
+    "rebootNote": "All changes take effect after a reboot.",
+    "pending": "pending",
+    "apply": "Apply changes",
+    "discard": "Discard",
+    "applyPrompt": "These changes need a reboot to take effect. Reboot now, or apply on the next reboot?",
+    "rebootNow": "Reboot now",
+    "applyLater": "Apply on next reboot",
+    "cancel": "Cancel",
+    "awaitingReboot": "Saved. Changes apply on the next reboot."
   }
 }

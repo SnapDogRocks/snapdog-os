@@ -175,7 +175,8 @@
     "copyLogs": "Copiar",
     "copied": "Copiado",
     "saved": "Guardado",
-    "timezoneSaveError": "No se pudo guardar la zona horaria."
+    "timezoneSaveError": "No se pudo guardar la zona horaria.",
+    "hostname": "Nombre de host"
   },
   "update": {
     "title": "Actualización",
@@ -353,6 +354,15 @@
     "disableOnboardAudio": "Desactivar Audio Integrado",
     "disableOnboardAudioDesc": "Desactiva los controladores de audio analógico de 3.5 mm y HDMI para evitar conflictos.",
     "exclusiveCore": "Núcleo de Audio Exclusivo",
-    "exclusiveCoreDesc": "Aísla el núcleo 3 de la CPU y bloquea la frecuencia de reloj para una reproducción fluida (requiere reiniciar)."
+    "exclusiveCoreDesc": "Aísla el núcleo 3 de la CPU y fija la frecuencia para una reproducción sin cortes.",
+    "rebootNote": "Todos los cambios se aplican tras reiniciar.",
+    "pending": "pendiente",
+    "apply": "Aplicar cambios",
+    "discard": "Descartar",
+    "applyPrompt": "Estos cambios requieren reiniciar. ¿Reiniciar ahora o aplicar en el próximo reinicio?",
+    "rebootNow": "Reiniciar ahora",
+    "applyLater": "En el próximo reinicio",
+    "cancel": "Cancelar",
+    "awaitingReboot": "Guardado. Los cambios se aplicarán en el próximo reinicio."
   }
 }

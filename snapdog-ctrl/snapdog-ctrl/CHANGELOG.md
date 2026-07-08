@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.7.0](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.6.0...snapdog-ctrl-v0.7.0) (2026-07-08)
+
+
+### Features
+
+* device-setup, OTA-update & hardware-detection overhaul ([#58](https://github.com/SnapDogRocks/snapdog-os/issues/58)) ([223acd7](https://github.com/SnapDogRocks/snapdog-os/commit/223acd768440e1da6504d7fbc212d91087259e4f))
+* **rauc:** add RPi tryboot A/B rollback for OTA ([18592d7](https://github.com/SnapDogRocks/snapdog-os/commit/18592d7776cfeb01bae2b2a50e432cf761a33ad8))
+* **rauc:** tryboot A/B rollback and OTA upgrade hardening ([b4122bf](https://github.com/SnapDogRocks/snapdog-os/commit/b4122bff03624e24f5a5379b78a2c78b3e2c4a9e))
+* **webui:** gate hardware tuning behind an apply + reboot-choice requester ([5dd370f](https://github.com/SnapDogRocks/snapdog-os/commit/5dd370f4425aca2d21b9b0b9cac5975113a6793c))
+* **webui:** hardware tuning — apply + reboot-choice requester ([aa5a0f3](https://github.com/SnapDogRocks/snapdog-os/commit/aa5a0f39703b2a41010b23cc5f6d3fe6c37debaa))
+
+
+### Bug Fixes
+
+* **buildroot:** resolve various read-only rootfs and server startup quirks ([a61a678](https://github.com/SnapDogRocks/snapdog-os/commit/a61a6788dca48aab52d3ac8dec9478238b64618f))
+* **ctrl:** drive update progress from real RAUC status, surface errors ([78d1adb](https://github.com/SnapDogRocks/snapdog-os/commit/78d1adb9cec943d75bfa0c61d1b4c0b5472f1171))
+* **ctrl:** read timezone from the localtime symlink chain (not timedatectl) ([#61](https://github.com/SnapDogRocks/snapdog-os/issues/61)) ([b343034](https://github.com/SnapDogRocks/snapdog-os/commit/b3430342db61deda11b0c62b7c372ea309233edc))
+* **ctrl:** report real update signature status + in-app install confirm ([33e545b](https://github.com/SnapDogRocks/snapdog-os/commit/33e545b2668e24f4ea2f8b0a3fb0ec7c50c3885d))
+* **ctrl:** SSH toggle, WiFi boot, DAC-detect SSOT and soundcard dropdown ([8a621fc](https://github.com/SnapDogRocks/snapdog-os/commit/8a621fcd615100b7d08fe664b08c42ca7956f9d3))
+* **ctrl:** stop auto-update reinstall loop with version gate + failed-bundle tracking ([fbd6b87](https://github.com/SnapDogRocks/snapdog-os/commit/fbd6b87b508586dcea5a6b72d956f97b716a12f5))
+* **ota:** make snapdog-update OTA work end-to-end (four device-side bugs) ([64a52a5](https://github.com/SnapDogRocks/snapdog-os/commit/64a52a586e48ea5a9c35df880b16539b5f7885b1))
+* SSH, WiFi, DAC auto-detect and soundcard picker on the read-only rootfs ([66c7ee8](https://github.com/SnapDogRocks/snapdog-os/commit/66c7ee83797e55dec4da47c2c6332d30e9faa47f))
+* **webui:** address PR review on hardware-tuning draft state ([2643b19](https://github.com/SnapDogRocks/snapdog-os/commit/2643b1961e4e8ca6a4be99960d4f109c50da9c4f))
+
 ## [0.6.0](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.5.0...snapdog-ctrl-v0.6.0) (2026-06-21)
 
 

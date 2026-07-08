@@ -53,7 +53,7 @@
     "secured": "Beveiligd",
     "signalAria": "{ssid}, signaal {dbm} dBm",
     "bannerApMode": "U bent verbonden met het installatienetwerk. Typ hieronder de naam van uw wifi-netwerk.",
-    "bannerScanError": "De wifi-radio is bezig. Voer de netwerkgegevens handmatig in.",
+    "bannerScanError": "Kan niet naar wifi-netwerken zoeken. Voer de netwerkgegevens handmatig in.",
     "bannerNoneFound": "Geen netwerken gevonden. Zoek opnieuw of voer uw netwerk handmatig in.",
     "submitting": "Opslaan…",
     "connecting": "Verbinden… dit kan tot 30 seconden duren.",

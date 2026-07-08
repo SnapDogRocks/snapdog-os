@@ -53,7 +53,7 @@
     "secured": "Sécurisé",
     "signalAria": "{ssid}, signal {dbm} dBm",
     "bannerApMode": "Vous êtes sur le réseau de configuration. Saisissez ci-dessous le nom de votre réseau Wi-Fi.",
-    "bannerScanError": "La radio Wi-Fi est occupée. Saisissez les informations du réseau manuellement.",
+    "bannerScanError": "Impossible de rechercher les réseaux Wi-Fi. Saisissez les informations du réseau manuellement.",
     "bannerNoneFound": "Aucun réseau trouvé. Relancez la recherche ou saisissez votre réseau manuellement.",
     "submitting": "Enregistrement…",
     "connecting": "Connexion en cours… cela peut prendre jusqu'à 30 secondes.",

@@ -53,7 +53,7 @@
     "secured": "Secured",
     "signalAria": "{ssid}, signal {dbm} dBm",
     "bannerApMode": "You're on the setup network. Type your Wi-Fi network's name below.",
-    "bannerScanError": "The Wi-Fi radio is busy. Enter your network details manually.",
+    "bannerScanError": "Couldn't scan for Wi-Fi networks. Enter your network details manually.",
     "bannerNoneFound": "No networks found. Rescan, or enter your network manually.",
     "submitting": "Saving…",
     "connecting": "Connecting… this can take up to 30 seconds.",

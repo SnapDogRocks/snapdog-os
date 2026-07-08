@@ -264,7 +264,8 @@ export const api = {
       const form = new FormData();
       form.append("file", file);
       const xhr = new XMLHttpRequest();
-      let stall: ReturnType<typeof setTimeout>;
+      // Optional: arm() clears it before the first assignment; clearTimeout(undefined) is a no-op.
+      let stall: ReturnType<typeof setTimeout> | undefined;
       const arm = () => {
         clearTimeout(stall);
         stall = setTimeout(() => xhr.abort(), 30000);

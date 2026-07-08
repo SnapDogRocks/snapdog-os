@@ -1904,8 +1904,8 @@ function UpdateTab() {
                   <StatusDot connected label={t("upToDate")} />
                   <span>{t("upToDate")}</span>
                 </div>
-                <div className="text-xs font-semibold flex items-center gap-1 text-green-600 dark:text-green-400 border-t border-border/50 pt-2">
-                  {t("signatureVerified")}
+                <div className={`text-xs font-semibold flex items-center gap-1 border-t pt-2 ${update.signature_verified ? "border-border/50 text-green-600 dark:text-green-400" : "border-destructive/30 text-destructive"}`}>
+                  {update.signature_verified ? t("signatureVerified") : t("signatureUnverified")}
                 </div>
               </div>
             ) : update ? (
@@ -2416,13 +2416,17 @@ function SystemTab() {
 
   if (!info) return <Skeleton className="h-32 w-full" aria-label={t("loading")} />;
 
-  const saveHostname = () => {
+  const saveHostname = async () => {
     const h = hostname.trim();
-    if (h && h !== info.hostname) {
-      api.setSystem({ hostname: h }).catch(() => {});
-      setInfo({ ...info, hostname: h });
-    } else {
+    if (!h || h === info.hostname) {
       setHostname(info.hostname); // revert empty/unchanged edits
+      return;
+    }
+    try {
+      await api.setSystem({ hostname: h });
+      setInfo({ ...info, hostname: h }); // reflect only what actually persisted
+    } catch {
+      setHostname(info.hostname); // PUT/hostnamectl rejected it — revert the input
     }
   };
 
@@ -2440,7 +2444,7 @@ function SystemTab() {
               id={hostnameId}
               value={hostname}
               onChange={(e) => setHostname(e.target.value)}
-              onBlur={saveHostname}
+              onBlur={() => void saveHostname()}
               onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
               autoCapitalize="none"
               autoComplete="off"

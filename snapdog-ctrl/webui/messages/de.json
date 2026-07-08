@@ -53,7 +53,7 @@
     "secured": "Gesichert",
     "signalAria": "{ssid}, Signal {dbm} dBm",
     "bannerApMode": "Sie sind im Einrichtungsnetzwerk. Geben Sie unten den Namen Ihres WLANs ein.",
-    "bannerScanError": "Das WLAN-Modul ist ausgelastet. Geben Sie die Netzwerkdaten manuell ein.",
+    "bannerScanError": "WLAN-Netzwerke konnten nicht gesucht werden. Geben Sie die Netzwerkdaten manuell ein.",
     "bannerNoneFound": "Keine Netzwerke gefunden. Erneut suchen oder Netzwerk manuell eingeben.",
     "submitting": "Wird gespeichert…",
     "connecting": "Verbindung wird hergestellt… das kann bis zu 30 Sekunden dauern.",

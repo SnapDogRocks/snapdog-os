@@ -53,7 +53,7 @@
     "secured": "Protegida",
     "signalAria": "{ssid}, señal {dbm} dBm",
     "bannerApMode": "Está en la red de configuración. Escriba abajo el nombre de su red Wi-Fi.",
-    "bannerScanError": "La radio Wi-Fi está ocupada. Introduzca los datos de la red manualmente.",
+    "bannerScanError": "No se pudieron buscar redes Wi-Fi. Introduzca los datos de la red manualmente.",
     "bannerNoneFound": "No se encontraron redes. Vuelva a buscar o introduzca su red manualmente.",
     "submitting": "Guardando…",
     "connecting": "Conectando… esto puede tardar hasta 30 segundos.",

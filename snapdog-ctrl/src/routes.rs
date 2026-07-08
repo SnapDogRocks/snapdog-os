@@ -1178,8 +1178,9 @@ async fn post_wifi_scan() -> Json<WifiScanResult> {
     Json(system::wifi_scan().await)
 }
 
-/// Never returns the AP passphrase — only whether it's still the generated
-/// default, plus the SSID + country for display.
+/// Returns a masked `SoftApView`: the passphrase is included only while the setup
+/// AP is actually running (so it can be shown for first-join) and withheld
+/// otherwise, plus the SSID + country for display.
 async fn get_softap() -> Json<system::SoftApView> {
     Json(system::get_softap_view().await)
 }

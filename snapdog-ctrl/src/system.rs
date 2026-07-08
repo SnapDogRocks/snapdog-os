@@ -92,7 +92,7 @@ pub async fn get_system_info() -> SystemInfo {
         .unwrap_or_default();
     let channel = read_file("/etc/snapdog-os.channel")
         .await
-        .unwrap_or_else(|_| "stable".into());
+        .unwrap_or_else(|_| "release".into());
     let uptime = get_uptime().await;
 
     let kernel = tokio::process::Command::new("uname")
@@ -149,7 +149,7 @@ pub async fn set_system(hostname: Option<String>, channel: Option<String>) -> Re
     }
     if let Some(c) = channel {
         anyhow::ensure!(
-            matches!(c.as_str(), "stable" | "beta"),
+            matches!(c.as_str(), "release" | "beta"),
             "invalid update channel"
         );
         tokio::fs::write("/etc/snapdog-os.channel", format!("{c}\n"))
@@ -948,8 +948,10 @@ const FAILED_UPDATE_FILE: &str = "/data/snapdog-os.failed-update";
 /// Construct the bundle URL for a given channel.
 pub async fn bundle_url(channel: &str) -> String {
     let board = detect_board().await;
-    let suffix = if channel == "stable" { "" } else { "-beta" };
-    format!("{UPDATE_BASE_URL}/{board}{suffix}.raucb")
+    // Channel bundles are published as snapdog-os-<board>-<channel>.raucb — the
+    // channel is "release" or "beta", matching the CI/CDN naming (the stable
+    // channel is called "release" everywhere: manifest latest-release.json etc.).
+    format!("{UPDATE_BASE_URL}/{board}-{channel}.raucb")
 }
 
 pub async fn detect_board() -> String {
@@ -1339,7 +1341,7 @@ pub async fn get_auto_update() -> AutoUpdateConfig {
         channel: au
             .and_then(|t| t.get("channel"))
             .and_then(|v| v.as_str())
-            .unwrap_or("stable")
+            .unwrap_or("release")
             .to_string(),
         interval: au
             .and_then(|t| t.get("interval"))

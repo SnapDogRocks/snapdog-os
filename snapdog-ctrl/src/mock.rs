@@ -38,7 +38,7 @@ impl MockState {
         Self {
             inner: Arc::new(Mutex::new(State {
                 hostname: "snapdog-dev".into(),
-                channel: "stable".into(),
+                channel: "release".into(),
                 ethernet: EthernetInfo {
                     connected: true,
                     mode: "dhcp".into(),

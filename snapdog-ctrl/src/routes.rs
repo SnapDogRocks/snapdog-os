@@ -342,7 +342,7 @@ mod mock_handlers {
             installable: true,
             current_version: env!("CARGO_PKG_VERSION").into(),
             latest_version: "9.9.9".into(),
-            channel: "stable".into(),
+            channel: "release".into(),
             is_downgrade: false,
             signature_verified: true,
             bundle_url: "https://update.snapdog.cc/os/bundles/pi4.raucb".into(),
@@ -368,7 +368,7 @@ mod mock_handlers {
     pub async fn m_get_auto_update() -> Json<AutoUpdateConfig> {
         Json(AutoUpdateConfig {
             enabled: true,
-            channel: "stable".into(),
+            channel: "release".into(),
             interval: "daily".into(),
             time: "04:00".into(),
         })

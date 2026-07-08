@@ -1,0 +1,10 @@
+[Unit]
+Description=Remount /boot Read-Only
+After=boot.mount
+
+[Service]
+Type=oneshot
+ExecStart=/bin/mount -o remount,ro /boot
+CapabilityBoundingSet=CAP_SYS_ADMIN
+AmbientCapabilities=CAP_SYS_ADMIN
+NoNewPrivileges=yes

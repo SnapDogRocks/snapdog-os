@@ -2328,6 +2328,8 @@ function InfoTooltip({ content }: { content: string }) {
 
 const TUNING_KEYS = ["rf_kill_wifi", "rf_kill_bluetooth", "disable_onboard_audio", "exclusive_audio_core"] as const;
 
+const tuningEq = (a: TuningConfig, b: TuningConfig) => TUNING_KEYS.every((k) => a[k] === b[k]);
+
 function HardwareTuningCard() {
   const t = useTranslations("tuning");
   // Every tuning option writes boot-time config (config.txt dtoverlays/dtparams,
@@ -2345,10 +2347,16 @@ function HardwareTuningCard() {
   const onboardAudioId = useId();
   const exclusiveCoreId = useId();
 
+  // Latest saved config, readable from the async fetch callback without a stale
+  // closure, so a refetch can distinguish an edited draft from an in-sync one.
+  const savedRef = useRef<TuningConfig | null>(null);
+  useEffect(() => { savedRef.current = saved; }, [saved]);
+
   const fetchConfig = useCallback(() => {
     api.getTuning().then((c) => {
       setSaved(c);
-      setDraft((prev) => prev ?? c); // seed once; never clobber in-progress edits
+      // Follow the backend on refetch, but keep unsaved local edits intact.
+      setDraft((prev) => (prev && savedRef.current && !tuningEq(prev, savedRef.current) ? prev : c));
     }).catch(() => {});
   }, []);
 
@@ -2357,10 +2365,11 @@ function HardwareTuningCard() {
 
   if (!saved || !draft) return <Skeleton className="h-40 w-full" />;
 
-  const dirty = TUNING_KEYS.some((k) => draft[k] !== saved[k]);
+  const dirty = !tuningEq(draft, saved);
   const set = (key: keyof TuningConfig, val: boolean) => {
     setError("");
-    setDraft({ ...draft, [key]: val });
+    // Functional update so rapid successive toggles all apply to the latest draft.
+    setDraft((d) => (d ? { ...d, [key]: val } : d));
   };
 
   const apply = async (reboot: boolean) => {

@@ -214,6 +214,52 @@ pub fn remove_dtoverlay(content: &str, overlay: &str) -> String {
     result.join("\n") + "\n"
 }
 
+/// Pure transform for [`reconcile_eeprom_settings`]: drop the two HAT-EEPROM
+/// workaround lines — `force_eeprom_read=0` (which disables the firmware's
+/// boot-time EEPROM read) and the `i2c-gpio` overlay that repurposes the ID pins
+/// GPIO0/1. Everything else is preserved verbatim.
+fn strip_eeprom_workaround(content: &str) -> String {
+    let without_force: String = content
+        .lines()
+        .filter(|l| match_line_key_value(l, "force_eeprom_read").as_deref() != Some("0"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let without_force = if content.ends_with('\n') {
+        format!("{without_force}\n")
+    } else {
+        without_force
+    };
+    if has_dtoverlay(&without_force, "i2c-gpio") {
+        remove_dtoverlay(&without_force, "i2c-gpio")
+    } else {
+        without_force
+    }
+}
+
+/// Remove the HAT-EEPROM workaround lines from config.txt if present, so the
+/// firmware reads the HAT ID EEPROM on the next boot (enabling DAC auto-detection
+/// of boards like the HiFiBerry Amp100). Devices flashed before this fix cannot get
+/// a corrected config.txt via OTA — the shared `/boot` FAT partition is not part of
+/// the A/B rootfs bundle — so we reconcile it in software on startup.
+///
+/// Returns `Ok(true)` only when config.txt was changed AND the change was verified
+/// to have persisted; the caller reboots on `true`, so a silently-failed write must
+/// report `false` to avoid a reboot loop.
+pub async fn reconcile_eeprom_settings() -> Result<bool> {
+    let content = read().await?;
+    let cleaned = strip_eeprom_workaround(&content);
+    if cleaned == content {
+        return Ok(false);
+    }
+    write(&cleaned).await?;
+    let after = read().await?;
+    let persisted = after
+        .lines()
+        .all(|l| match_line_key_value(l, "force_eeprom_read").as_deref() != Some("0"))
+        && !has_dtoverlay(&after, "i2c-gpio");
+    Ok(persisted)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,6 +275,29 @@ dtoverlay=allo-boss-dac-pcm512x-audio
 # dtoverlay=iqaudio-dacplus
 kernel=Image
 ";
+
+    #[test]
+    fn strips_eeprom_workaround_lines() {
+        let input = "dtparam=i2c=on\nforce_eeprom_read=0\n\
+                     dtoverlay=i2c-gpio,i2c_gpio_sda=0,i2c_gpio_scl=1\ndtoverlay=dwc2\n";
+        let out = strip_eeprom_workaround(input);
+        assert!(
+            !out.contains("force_eeprom_read=0"),
+            "force_eeprom_read=0 not removed: {out}"
+        );
+        assert!(
+            !has_dtoverlay(&out, "i2c-gpio"),
+            "i2c-gpio overlay not removed: {out}"
+        );
+        assert!(out.contains("dtparam=i2c=on"));
+        assert!(has_dtoverlay(&out, "dwc2"));
+    }
+
+    #[test]
+    fn strip_eeprom_workaround_is_noop_when_already_clean() {
+        let input = "dtparam=i2c=on\ndtparam=audio=off\ndtoverlay=dwc2\nkernel=Image\n";
+        assert_eq!(strip_eeprom_workaround(input), input);
+    }
 
     #[test]
     fn finds_audio_overlay() {

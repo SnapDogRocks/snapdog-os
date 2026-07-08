@@ -197,6 +197,26 @@ async fn build_app() -> Router {
     if has_critical {
         tracing::error!("Critical health issue detected — running in degraded mode (no services)");
     } else {
+        // Migrate devices flashed before the HAT-EEPROM fix. OTA can't rewrite the
+        // shared /boot partition, so a stale config.txt may still carry
+        // force_eeprom_read=0, which blocks the firmware's HAT EEPROM read. Strip it
+        // here (a persistent fix) and reboot to apply it. Note: during a RAUC tryboot
+        // trial the firmware boots from tryboot.txt, not this just-cleaned config.txt,
+        // so the EEPROM read (and the DAC auto-detect below) lands on the first
+        // committed boot after the trial rather than on this reboot; on a normal boot
+        // it takes effect immediately.
+        match config_txt::reconcile_eeprom_settings().await {
+            Ok(true) => {
+                tracing::info!(
+                    "config.txt: removed EEPROM-disabling lines — rebooting so the firmware reads the HAT EEPROM"
+                );
+                system::reboot().await;
+                return Router::new();
+            }
+            Ok(false) => {}
+            Err(e) => tracing::warn!("config.txt EEPROM reconcile failed: {e}"),
+        }
+
         // Auto-detect DAC on first boot: if EEPROM detected and no overlay set → apply + reboot
         if system::auto_apply_dac_overlay().await {
             tracing::info!("DAC detected and configured — rebooting to activate");

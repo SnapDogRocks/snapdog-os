@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.2](https://github.com/SnapDogRocks/snapdog-os/compare/v0.7.1...v0.7.2) (2026-07-08)
+
+
+### Bug Fixes
+
+* **snapdog-ctrl:** address PR review comments, split template service into dedicated rw/ro services, and propagate errors ([7d01964](https://github.com/SnapDogRocks/snapdog-os/commit/7d0196478b97041f618cb7710404acb24492b876))
+* **snapdog-ctrl:** drop CAP_SYS_ADMIN by using systemd remount helper ([940a4ff](https://github.com/SnapDogRocks/snapdog-os/commit/940a4ffa7654b235bfecd95b5c011726e5690d6b), [fbb4071](https://github.com/SnapDogRocks/snapdog-os/commit/fbb407198c53a8e3d4286e3e04034625d7e3c2d1))
+
 ## [0.7.1](https://github.com/SnapDogRocks/snapdog-os/compare/v0.7.0...v0.7.1) (2026-07-08)
 
 

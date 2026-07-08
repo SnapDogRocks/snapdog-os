@@ -33,11 +33,22 @@ enum BoardKind {
     Zero2w,
 }
 
+/// Identity of a booted RAUC slot: its slot name (rootfs.0/rootfs.1) and the
+/// installed bundle version. The bundle version is the authoritative post-reboot
+/// signal — unlike the ctrl's `system_info.version` (a `git describe` string that
+/// two local builds off the same commit share), the per-slot bundle version is
+/// exactly what was flashed and always differs from the previously-booted bundle.
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct BootedSlot {
+    name: String,
+    version: String,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum RebootExpectation {
     Rauc {
         previous_version: String,
-        previous_booted_slot: Option<String>,
+        previous_booted_slot: Option<BootedSlot>,
     },
     RawFlash {
         previous_version: String,
@@ -345,14 +356,14 @@ impl UpgradeManager {
         .await
     }
 
-    async fn booted_slot(&self, deadline: Instant) -> Result<Option<String>> {
+    async fn booted_slot(&self, deadline: Instant) -> Result<Option<BootedSlot>> {
         let status = run_with_deadline(
             deadline,
             "fetch RAUC slot status",
             self.client.update_status(),
         )
         .await?;
-        Ok(booted_slot_name(&status.slots))
+        Ok(booted_slot(&status.slots))
     }
 
     async fn wait_for_reboot(
@@ -362,21 +373,22 @@ impl UpgradeManager {
     ) -> Result<()> {
         let ui = self
             .reporter
-            .spinner("reboot", "Waiting for device to go offline...");
+            .spinner("reboot", "Waiting for the device to reboot...");
 
-        while remaining_duration(deadline).is_some() {
-            if sleep_until_deadline(deadline, Duration::from_secs(2), "device reboot")
-                .await
-                .is_err()
-            {
-                break;
-            }
-            if self.client.system_info().await.is_err() {
-                ui.update_message("Device went offline. Waiting for boot...".to_string());
-                break;
-            }
-        }
-
+        // Single self-gating poll loop. The RAUC success signals (the booted slot's
+        // bundle version or slot name changing) can only become true AFTER the new
+        // slot has actually booted, so we check on every reachable poll instead of
+        // first requiring a clean offline observation. That fixes two failure modes
+        // of the old two-phase design: (1) if the brief offline window was ever
+        // missed, the "wait for offline" phase would burn the whole deadline and
+        // then report a false timeout even though the device had already come back
+        // on the new slot; (2) detection no longer depends on the ctrl's
+        // `git describe` version differing, which two local builds share.
+        //
+        // `observed_offline` is still tracked because the RawFlash path (a same-
+        // version reflash) has no slot/version signal and must confirm a real reboot
+        // via a low uptime — which is only trustworthy once we've seen it drop.
+        let mut observed_offline = false;
         let mut backoff = Duration::from_secs(2);
         while remaining_duration(deadline).is_some() {
             if sleep_until_deadline(deadline, backoff, "device reboot")
@@ -385,34 +397,48 @@ impl UpgradeManager {
             {
                 break;
             }
-            if let Ok(info) = self.client.system_info().await {
-                let current_booted_slot = if expectation.needs_booted_slot() {
-                    run_with_deadline(
-                        deadline,
-                        "fetch RAUC slot status",
-                        self.client.update_status(),
-                    )
-                    .await
-                    .ok()
-                    .and_then(|status| booted_slot_name(&status.slots))
-                } else {
-                    None
-                };
-
-                if let Some(reason) =
-                    expectation.success_reason(&info, current_booted_slot.as_deref())
-                {
-                    ui.finish_success(&format!(
-                        "Success! Device is back online ({reason}; uptime: {}s, version: v{})",
-                        info.uptime_seconds, info.version
-                    ));
-                    return Ok(());
+            match self.client.system_info().await {
+                Err(_) => {
+                    if !observed_offline {
+                        observed_offline = true;
+                        ui.update_message(
+                            "Device went offline. Waiting for it to come back...".to_string(),
+                        );
+                    }
+                    // Poll faster while it is down so we catch the recovery promptly.
+                    backoff = Duration::from_secs(2);
                 }
-                ui.update_message(
-                    expectation.pending_message(&info, current_booted_slot.as_deref()),
-                );
+                Ok(info) => {
+                    let current_booted_slot = if expectation.needs_booted_slot() {
+                        run_with_deadline(
+                            deadline,
+                            "fetch RAUC slot status",
+                            self.client.update_status(),
+                        )
+                        .await
+                        .ok()
+                        .and_then(|status| booted_slot(&status.slots))
+                    } else {
+                        None
+                    };
+
+                    if let Some(reason) = expectation.success_reason(
+                        &info,
+                        current_booted_slot.as_ref(),
+                        observed_offline,
+                    ) {
+                        ui.finish_success(&format!(
+                            "Success! Device is back online ({reason}; uptime: {}s, version: v{})",
+                            info.uptime_seconds, info.version
+                        ));
+                        return Ok(());
+                    }
+                    ui.update_message(
+                        expectation.pending_message(&info, current_booted_slot.as_ref()),
+                    );
+                    backoff = (backoff * 2).min(Duration::from_secs(10));
+                }
             }
-            backoff = (backoff * 2).min(Duration::from_secs(10));
         }
 
         ui.finish_failure("Reboot check timed out!");
@@ -430,7 +456,8 @@ impl RebootExpectation {
     fn success_reason(
         &self,
         info: &SystemInfo,
-        current_booted_slot: Option<&str>,
+        current_booted_slot: Option<&BootedSlot>,
+        observed_offline: bool,
     ) -> Option<String> {
         match self {
             Self::Rauc {
@@ -445,10 +472,24 @@ impl RebootExpectation {
                 }
 
                 if let (Some(previous), Some(current)) =
-                    (previous_booted_slot.as_deref(), current_booted_slot)
+                    (previous_booted_slot.as_ref(), current_booted_slot)
                 {
-                    if previous != current {
-                        return Some(format!("booted slot changed from {previous} to {current}"));
+                    // Authoritative signal: the booted slot now runs a different
+                    // bundle than before the install. Robust to identical
+                    // git-describe `info.version` strings, and correctly false on a
+                    // reverted trial (which lands back on the old slot + bundle).
+                    if previous.version != current.version {
+                        return Some(format!(
+                            "installed bundle version changed from {} to {}",
+                            previous.version, current.version
+                        ));
+                    }
+                    // Fallback for a same-version reinstall to the other slot.
+                    if previous.name != current.name {
+                        return Some(format!(
+                            "booted slot changed from {} to {}",
+                            previous.name, current.name
+                        ));
                     }
                 }
 
@@ -460,7 +501,10 @@ impl RebootExpectation {
                         "version changed from v{previous_version} to v{}",
                         info.version
                     ))
-                } else if info.uptime_seconds < 180 {
+                } else if observed_offline && info.uptime_seconds < 180 {
+                    // A raw reflash of the same version has no slot/version signal;
+                    // trust a low uptime only after we actually saw it go offline, so
+                    // an already-recently-booted device can't be a false positive.
                     Some("device rebooted".to_string())
                 } else {
                     None
@@ -469,17 +513,23 @@ impl RebootExpectation {
         }
     }
 
-    fn pending_message(&self, info: &SystemInfo, current_booted_slot: Option<&str>) -> String {
+    fn pending_message(
+        &self,
+        info: &SystemInfo,
+        current_booted_slot: Option<&BootedSlot>,
+    ) -> String {
         match self {
             Self::Rauc {
                 previous_version,
                 previous_booted_slot,
             } => format!(
-                "Device is online, but update is not verified yet (version: v{}, previous: v{}, booted slot: {}, previous slot: {}). Waiting...",
+                "Device is online, but update is not verified yet (version: v{}, previous: v{}, booted bundle: {}, previous bundle: {}). Waiting...",
                 info.version,
                 previous_version,
-                current_booted_slot.unwrap_or("unknown"),
-                previous_booted_slot.as_deref().unwrap_or("unknown")
+                current_booted_slot.map_or("unknown", |s| s.version.as_str()),
+                previous_booted_slot
+                    .as_ref()
+                    .map_or("unknown", |s| s.version.as_str())
             ),
             Self::RawFlash { previous_version } => format!(
                 "Device is online, but reboot is not verified yet (version: v{}, previous: v{}, uptime: {}s). Waiting...",
@@ -489,11 +539,14 @@ impl RebootExpectation {
     }
 }
 
-fn booted_slot_name(slots: &[SlotStatus]) -> Option<String> {
+fn booted_slot(slots: &[SlotStatus]) -> Option<BootedSlot> {
     slots
         .iter()
         .find(|slot| slot.booted)
-        .map(|slot| slot.name.clone())
+        .map(|slot| BootedSlot {
+            name: slot.name.clone(),
+            version: slot.version.clone(),
+        })
 }
 
 /// What a single RAUC status poll means during installation.
@@ -688,6 +741,13 @@ mod tests {
         }
     }
 
+    fn booted(name: &str, version: &str) -> BootedSlot {
+        BootedSlot {
+            name: name.to_string(),
+            version: version.to_string(),
+        }
+    }
+
     #[test]
     fn resolves_rauc_bundle_without_raw_flag() {
         let manager = UpgradeManager::new(
@@ -794,8 +854,8 @@ mod tests {
     #[test]
     fn finds_booted_slot() {
         assert_eq!(
-            booted_slot_name(&[slot("rootfs.0", false), slot("rootfs.1", true)]),
-            Some("rootfs.1".to_string())
+            booted_slot(&[slot("rootfs.0", false), slot("rootfs.1", true)]),
+            Some(booted("rootfs.1", "1.0.0"))
         );
     }
 
@@ -803,33 +863,87 @@ mod tests {
     fn rauc_reboot_success_accepts_version_change() {
         let expectation = RebootExpectation::Rauc {
             previous_version: "1.0.0".to_string(),
-            previous_booted_slot: Some("rootfs.0".to_string()),
+            previous_booted_slot: Some(booted("rootfs.0", "0.2.3-wifi")),
         };
 
-        let reason = expectation.success_reason(&system_info("1.1.0", 42), Some("rootfs.0"));
+        let reason = expectation.success_reason(
+            &system_info("1.1.0", 42),
+            Some(&booted("rootfs.0", "0.2.3-wifi")),
+            true,
+        );
         assert!(reason.is_some_and(|r| r.contains("version changed")));
     }
 
     #[test]
     fn rauc_reboot_success_accepts_slot_change_with_same_version() {
+        // Identical ctrl version AND bundle version, different slot: a same-version
+        // reinstall to the other slot still counts as a booted update.
         let expectation = RebootExpectation::Rauc {
             previous_version: "1.0.0".to_string(),
-            previous_booted_slot: Some("rootfs.0".to_string()),
+            previous_booted_slot: Some(booted("rootfs.0", "0.3.0")),
         };
 
-        let reason = expectation.success_reason(&system_info("1.0.0", 42), Some("rootfs.1"));
+        let reason = expectation.success_reason(
+            &system_info("1.0.0", 42),
+            Some(&booted("rootfs.1", "0.3.0")),
+            true,
+        );
         assert!(reason.is_some_and(|r| r.contains("booted slot changed")));
+    }
+
+    #[test]
+    fn rauc_reboot_success_accepts_bundle_version_change_despite_identical_ctrl_version() {
+        // The exact false-timeout this fixes: two local builds off the same commit
+        // share a `git describe` `system_info.version`, so ONLY the per-slot bundle
+        // version distinguishes old from new.
+        let expectation = RebootExpectation::Rauc {
+            previous_version: "v0.6.1-32-g980bd32-dirty".to_string(),
+            previous_booted_slot: Some(booted("rootfs.1", "0.2.3-wifi")),
+        };
+
+        let reason = expectation.success_reason(
+            &system_info("v0.6.1-32-g980bd32-dirty", 30),
+            Some(&booted("rootfs.0", "0.2.4-wifi")),
+            true,
+        );
+        assert!(reason.is_some_and(|r| {
+            r.contains("installed bundle version changed from 0.2.3-wifi to 0.2.4-wifi")
+        }));
+    }
+
+    #[test]
+    fn rauc_reboot_reverted_trial_is_not_success() {
+        // Trial booted the new slot, failed health, and auto-reverted: back on the
+        // OLD slot + bundle with an identical ctrl version. Must NOT be reported as
+        // success even though we saw the device go offline during the trial.
+        let expectation = RebootExpectation::Rauc {
+            previous_version: "v0.6.1-32-g980bd32-dirty".to_string(),
+            previous_booted_slot: Some(booted("rootfs.1", "0.2.3-wifi")),
+        };
+
+        assert_eq!(
+            expectation.success_reason(
+                &system_info("v0.6.1-32-g980bd32-dirty", 30),
+                Some(&booted("rootfs.1", "0.2.3-wifi")),
+                true,
+            ),
+            None
+        );
     }
 
     #[test]
     fn rauc_reboot_does_not_accept_recent_uptime_alone() {
         let expectation = RebootExpectation::Rauc {
             previous_version: "1.0.0".to_string(),
-            previous_booted_slot: Some("rootfs.0".to_string()),
+            previous_booted_slot: Some(booted("rootfs.0", "0.3.0")),
         };
 
         assert_eq!(
-            expectation.success_reason(&system_info("1.0.0", 42), Some("rootfs.0")),
+            expectation.success_reason(
+                &system_info("1.0.0", 42),
+                Some(&booted("rootfs.0", "0.3.0")),
+                true,
+            ),
             None
         );
     }
@@ -885,8 +999,22 @@ mod tests {
             previous_version: "1.0.0".to_string(),
         };
 
-        let reason = expectation.success_reason(&system_info("1.0.0", 42), None);
+        let reason = expectation.success_reason(&system_info("1.0.0", 42), None, true);
         assert!(reason.is_some_and(|r| r == "device rebooted"));
+    }
+
+    #[test]
+    fn raw_flash_reboot_requires_observed_offline_for_uptime_signal() {
+        // A device with a coincidentally-low uptime that we never saw drop must not
+        // be mistaken for a completed reflash.
+        let expectation = RebootExpectation::RawFlash {
+            previous_version: "1.0.0".to_string(),
+        };
+
+        assert_eq!(
+            expectation.success_reason(&system_info("1.0.0", 42), None, false),
+            None
+        );
     }
 
     #[test]

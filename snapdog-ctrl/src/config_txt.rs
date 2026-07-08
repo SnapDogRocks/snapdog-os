@@ -218,6 +218,7 @@ pub fn remove_dtoverlay(content: &str, overlay: &str) -> String {
 /// workaround lines — `force_eeprom_read=0` (which disables the firmware's
 /// boot-time EEPROM read) and the `i2c-gpio` overlay that repurposes the ID pins
 /// GPIO0/1. Everything else is preserved verbatim.
+#[cfg_attr(debug_assertions, allow(dead_code))]
 fn strip_eeprom_workaround(content: &str) -> String {
     let without_force: String = content
         .lines()
@@ -238,13 +239,14 @@ fn strip_eeprom_workaround(content: &str) -> String {
 
 /// Remove the HAT-EEPROM workaround lines from config.txt if present, so the
 /// firmware reads the HAT ID EEPROM on the next boot (enabling DAC auto-detection
-/// of boards like the HiFiBerry Amp100). Devices flashed before this fix cannot get
+/// of boards like the `HiFiBerry` Amp100). Devices flashed before this fix cannot get
 /// a corrected config.txt via OTA — the shared `/boot` FAT partition is not part of
 /// the A/B rootfs bundle — so we reconcile it in software on startup.
 ///
 /// Returns `Ok(true)` only when config.txt was changed AND the change was verified
 /// to have persisted; the caller reboots on `true`, so a silently-failed write must
 /// report `false` to avoid a reboot loop.
+#[cfg_attr(debug_assertions, allow(dead_code))]
 pub async fn reconcile_eeprom_settings() -> Result<bool> {
     let content = read().await?;
     let cleaned = strip_eeprom_workaround(&content);

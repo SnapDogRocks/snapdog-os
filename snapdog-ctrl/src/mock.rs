@@ -29,7 +29,7 @@ struct State {
     ssh: SshConfig,
     tuning: crate::tuning::TuningConfig,
     /// When a mock install was last triggered — drives the scripted install
-    /// lifecycle in update_status() so the dev UI exercises the real polling path.
+    /// lifecycle in `update_status()` so the dev UI exercises the real polling path.
     install_started: Option<std::time::Instant>,
 }
 
@@ -154,6 +154,8 @@ impl MockState {
         drop(s);
         match elapsed {
             Some(e) if e < INSTALL_SECS => {
+                // Clamped to [0, 99] so the truncating cast is exact and intended.
+                #[allow(clippy::cast_possible_truncation)]
                 let pct = ((e / INSTALL_SECS) * 100.0).min(99.0) as i32;
                 crate::routes::UpdateStatus {
                     operation: "installing".into(),

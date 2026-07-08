@@ -222,11 +222,11 @@ const WPA_PASSPHRASE_LEN: std::ops::RangeInclusive<usize> = 8..=63;
 ///
 /// An EMPTY passphrase means an open network → `key_mgmt=NONE` with no `psk`
 /// line. Emitting `psk=""` + `key_mgmt=WPA-PSK` (the old unconditional path) makes
-/// wpa_supplicant reject the ENTIRE file ("Invalid passphrase length 0"), which
+/// `wpa_supplicant` reject the ENTIRE file ("Invalid passphrase length 0"), which
 /// leaves the supplicant unable to start for ANY operation — including scanning —
 /// until the config is cleared by hand. A non-empty passphrase must be 8..=63
 /// characters; anything else is rejected here rather than persisted as a config
-/// that bricks WiFi.
+/// that bricks Wi-Fi.
 fn build_wpa_config(ssid: &str, password: &str, country: &str) -> Result<String> {
     let ssid = wpa_quoted_string("ssid", ssid)?;
     let country = sanitize_country(country);

@@ -45,7 +45,37 @@
     "subnet": "Subred",
     "gateway": "Puerta de enlace",
     "dns": "DNS",
-    "save": "Guardar"
+    "save": "Guardar",
+    "rescan": "Buscar de nuevo",
+    "otherNetwork": "Otra red / red oculta…",
+    "hiddenSsidHint": "Escriba el nombre exacto (distingue mayúsculas y minúsculas).",
+    "openNetwork": "Red abierta",
+    "secured": "Protegida",
+    "signalAria": "{ssid}, señal {dbm} dBm",
+    "bannerApMode": "Está en la red de configuración. Escriba abajo el nombre de su red Wi-Fi.",
+    "bannerScanError": "No se pudieron buscar redes Wi-Fi. Introduzca los datos de la red manualmente.",
+    "bannerNoneFound": "No se encontraron redes. Vuelva a buscar o introduzca su red manualmente.",
+    "submitting": "Guardando…",
+    "connecting": "Conectando… esto puede tardar hasta 30 segundos.",
+    "connectSuccess": "Conectado a {ssid} — {ip}",
+    "authFailed": "No se pudo conectar: compruebe su contraseña e inténtelo de nuevo.",
+    "connectTimeout": "Aún no conectado. Inténtelo de nuevo.",
+    "connectError": "No se pudo aplicar la configuración: {reason}",
+    "apRedirectTitle": "Configuración guardada",
+    "apRedirectBody": "Este dispositivo está cambiando a su red Wi-Fi, por lo que la red de configuración desaparecerá. Vuelva a conectar su teléfono u ordenador a su Wi-Fi habitual y luego abra http://snapdog.local para continuar.",
+    "softap": {
+      "title": "Punto de acceso de configuración",
+      "description": "Crea una red Wi-Fi temporal en cada arranque cuando no hay Wi-Fi configurado ni Ethernet conectado. Se detiene automáticamente cuando se establece una conexión.",
+      "enable": "Activar AP de configuración",
+      "networkName": "Nombre de red (SSID)",
+      "passphrase": "Contraseña de acceso",
+      "password": "Contraseña del AP",
+      "passwordHint": "Mínimo 8 caracteres (WPA2).",
+      "country": "País de Wi-Fi",
+      "countryHint": "Dominio regulatorio Wi-Fi: se aplica al AP de configuración y a las conexiones Wi-Fi.",
+      "saveError": "No se pudo guardar el punto de acceso de configuración.",
+      "saved": "Guardado"
+    }
   },
   "audio": {
     "title": "Audio",
@@ -53,7 +83,12 @@
     "dacOverlay": "Overlay DAC",
     "detectedCard": "Tarjeta detectada",
     "autoDetect": "Detección automática (HAT EEPROM)",
-    "soundcard": "Tarjeta de sonido"
+    "soundcard": "Tarjeta de sonido",
+    "detected": "Detectado",
+    "apply": "Aplicar",
+    "usingDetected": "Usando el DAC detectado",
+    "autoDetectResult": "La detección automática determinó",
+    "autoDetectNone": "La detección automática está activada — aún no se ha detectado ningún dispositivo de audio."
   },
   "client": {
     "title": "Cliente",
@@ -136,7 +171,12 @@
     "importRebootWarning": "El dispositivo se reiniciará después de importar.",
     "importConfirm": "Importar y reiniciar",
     "importing": "Importando...",
-    "files": "archivos"
+    "files": "archivos",
+    "copyLogs": "Copiar",
+    "copied": "Copiado",
+    "saved": "Guardado",
+    "timezoneSaveError": "No se pudo guardar la zona horaria.",
+    "hostname": "Nombre de host"
   },
   "update": {
     "title": "Actualización",
@@ -172,7 +212,7 @@
     "manualDesc": "Upload and flash a local system image directly without online checks.",
     "manualWarningTitle": "⚠️ CRITICAL SYSTEM WARNING: MANUAL FLASH",
     "manualWarningDesc1": "Manual flashing bypasses automatic online signature and compatibility checks. Flashing an incorrect, corrupted, or unsupported system image WILL permanently damage or brick your device.",
-    "manualWarningDesc2": "Make sure you have a valid update package (.tar.gz) specifically compiled for your hardware revision. Proceed ONLY if you are absolutely sure of the image's source and integrity.",
+    "manualWarningDesc2": "Asegúrese de tener un paquete de actualización RAUC (.raucb) válido y compilado para su revisión de hardware. RAUC sigue verificando la firma del paquete durante la instalación, pero no se realiza ninguna comprobación de versión o compatibilidad en línea. Continúe SOLO si está seguro del origen y la integridad de la imagen.",
     "manualConfirmCheckbox": "I accept the risks of permanent device damage/data loss.",
     "manualCancel": "Cancel",
     "manualProceed": "Proceed & Upload Image",
@@ -181,7 +221,13 @@
     "uploadError": "Upload failed. Please ensure the file is correct and not corrupted.",
     "confirmInstall": "Sí, instalar y reiniciar",
     "cancel": "Cancelar",
-    "updateTimeout": "Tiempo de actualización agotado"
+    "updateTimeout": "Tiempo de actualización agotado",
+    "phase_uploading": "Subiendo actualización...",
+    "rebootToActivate": "Reinicie para activar la nueva versión.",
+    "rebootNow": "Reiniciar ahora",
+    "later": "Más tarde",
+    "reconnectTimeout": "El dispositivo no volvió a conectarse a tiempo. Es posible que se haya revertido — recargue la página y compruebe la versión en ejecución.",
+    "serverUnreachable": "No se pudo comprobar si hay actualizaciones en este momento."
   },
   "server": {
     "title": "Servidor",
@@ -308,6 +354,15 @@
     "disableOnboardAudio": "Desactivar Audio Integrado",
     "disableOnboardAudioDesc": "Desactiva los controladores de audio analógico de 3.5 mm y HDMI para evitar conflictos.",
     "exclusiveCore": "Núcleo de Audio Exclusivo",
-    "exclusiveCoreDesc": "Aísla el núcleo 3 de la CPU y bloquea la frecuencia de reloj para una reproducción fluida (requiere reiniciar)."
+    "exclusiveCoreDesc": "Aísla el núcleo 3 de la CPU y fija la frecuencia para una reproducción sin cortes.",
+    "rebootNote": "Todos los cambios se aplican tras reiniciar.",
+    "pending": "pendiente",
+    "apply": "Aplicar cambios",
+    "discard": "Descartar",
+    "applyPrompt": "Estos cambios requieren reiniciar. ¿Reiniciar ahora o aplicar en el próximo reinicio?",
+    "rebootNow": "Reiniciar ahora",
+    "applyLater": "En el próximo reinicio",
+    "cancel": "Cancelar",
+    "awaitingReboot": "Guardado. Los cambios se aplicarán en el próximo reinicio."
   }
 }

@@ -45,7 +45,37 @@
     "subnet": "Subnetz",
     "gateway": "Gateway",
     "dns": "DNS",
-    "save": "Speichern"
+    "save": "Speichern",
+    "rescan": "Erneut suchen",
+    "otherNetwork": "Anderes / verstecktes Netzwerk…",
+    "hiddenSsidHint": "Geben Sie den genauen Namen ein (Groß-/Kleinschreibung beachten).",
+    "openNetwork": "Offenes Netzwerk",
+    "secured": "Gesichert",
+    "signalAria": "{ssid}, Signal {dbm} dBm",
+    "bannerApMode": "Sie sind im Einrichtungsnetzwerk. Geben Sie unten den Namen Ihres WLANs ein.",
+    "bannerScanError": "WLAN-Netzwerke konnten nicht gesucht werden. Geben Sie die Netzwerkdaten manuell ein.",
+    "bannerNoneFound": "Keine Netzwerke gefunden. Erneut suchen oder Netzwerk manuell eingeben.",
+    "submitting": "Wird gespeichert…",
+    "connecting": "Verbindung wird hergestellt… das kann bis zu 30 Sekunden dauern.",
+    "connectSuccess": "Verbunden mit {ssid} — {ip}",
+    "authFailed": "Verbindung fehlgeschlagen — prüfen Sie Ihr Passwort und versuchen Sie es erneut.",
+    "connectTimeout": "Immer noch nicht verbunden. Bitte versuchen Sie es erneut.",
+    "connectError": "Einstellungen konnten nicht übernommen werden: {reason}",
+    "apRedirectTitle": "Einstellungen gespeichert",
+    "apRedirectBody": "Dieses Gerät wechselt zu Ihrem WLAN, daher verschwindet das Einrichtungsnetzwerk. Verbinden Sie Ihr Telefon oder Ihren Computer wieder mit Ihrem normalen WLAN und öffnen Sie dann http://snapdog.local, um fortzufahren.",
+    "softap": {
+      "title": "Einrichtungs-Access-Point",
+      "description": "Erstellt bei jedem Start ein temporäres WLAN, wenn kein WLAN konfiguriert und kein Ethernet verbunden ist. Es wird automatisch beendet, sobald eine Verbindung besteht.",
+      "enable": "Einrichtungs-AP aktivieren",
+      "networkName": "Netzwerkname (SSID)",
+      "passphrase": "Passphrase",
+      "password": "AP-Passwort",
+      "passwordHint": "Mindestens 8 Zeichen (WPA2).",
+      "country": "WLAN-Land",
+      "countryHint": "WLAN-Regulierungsdomäne – gilt für den Setup-AP und für WLAN-Verbindungen.",
+      "saveError": "Einrichtungs-Access-Point konnte nicht gespeichert werden.",
+      "saved": "Gespeichert"
+    }
   },
   "audio": {
     "title": "Audio",
@@ -53,7 +83,12 @@
     "dacOverlay": "DAC Overlay",
     "detectedCard": "Erkannte Karte",
     "autoDetect": "Automatisch (HAT EEPROM)",
-    "soundcard": "Soundkarte"
+    "soundcard": "Soundkarte",
+    "detected": "Erkannt",
+    "apply": "Übernehmen",
+    "usingDetected": "Erkannter DAC wird verwendet",
+    "autoDetectResult": "Automatische Erkennung ergab",
+    "autoDetectNone": "Automatische Erkennung ist aktiv — noch kein Audiogerät erkannt."
   },
   "client": {
     "title": "Client",
@@ -136,7 +171,12 @@
     "importRebootWarning": "Gerät startet nach dem Import neu.",
     "importConfirm": "Importieren & Neustarten",
     "importing": "Importiere...",
-    "files": "Dateien"
+    "files": "Dateien",
+    "copyLogs": "Kopieren",
+    "copied": "Kopiert",
+    "saved": "Gespeichert",
+    "timezoneSaveError": "Zeitzone konnte nicht gespeichert werden.",
+    "hostname": "Hostname"
   },
   "update": {
     "title": "Firmware-Update",
@@ -172,7 +212,7 @@
     "manualDesc": "Laden Sie ein lokales System-Image direkt hoch und flashen Sie es ohne Online-Prüfungen.",
     "manualWarningTitle": "⚠️ KRITISCHE SYSTEMWARNUNG: MANUELLES FLASHEN",
     "manualWarningDesc1": "Das manuelle Flashen umgeht die automatische Online-Signatur und Kompatibilitätsprüfungen. Das Flashen eines fehlerhaften, beschädigten oder nicht unterstützten System-Images beschädigt Ihr Gerät dauerhaft (Brick).",
-    "manualWarningDesc2": "Stellen Sie sicher, dass Sie ein gültiges Update-Paket (.tar.gz) haben, das speziell für Ihre Hardware-Revision kompiliert wurde. Fahren Sie NUR fort, wenn Sie sich über die Quelle und Integrität des Images absolut sicher sind.",
+    "manualWarningDesc2": "Stellen Sie sicher, dass Sie ein gültiges RAUC-Update-Bundle (.raucb) haben, das für Ihre Hardware-Revision erstellt wurde. RAUC überprüft beim Installieren weiterhin die Signatur des Bundles, es findet jedoch keine Online-Prüfung von Version und Kompatibilität statt. Fahren Sie NUR fort, wenn Sie sich über Quelle und Integrität des Images sicher sind.",
     "manualConfirmCheckbox": "Ich akzeptiere das Risiko von dauerhaften Hardwareschäden und Datenverlust.",
     "manualCancel": "Abbrechen",
     "manualProceed": "Fortfahren & Image hochladen",
@@ -181,7 +221,13 @@
     "uploadError": "Upload failed. Bitte stellen Sie sicher, dass die Datei korrekt und nicht beschädigt ist.",
     "confirmInstall": "Ja, installieren & neu starten",
     "cancel": "Abbrechen",
-    "updateTimeout": "Zeitüberschreitung beim Update"
+    "updateTimeout": "Zeitüberschreitung beim Update",
+    "phase_uploading": "Update wird hochgeladen...",
+    "rebootToActivate": "Starten Sie neu, um die neue Version zu aktivieren.",
+    "rebootNow": "Jetzt neu starten",
+    "later": "Später",
+    "reconnectTimeout": "Das Gerät ist nicht rechtzeitig wieder online gegangen. Möglicherweise wurde es zurückgesetzt — laden Sie die Seite neu und prüfen Sie die laufende Version.",
+    "serverUnreachable": "Nach Updates konnte gerade nicht gesucht werden."
   },
   "server": {
     "title": "Server",
@@ -308,6 +354,15 @@
     "disableOnboardAudio": "Onboard-Audio deaktivieren",
     "disableOnboardAudioDesc": "Deaktiviert den analogen Klinkenanschluss und HDMI-Sound, um Konflikte zu vermeiden.",
     "exclusiveCore": "Exklusiver Audiokern",
-    "exclusiveCoreDesc": "Isoliert den CPU-Kern 3 und sperrt die Taktfrequenz für eine ruckelfreie Wiedergabe (erfordert Neustart)."
+    "exclusiveCoreDesc": "Isoliert CPU-Kern 3 und fixiert den Takt für unterbrechungsfreie Wiedergabe.",
+    "rebootNote": "Alle Änderungen werden erst nach einem Neustart wirksam.",
+    "pending": "ausstehend",
+    "apply": "Änderungen anwenden",
+    "discard": "Verwerfen",
+    "applyPrompt": "Diese Änderungen werden erst nach einem Neustart wirksam. Jetzt neu starten oder beim nächsten Neustart anwenden?",
+    "rebootNow": "Jetzt neu starten",
+    "applyLater": "Beim nächsten Neustart",
+    "cancel": "Abbrechen",
+    "awaitingReboot": "Gespeichert. Änderungen werden beim nächsten Neustart wirksam."
   }
 }

@@ -26,10 +26,14 @@ impl RpiTuningDriver {
     async fn write_cmdline(&self, content: &str) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
-            let _ = tokio::process::Command::new("mount")
-                .args(["-o", "remount,rw", "/boot"])
-                .output()
-                .await;
+            let status = tokio::process::Command::new("systemctl")
+                .args(["start", "snapdog-boot-remount-rw.service"])
+                .status()
+                .await
+                .context("failed to execute systemd remount-rw helper")?;
+            if !status.success() {
+                anyhow::bail!("systemd remount-rw helper failed with exit code: {status}");
+            }
         }
 
         let write_res = async {
@@ -43,10 +47,17 @@ impl RpiTuningDriver {
 
         #[cfg(target_os = "linux")]
         {
-            let _ = tokio::process::Command::new("mount")
-                .args(["-o", "remount,ro", "/boot"])
-                .output()
+            let status = tokio::process::Command::new("systemctl")
+                .args(["start", "snapdog-boot-remount-ro.service"])
+                .status()
                 .await;
+            if let Err(e) = status {
+                tracing::error!("failed to execute systemd remount-ro helper: {e}");
+            } else if let Ok(s) = status {
+                if !s.success() {
+                    tracing::error!("systemd remount-ro helper failed with exit code: {s}");
+                }
+            }
         }
 
         write_res
@@ -115,7 +126,11 @@ impl RpiTuningDriver {
         }
         self.write_cmdline(&cmdline_content).await?;
 
-        // 3. Update systemd CPUAffinity drop-in
+        // 3. Update the systemd CPUAffinity drop-in. SYSTEMD_OVERRIDE_DIR is a
+        // symlink to /data (writable) seeded by post-build.sh + snapdog-data-init:
+        // the rootfs is read-only, so writing under /etc directly would EROFS. Via
+        // /data it persists across reboot AND survives an OS update (which replaces
+        // the rootfs slot).
         if config.exclusive_audio_core {
             tokio::fs::create_dir_all(SYSTEMD_OVERRIDE_DIR).await?;
             let affinity_override = "[Service]\n\
@@ -128,6 +143,11 @@ impl RpiTuningDriver {
         } else if tokio::fs::metadata(SYSTEMD_OVERRIDE_PATH).await.is_ok() {
             tokio::fs::remove_file(SYSTEMD_OVERRIDE_PATH).await?;
         }
+        // Re-read unit drop-ins so the affinity takes effect on the next (re)start.
+        let _ = tokio::process::Command::new("systemctl")
+            .arg("daemon-reload")
+            .status()
+            .await;
 
         Ok(())
     }

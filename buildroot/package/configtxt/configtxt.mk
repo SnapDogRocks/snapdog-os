@@ -54,11 +54,16 @@ ifeq ($(BR2_PACKAGE_CONFIGTXT_QUIET),y)
 CONFIGTXT_POST_INSTALL_TARGET_HOOKS += CONFIGTXT_QUIET_INSTALL_TARGET_CMDS
 endif
 
+# EEPROM workaround (for boards WITHOUT a HAT EEPROM): disable the firmware's
+# boot-time EEPROM read and instead expose the ID pins (GPIO0/1) as a bit-banged
+# i2c bus for manual probing. Both only apply in workaround mode — with the
+# workaround off (the default), the firmware reads the HAT EEPROM natively and
+# populates /proc/device-tree/hat, so we must NOT clobber GPIO0/1 with i2c-gpio.
 ifeq ($(BR2_PACKAGE_CONFIGTXT_EEPROM),y)
 CONFIGTXT_POST_INSTALL_TARGET_HOOKS += CONFIGTXT_EEPROM_WORKAROUND
+CONFIGTXT_POST_INSTALL_TARGET_HOOKS += CONFIGTXT_ENABLE_EEPROM_I2C
 endif
 
-CONFIGTXT_POST_INSTALL_TARGET_HOOKS += CONFIGTXT_ENABLE_EEPROM_I2C
 CONFIGTXT_POST_INSTALL_TARGET_HOOKS += CONFIGTXT_DAC_OVERLAY
 
 $(eval $(generic-package))

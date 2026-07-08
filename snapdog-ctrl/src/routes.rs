@@ -342,7 +342,7 @@ mod mock_handlers {
             installable: true,
             current_version: env!("CARGO_PKG_VERSION").into(),
             latest_version: "9.9.9".into(),
-            channel: "stable".into(),
+            channel: "release".into(),
             is_downgrade: false,
             signature_verified: true,
             bundle_url: "https://update.snapdog.cc/os/bundles/pi4.raucb".into(),
@@ -361,14 +361,14 @@ mod mock_handlers {
         tracing::info!("[mock] OTA manual upload completed");
         StatusCode::OK
     }
-    pub async fn update_install(State(_m): State<crate::mock::MockState>) -> StatusCode {
-        tracing::info!("[mock] OTA manual install triggered (extracting & rebooting)");
+    pub async fn update_install(State(m): State<crate::mock::MockState>) -> StatusCode {
+        m.mock_install().await;
         StatusCode::ACCEPTED
     }
     pub async fn m_get_auto_update() -> Json<AutoUpdateConfig> {
         Json(AutoUpdateConfig {
             enabled: true,
-            channel: "stable".into(),
+            channel: "release".into(),
             interval: "daily".into(),
             time: "04:00".into(),
         })
@@ -377,13 +377,12 @@ mod mock_handlers {
         tracing::info!("[mock] set auto-update");
         StatusCode::OK
     }
-    pub async fn get_update_status() -> Json<UpdateStatus> {
-        Json(UpdateStatus {
-            operation: "idle".into(),
-            progress: None,
-            last_error: String::new(),
-            slots: vec![],
-        })
+    pub async fn get_update_status(State(m): State<crate::mock::MockState>) -> Json<UpdateStatus> {
+        // Scripted lifecycle so the dev UI exercises the real polling path: after a
+        // mock install is triggered, report "installing" with climbing progress for a
+        // few seconds, then "idle". Without this the frontend (which now polls until
+        // installing→idle) would never observe an install and hang until timeout.
+        Json(m.update_status().await)
     }
     pub async fn factory_reset(State(_m): State<crate::mock::MockState>) -> StatusCode {
         tracing::info!("[mock] factory reset");
@@ -604,7 +603,12 @@ pub fn api_mock(state: crate::mock::MockState) -> Router {
         .route("/system/update", post(h::update))
         .route("/system/update/check", get(h::get_update_check))
         .route("/system/update/status", get(h::get_update_status))
-        .route("/system/update/upload", post(h::update_upload))
+        .route(
+            "/system/update/upload",
+            // Match production: lift the 2 MB DefaultBodyLimit so large dev uploads
+            // behave like a device instead of 413-ing.
+            post(h::update_upload).layer(DefaultBodyLimit::disable()),
+        )
         .route("/system/update/install", post(h::update_install))
         .route(
             "/system/update/auto",
@@ -791,6 +795,10 @@ pub struct UpdateStatus {
     pub operation: String,
     pub progress: Option<crate::rauc::InstallProgress>,
     pub last_error: String,
+    /// True when the most recently installed bundle failed to boot and the
+    /// bootloader auto-reverted to the previous slot (a persisted failed-update
+    /// marker). Lets the UI surface a rollback that happened while it was offline.
+    pub rolled_back: bool,
     pub slots: Vec<crate::rauc::SlotStatus>,
 }
 
@@ -807,17 +815,19 @@ async fn get_update_status() -> Result<Json<UpdateStatus>, StatusCode> {
     } else {
         None
     };
-    let last_error = crate::rauc::Rauc::connect()
-        .await
-        .ok()
-        .and_then(|r| futures_util::FutureExt::now_or_never(r.last_error()))
-        .and_then(Result::ok)
-        .unwrap_or_default();
+    // Await the property read: `now_or_never` polled the pending D-Bus Get once and
+    // almost always got `""`, so a genuine async install failure was never surfaced.
+    let last_error = match crate::rauc::Rauc::connect().await {
+        Ok(r) => r.last_error().await.unwrap_or_default(),
+        Err(_) => String::new(),
+    };
+    let rolled_back = system::last_failed_update().await.is_some();
     let slots = system::rauc_slot_status().await.unwrap_or_default();
     Ok(Json(UpdateStatus {
         operation,
         progress,
         last_error,
+        rolled_back,
         slots,
     }))
 }
@@ -1066,6 +1076,9 @@ pub struct WifiInfo {
     pub dns: String,
     pub signal: i32,
     pub mode: String,
+    /// Connection lifecycle for UI feedback:
+    /// `disconnected` | `associating` | `auth_failed` | `acquiring_ip` | `connected`.
+    pub state: String,
 }
 
 #[derive(Deserialize)]
@@ -1098,6 +1111,11 @@ pub struct WifiNetwork {
 #[derive(Serialize)]
 pub struct WifiScanResult {
     pub networks: Vec<WifiNetwork>,
+    /// `ok` (scan ran) | `unavailable_ap_mode` (single radio busy as setup AP) |
+    /// `error` (scan failed). Lets the UI explain an empty list instead of showing
+    /// a blank void.
+    pub status: String,
+    pub ap_active: bool,
 }
 
 async fn get_network() -> Json<NetworkOverview> {
@@ -1121,6 +1139,14 @@ async fn get_wifi() -> Json<WifiInfo> {
 }
 
 async fn put_wifi(Json(body): Json<WifiConfig>) -> StatusCode {
+    // A non-empty passphrase must be a valid WPA length (8..=63). Reject early with
+    // 400 rather than persist a config wpa_supplicant can't parse — a psk="" config
+    // breaks the supplicant for ALL operations, scanning included. An empty
+    // passphrase is a valid open network (handled as key_mgmt=NONE downstream).
+    let pw_len = body.password.chars().count();
+    if pw_len != 0 && !(8..=63).contains(&pw_len) {
+        return StatusCode::BAD_REQUEST;
+    }
     let static_cfg =
         body.mode
             .as_deref()
@@ -1135,7 +1161,9 @@ async fn put_wifi(Json(body): Json<WifiConfig>) -> StatusCode {
         tracing::error!("put_wifi: {e}");
         return StatusCode::INTERNAL_SERVER_ERROR;
     }
-    StatusCode::OK
+    // 202: config accepted; association happens asynchronously and the setup AP
+    // is torn down on a short delay. The client polls GET /network/wifi (state).
+    StatusCode::ACCEPTED
 }
 
 async fn delete_wifi() -> StatusCode {
@@ -1150,19 +1178,37 @@ async fn post_wifi_scan() -> Json<WifiScanResult> {
     Json(system::wifi_scan().await)
 }
 
-async fn get_softap() -> Json<system::SoftApConfig> {
-    Json(system::get_softap_config().await)
+/// Returns a masked `SoftApView`: the passphrase is included only while the setup
+/// AP is actually running (so it can be shown for first-join) and withheld
+/// otherwise, plus the SSID + country for display.
+async fn get_softap() -> Json<system::SoftApView> {
+    Json(system::get_softap_view().await)
 }
 
-async fn put_softap(Json(body): Json<system::SoftApConfig>) -> StatusCode {
+async fn put_softap(Json(body): Json<system::SoftApConfig>) -> impl axum::response::IntoResponse {
     if body.password.len() < 8 || body.password.contains('\n') || body.password.contains('\r') {
-        return StatusCode::BAD_REQUEST;
+        return (
+            StatusCode::BAD_REQUEST,
+            "password must be at least 8 characters",
+        )
+            .into_response();
+    }
+    // Lockout guard: refuse to disable the setup AP unless the device currently
+    // has a working way in (wifi associated or ethernet with an IP), otherwise it
+    // becomes permanently unreachable.
+    if !body.enabled && !system::has_connectivity().await {
+        return (
+            StatusCode::CONFLICT,
+            "cannot disable the setup access point: the device has no other working \
+             connection (connect WiFi or plug in ethernet first)",
+        )
+            .into_response();
     }
     if let Err(e) = system::set_softap_config(body).await {
         tracing::error!("put_softap: {e}");
-        return StatusCode::INTERNAL_SERVER_ERROR;
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
-    StatusCode::OK
+    StatusCode::OK.into_response()
 }
 
 // --- Audio ---

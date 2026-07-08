@@ -1,5 +1,57 @@
 # Changelog
 
+## [0.7.2](https://github.com/SnapDogRocks/snapdog-os/compare/v0.7.1...v0.7.2) (2026-07-08)
+
+
+### Bug Fixes
+
+* **snapdog-ctrl:** address PR review comments, split template service into dedicated rw/ro services, and propagate errors ([7d01964](https://github.com/SnapDogRocks/snapdog-os/commit/7d0196478b97041f618cb7710404acb24492b876))
+* **snapdog-ctrl:** drop CAP_SYS_ADMIN by using systemd remount helper ([940a4ff](https://github.com/SnapDogRocks/snapdog-os/commit/940a4ffa7654b235bfecd95b5c011726e5690d6b), [fbb4071](https://github.com/SnapDogRocks/snapdog-os/commit/fbb407198c53a8e3d4286e3e04034625d7e3c2d1))
+
+## [0.7.1](https://github.com/SnapDogRocks/snapdog-os/compare/v0.7.0...v0.7.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* **os:** set RAUC max-bundle-download-size so URL OTA installs work ([b0c24c4](https://github.com/SnapDogRocks/snapdog-os/commit/b0c24c44898f021a75666fbc99f6e279b48810ff))
+* **os:** set RAUC max-bundle-download-size so URL OTA installs work ([ef3b5f0](https://github.com/SnapDogRocks/snapdog-os/commit/ef3b5f0811f4b95bb9749d0819229906f4c2ffa8))
+
+## [0.7.0](https://github.com/SnapDogRocks/snapdog-os/compare/v0.6.1...v0.7.0) (2026-07-08)
+
+
+### Features
+
+* **buildroot:** dynamically default update channel based on version type ([23a3269](https://github.com/SnapDogRocks/snapdog-os/commit/23a3269996cbe9e2620ee1facc025a3e5b409f8d))
+* device-setup, OTA-update & hardware-detection overhaul ([#58](https://github.com/SnapDogRocks/snapdog-os/issues/58)) ([223acd7](https://github.com/SnapDogRocks/snapdog-os/commit/223acd768440e1da6504d7fbc212d91087259e4f))
+* **rauc:** add RPi tryboot A/B rollback for OTA ([18592d7](https://github.com/SnapDogRocks/snapdog-os/commit/18592d7776cfeb01bae2b2a50e432cf761a33ad8))
+* **rauc:** tryboot A/B rollback and OTA upgrade hardening ([b4122bf](https://github.com/SnapDogRocks/snapdog-os/commit/b4122bff03624e24f5a5379b78a2c78b3e2c4a9e))
+* **webui:** gate hardware tuning behind an apply + reboot-choice requester ([5dd370f](https://github.com/SnapDogRocks/snapdog-os/commit/5dd370f4425aca2d21b9b0b9cac5975113a6793c))
+* **webui:** hardware tuning — apply + reboot-choice requester ([aa5a0f3](https://github.com/SnapDogRocks/snapdog-os/commit/aa5a0f39703b2a41010b23cc5f6d3fe6c37debaa))
+
+
+### Bug Fixes
+
+* **buildroot:** build RAUC with its D-Bus service (BR2_PACKAGE_RAUC_DBUS) ([dd22ee6](https://github.com/SnapDogRocks/snapdog-os/commit/dd22ee6f15bf36f702e6988884dc74d6b3a39bf4))
+* **buildroot:** enable runtime SSH and WiFi client on the read-only rootfs ([cdddd32](https://github.com/SnapDogRocks/snapdog-os/commit/cdddd3263098a37b57a7ca3c15d05733adc5c64e))
+* **buildroot:** fix first-boot /data resize race that left /data read-only ([b296f9e](https://github.com/SnapDogRocks/snapdog-os/commit/b296f9e263691fb8bdfefe733e90ae8753ae8583))
+* **buildroot:** make first-boot /data resize robust (never leaves it read-only) ([23b682d](https://github.com/SnapDogRocks/snapdog-os/commit/23b682d6b250cf466f590b913339e98ae8099183))
+* **buildroot:** make post-build.sh idempotent for incremental rebuilds ([589ad2b](https://github.com/SnapDogRocks/snapdog-os/commit/589ad2b4a8651dd964128398d30a987d6267845c))
+* **buildroot:** resolve various read-only rootfs and server startup quirks ([a61a678](https://github.com/SnapDogRocks/snapdog-os/commit/a61a6788dca48aab52d3ac8dec9478238b64618f))
+* **ctrl:** drive update progress from real RAUC status, surface errors ([78d1adb](https://github.com/SnapDogRocks/snapdog-os/commit/78d1adb9cec943d75bfa0c61d1b4c0b5472f1171))
+* **ctrl:** read timezone from the localtime symlink chain (not timedatectl) ([#61](https://github.com/SnapDogRocks/snapdog-os/issues/61)) ([b343034](https://github.com/SnapDogRocks/snapdog-os/commit/b3430342db61deda11b0c62b7c372ea309233edc))
+* **ctrl:** report real update signature status + in-app install confirm ([33e545b](https://github.com/SnapDogRocks/snapdog-os/commit/33e545b2668e24f4ea2f8b0a3fb0ec7c50c3885d))
+* **ctrl:** SSH toggle, WiFi boot, DAC-detect SSOT and soundcard dropdown ([8a621fc](https://github.com/SnapDogRocks/snapdog-os/commit/8a621fcd615100b7d08fe664b08c42ca7956f9d3))
+* **ctrl:** stop auto-update reinstall loop with version gate + failed-bundle tracking ([fbd6b87](https://github.com/SnapDogRocks/snapdog-os/commit/fbd6b87b508586dcea5a6b72d956f97b716a12f5))
+* **ota:** make snapdog-update OTA work end-to-end (four device-side bugs) ([64a52a5](https://github.com/SnapDogRocks/snapdog-os/commit/64a52a586e48ea5a9c35df880b16539b5f7885b1))
+* **rauc:** pin board-specific compatible in local builds ([d95ec57](https://github.com/SnapDogRocks/snapdog-os/commit/d95ec5732b4ba41c27383eefe3762c789ab78aa3))
+* **release:** enable auto-merge on release PRs (read .number, not .html_url) ([2e228e3](https://github.com/SnapDogRocks/snapdog-os/commit/2e228e34890cfdac636a4c57c0b97f2631f6e5dc))
+* **snapdog-update:** decode install progress as percentage ([4300ca6](https://github.com/SnapDogRocks/snapdog-os/commit/4300ca655177a05d404b0437c5f68f61983639ad))
+* **snapdog-update:** require 'installing' before treating idle as install-complete ([7632fd1](https://github.com/SnapDogRocks/snapdog-os/commit/7632fd1398a6e23001d09c89a35e0b25911484d1))
+* **snapdog-update:** surface the real cause + a connectivity hint on transport errors ([0d29542](https://github.com/SnapDogRocks/snapdog-os/commit/0d295420859cb1ef69094fcff6192f7fd3d18bcb))
+* **snapdog-update:** survive transient status polls and drive the reboot ([c3dbfff](https://github.com/SnapDogRocks/snapdog-os/commit/c3dbfffb7826643ed2e3af8bbf38fb1d1e2953d6))
+* SSH, WiFi, DAC auto-detect and soundcard picker on the read-only rootfs ([66c7ee8](https://github.com/SnapDogRocks/snapdog-os/commit/66c7ee83797e55dec4da47c2c6332d30e9faa47f))
+* **webui:** address PR review on hardware-tuning draft state ([2643b19](https://github.com/SnapDogRocks/snapdog-os/commit/2643b1961e4e8ca6a4be99960d4f109c50da9c4f))
+
 ## [0.6.1](https://github.com/SnapDogRocks/snapdog-os/compare/v0.6.0...v0.6.1) (2026-07-03)
 
 

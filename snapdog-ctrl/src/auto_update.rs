@@ -73,14 +73,10 @@ async fn run_cycle() -> anyhow::Result<()> {
         }
     };
 
-    // Construct bundle URL
+    // Construct bundle URL: snapdog-os-<board>-<channel>.raucb (channel is
+    // "release" or "beta", matching the CI/CDN naming).
     let board = crate::system::detect_board().await;
-    let suffix = if config.channel == "stable" {
-        ""
-    } else {
-        "-beta"
-    };
-    let url = format!("{UPDATE_BASE_URL}/{board}{suffix}.raucb");
+    let url = format!("{UPDATE_BASE_URL}/{board}-{}.raucb", config.channel);
 
     tracing::info!("auto-update: installing {version} from {url}");
     rauc_install(&url).await?;

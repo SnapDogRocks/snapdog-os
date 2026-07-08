@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.0](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-update-v0.2.0...snapdog-update-v0.3.0) (2026-07-08)
+
+
+### Features
+
+* **rauc:** tryboot A/B rollback and OTA upgrade hardening ([b4122bf](https://github.com/SnapDogRocks/snapdog-os/commit/b4122bff03624e24f5a5379b78a2c78b3e2c4a9e))
+
+
+### Bug Fixes
+
+* **snapdog-update:** decode install progress as percentage ([4300ca6](https://github.com/SnapDogRocks/snapdog-os/commit/4300ca655177a05d404b0437c5f68f61983639ad))
+* **snapdog-update:** require 'installing' before treating idle as install-complete ([7632fd1](https://github.com/SnapDogRocks/snapdog-os/commit/7632fd1398a6e23001d09c89a35e0b25911484d1))
+* **snapdog-update:** surface the real cause + a connectivity hint on transport errors ([0d29542](https://github.com/SnapDogRocks/snapdog-os/commit/0d295420859cb1ef69094fcff6192f7fd3d18bcb))
+* **snapdog-update:** survive transient status polls and drive the reboot ([c3dbfff](https://github.com/SnapDogRocks/snapdog-os/commit/c3dbfffb7826643ed2e3af8bbf38fb1d1e2953d6))
+* SSH, WiFi, DAC auto-detect and soundcard picker on the read-only rootfs ([66c7ee8](https://github.com/SnapDogRocks/snapdog-os/commit/66c7ee83797e55dec4da47c2c6332d30e9faa47f))
+
 ## [0.2.0](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-update-v0.1.0...snapdog-update-v0.2.0) (2026-06-07)
 
 

@@ -92,7 +92,7 @@ pub async fn get_system_info() -> SystemInfo {
         .unwrap_or_default();
     let channel = read_file("/etc/snapdog-os.channel")
         .await
-        .unwrap_or_else(|_| "stable".into());
+        .unwrap_or_else(|_| "release".into());
     let uptime = get_uptime().await;
 
     let kernel = tokio::process::Command::new("uname")
@@ -149,7 +149,7 @@ pub async fn set_system(hostname: Option<String>, channel: Option<String>) -> Re
     }
     if let Some(c) = channel {
         anyhow::ensure!(
-            matches!(c.as_str(), "stable" | "beta"),
+            matches!(c.as_str(), "release" | "beta"),
             "invalid update channel"
         );
         tokio::fs::write("/etc/snapdog-os.channel", format!("{c}\n"))
@@ -168,11 +168,34 @@ pub async fn reboot() {
     // committed slot.
     if tokio::fs::metadata("/boot/tryboot.txt").await.is_ok() {
         tracing::info!("Tryboot trial armed — rebooting into it via the one-shot tryboot flag");
+        // Record the version we are trialing so the next boot's reconcile can
+        // confirm it (or mark it bad on a rollback). This makes WebUI-triggered
+        // installs covered by rollback tracking + the known-bad reinstall guard,
+        // exactly like the auto-updater — recorded here (only when a trial is
+        // actually armed) so it covers both the online and manual-upload paths.
+        if let Some(v) = pending_trial_version().await {
+            record_pending_update(&v).await;
+        }
         // Reboots immediately via RESTART2 (ctrl carries CAP_SYS_BOOT). If it
         // returns (e.g. missing capability), we fall through to a normal reboot.
         let _ = run_cmd("/usr/lib/rauc/tryboot-reboot", &[]).await;
     }
     let _ = run_cmd("systemctl", &["reboot"]).await;
+}
+
+/// Bundle version of the inactive rootfs slot — the one a tryboot trial boots
+/// next. Used to record the pending-update marker at reboot time.
+async fn pending_trial_version() -> Option<String> {
+    let slots = crate::rauc::Rauc::connect()
+        .await
+        .ok()?
+        .slot_status()
+        .await
+        .ok()?;
+    slots
+        .into_iter()
+        .find(|s| !s.booted && s.class == "rootfs" && !s.version.is_empty())
+        .map(|s| s.version)
 }
 
 /// Install a RAUC bundle from a local path or URL.
@@ -283,21 +306,65 @@ pub async fn get_wifi() -> WifiInfo {
     let wpa = wpa_status(&iface).await;
     let signal = wifi_signal(&iface).await.unwrap_or_default();
     let connected = wpa.state == "COMPLETED" || status.connected;
+    let ip = if status.ip.is_empty() {
+        wpa.ip.clone()
+    } else {
+        status.ip.clone()
+    };
+    let state = derive_wifi_state(&iface, &wpa, &ip).await;
 
     WifiInfo {
         connected,
         ssid: wpa.ssid,
-        ip: if status.ip.is_empty() {
-            wpa.ip
-        } else {
-            status.ip
-        },
+        ip,
         subnet: status.subnet,
         gateway: status.gateway,
         dns: status.dns,
         signal,
         mode: read_network_mode(WIFI_NETWORK).await,
+        state,
     }
+}
+
+/// Pure mapping from `wpa_supplicant`'s `wpa_state` + IP presence + the network's
+/// TEMP-DISABLED flag into the UI-facing lifecycle. Extracted so the ordering is
+/// unit-testable — in particular that a TEMP-DISABLED (wrong-passphrase) network
+/// wins over the in-flight retry states.
+fn classify_wifi_state(wpa_state: &str, has_ip: bool, temp_disabled: bool) -> &'static str {
+    // A COMPLETED association is authoritative.
+    if wpa_state == "COMPLETED" {
+        return if has_ip { "connected" } else { "acquiring_ip" };
+    }
+    // A wrong passphrase durably TEMP-DISABLES the network, but wpa_supplicant then
+    // keeps RETRYING — cycling back through SCANNING/ASSOCIATING with backoff. So
+    // this must be checked BEFORE the retry states below, otherwise the failure
+    // reads as a perpetual "associating" and the UI hangs on "connecting…" until it
+    // times out instead of showing "wrong password".
+    if temp_disabled {
+        return "auth_failed";
+    }
+    match wpa_state {
+        "SCANNING" | "AUTHENTICATING" | "ASSOCIATING" | "ASSOCIATED" | "4WAY_HANDSHAKE"
+        | "GROUP_HANDSHAKE" => "associating",
+        _ => "disconnected",
+    }
+}
+
+/// Map `wpa_supplicant`'s `wpa_state` + IP into the UI-facing lifecycle. A
+/// TEMP-DISABLED network almost always means a wrong passphrase, which is the
+/// single most useful failure to surface.
+async fn derive_wifi_state(iface: &str, wpa: &WpaStatus, ip: &str) -> String {
+    // Only query the extra TEMP-DISABLED flag when not already connected.
+    let temp_disabled = wpa.state != "COMPLETED" && wpa_network_temp_disabled(iface).await;
+    classify_wifi_state(&wpa.state, !ip.is_empty(), temp_disabled).to_string()
+}
+
+/// True when a configured network is in the `[TEMP-DISABLED]` state — the
+/// supplicant's signal for repeated auth/handshake failure (wrong PSK).
+async fn wpa_network_temp_disabled(iface: &str) -> bool {
+    command_stdout("wpa_cli", &["-i", iface, "list_networks"])
+        .await
+        .is_ok_and(|o| o.contains("TEMP-DISABLED"))
 }
 
 pub async fn set_wifi(
@@ -305,7 +372,8 @@ pub async fn set_wifi(
     password: &str,
     static_cfg: Option<&crate::network::StaticConfig>,
 ) -> Result<()> {
-    crate::network::connect_wifi(ssid, password, static_cfg).await
+    let country = get_softap_config().await.country;
+    crate::network::connect_wifi(ssid, password, &country, static_cfg).await
 }
 
 pub async fn delete_wifi() -> Result<()> {
@@ -313,20 +381,51 @@ pub async fn delete_wifi() -> Result<()> {
 }
 
 pub async fn wifi_scan() -> WifiScanResult {
-    let networks = crate::network::scan_networks().await.unwrap_or_else(|e| {
-        tracing::warn!("WiFi scan failed: {e:#}");
-        Vec::new()
-    });
-    WifiScanResult {
-        networks: networks
-            .into_iter()
-            .map(|n| WifiNetwork {
-                ssid: n.ssid,
-                signal: n.signal,
-                security: n.security,
-            })
-            .collect(),
+    let ap_active = crate::network::is_ap_active().await;
+    match crate::network::scan_networks().await {
+        Ok(networks) => WifiScanResult {
+            networks: networks
+                .into_iter()
+                .map(|n| WifiNetwork {
+                    ssid: n.ssid,
+                    signal: n.signal,
+                    security: n.security,
+                })
+                .collect(),
+            status: "ok".into(),
+            ap_active,
+        },
+        Err(e) => {
+            tracing::warn!("WiFi scan failed: {e:#}");
+            WifiScanResult {
+                networks: Vec::new(),
+                status: if ap_active {
+                    "unavailable_ap_mode"
+                } else {
+                    "error"
+                }
+                .into(),
+                ap_active,
+            }
+        }
     }
+}
+
+/// True when the device has a working way in besides the setup AP: `WiFi`
+/// associated, or an ethernet interface with an IPv4 address. Used to guard
+/// against disabling the setup AP into a permanent lockout.
+pub async fn has_connectivity() -> bool {
+    let wifi = get_wifi().await;
+    if wifi.connected && !wifi.ip.is_empty() {
+        return true;
+    }
+    for iface in crate::network::detect_ethernet_interfaces().await {
+        let (ip, _) = ipv4_address(&iface).await.unwrap_or_default();
+        if !ip.is_empty() {
+            return true;
+        }
+    }
+    false
 }
 
 #[derive(Default)]
@@ -849,8 +948,10 @@ const FAILED_UPDATE_FILE: &str = "/data/snapdog-os.failed-update";
 /// Construct the bundle URL for a given channel.
 pub async fn bundle_url(channel: &str) -> String {
     let board = detect_board().await;
-    let suffix = if channel == "stable" { "" } else { "-beta" };
-    format!("{UPDATE_BASE_URL}/{board}{suffix}.raucb")
+    // Channel bundles are published as snapdog-os-<board>-<channel>.raucb — the
+    // channel is "release" or "beta", matching the CI/CDN naming (the stable
+    // channel is called "release" everywhere: manifest latest-release.json etc.).
+    format!("{UPDATE_BASE_URL}/{board}-{channel}.raucb")
 }
 
 pub async fn detect_board() -> String {
@@ -866,26 +967,29 @@ pub async fn detect_board() -> String {
 }
 
 pub async fn check_update() -> UpdateCheckResponse {
-    let current = read_file("/etc/snapdog-os.version")
-        .await
-        .unwrap_or_default()
-        .trim()
-        .to_string();
+    let current = current_os_version().await;
     let config = get_auto_update().await;
     let url = bundle_url(&config.channel).await;
-
-    // Check if bundle URL is reachable (HEAD request)
-    let available = tokio::process::Command::new("curl")
-        .args(["-sfI", "--max-time", "5", &url])
-        .output()
-        .await
-        .is_ok_and(|o| o.status.success());
 
     // RAUC verifies the bundle signature against the device keyring at install
     // time (`rauc install` refuses an unsigned or untrusted bundle), so when the
     // keyring is present the update is guaranteed to be cryptographically
     // verified before it is applied.
     let signature_verified = tokio::fs::metadata("/etc/rauc/ca.cert.pem").await.is_ok();
+
+    // Compare the running version to the channel MANIFEST version (the SSOT for
+    // what the channel points at) rather than treating mere URL reachability as
+    // "an update exists". `available` = a strictly newer version is published;
+    // `is_downgrade` = the channel points at an OLDER version than we run.
+    // When the manifest is unreachable, `latest_version` is left empty and the UI
+    // presents that as "cannot reach the update server" (NOT "up to date").
+    let remote = remote_channel_version(&config.channel).await;
+    let (available, is_downgrade, latest_version) = match remote {
+        Some(r) if version_is_newer(&r, &current) => (true, false, r),
+        Some(r) if version_is_newer(&current, &r) => (false, true, r),
+        Some(r) => (false, false, r), // same version — up to date
+        None => (false, false, String::new()), // manifest unknown/unreachable
+    };
 
     UpdateCheckResponse {
         available,
@@ -895,11 +999,9 @@ pub async fn check_update() -> UpdateCheckResponse {
         } else {
             current
         },
-        // The channel bundle URL is version-less, so the remote version is not
-        // known without downloading the bundle; left empty (UI hides the arrow).
-        latest_version: String::new(),
+        latest_version,
         channel: config.channel,
-        is_downgrade: false,
+        is_downgrade,
         signature_verified,
         bundle_url: url,
     }
@@ -1137,16 +1239,68 @@ pub async fn get_logs(service: Option<String>) -> LogsResponse {
 
 // --- Timezone ---
 
-pub async fn get_timezone() -> TimezoneInfo {
-    let current = tokio::process::Command::new("timedatectl")
+/// Extract the IANA zone name (e.g. `Europe/Berlin`) from a resolved localtime
+/// path such as `/usr/share/zoneinfo/Europe/Berlin` or
+/// `/usr/share/zoneinfo/posix/Europe/Berlin`.
+fn zone_from_path(path: &str) -> Option<String> {
+    let after = path.rsplit_once("zoneinfo/")?.1;
+    // `canonicalize` may resolve through the parallel posix/ or right/ hierarchies.
+    let after = after
+        .strip_prefix("posix/")
+        .or_else(|| after.strip_prefix("right/"))
+        .unwrap_or(after);
+    let zone = after.trim_matches('/');
+    (!zone.is_empty()).then(|| zone.to_string())
+}
+
+/// Read the configured zone name from the localtime symlink chain.
+///
+/// `timedatectl show` only follows a single symlink level, so with the read-only
+/// rootfs indirection `/etc/localtime -> /data/localtime -> zoneinfo/<tz>` it sees
+/// `/data/localtime` (not a zoneinfo path) and reports an empty zone — making a
+/// persisted timezone read back as UTC. Read the target ourselves: prefer the
+/// direct symlink (a clean `zoneinfo/<tz>`), falling back to the fully-resolved
+/// canonical path.
+async fn read_localtime_zone() -> Option<String> {
+    for path in ["/data/localtime", "/etc/localtime"] {
+        if let Ok(target) = tokio::fs::read_link(path).await {
+            if let Some(z) = zone_from_path(&target.to_string_lossy()) {
+                return Some(z);
+            }
+        }
+        if let Ok(real) = tokio::fs::canonicalize(path).await {
+            if let Some(z) = zone_from_path(&real.to_string_lossy()) {
+                return Some(z);
+            }
+        }
+    }
+    None
+}
+
+/// Read the zone via `timedatectl show`. Only reliable when `/etc/localtime` is a
+/// single symlink straight into `zoneinfo/` (or a copied file) — see
+/// [`read_localtime_zone`] for why it can't see our `/data` indirection — so it is
+/// used as a fallback for environments configured via `timedatectl set-timezone`.
+async fn timedatectl_zone() -> Option<String> {
+    let out = tokio::process::Command::new("timedatectl")
         .args(["show", "--property=Timezone", "--value"])
         .output()
         .await
-        .ok()
-        .map_or_else(
-            || "UTC".into(),
-            |o| String::from_utf8_lossy(&o.stdout).trim().to_string(),
-        );
+        .ok()?;
+    let zone = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!zone.is_empty()).then_some(zone)
+}
+
+pub async fn get_timezone() -> TimezoneInfo {
+    // Prefer the localtime symlink chain (see read_localtime_zone), then fall back
+    // to `timedatectl show` for environments where /etc/localtime is a plain copied
+    // file configured via `timedatectl set-timezone` (the set_timezone fallback),
+    // and finally to UTC so the dropdown lands on UTC rather than the first
+    // alphabetical zone (Africa/Abidjan), which reads as an unintended selection.
+    let current = match read_localtime_zone().await {
+        Some(zone) => zone,
+        None => timedatectl_zone().await.unwrap_or_else(|| "UTC".into()),
+    };
 
     let available = tokio::process::Command::new("timedatectl")
         .args(["list-timezones"])
@@ -1233,7 +1387,7 @@ pub async fn get_auto_update() -> AutoUpdateConfig {
         channel: au
             .and_then(|t| t.get("channel"))
             .and_then(|v| v.as_str())
-            .unwrap_or("stable")
+            .unwrap_or("release")
             .to_string(),
         interval: au
             .and_then(|t| t.get("interval"))
@@ -1273,22 +1427,91 @@ pub async fn set_auto_update(config: AutoUpdateConfig) -> Result<()> {
 pub struct SoftApConfig {
     pub enabled: bool,
     pub password: String,
+    #[serde(default = "default_country")]
+    pub country: String,
+}
+
+fn default_country() -> String {
+    crate::network::DEFAULT_COUNTRY.to_string()
+}
+
+/// Read-only view for GET — never leaks the passphrase onto the LAN. It's
+/// included only while the setup AP is active (the requester is on the AP and
+/// already knows it, and needs it shown on the setup page).
+#[derive(serde::Serialize)]
+pub struct SoftApView {
+    pub enabled: bool,
+    pub ssid: String,
+    pub country: String,
+    pub password: Option<String>,
+}
+
+/// A random 12-char passphrase over an unambiguous alphabet (no 0/o/1/l), so
+/// each device ships with a unique default instead of a shared hardcoded one.
+/// It is logged to the console at AP start for out-of-band first-join retrieval.
+fn gen_ap_password() -> String {
+    const ALPHABET: &[u8] = b"abcdefghijkmnpqrstuvwxyz23456789";
+    let mut buf = [0u8; 12];
+    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+        use std::io::Read as _;
+        let _ = f.read_exact(&mut buf);
+    }
+    buf.iter()
+        .map(|b| ALPHABET[(*b as usize) % ALPHABET.len()] as char)
+        .collect()
 }
 
 pub async fn get_softap_config() -> SoftApConfig {
     let content = read_file(CTRL_CONFIG).await.unwrap_or_default();
     let doc: toml_edit::DocumentMut = content.parse().unwrap_or_default();
     let ap = doc.get("softap");
+    let enabled = ap
+        .and_then(|t| t.get("enabled"))
+        .and_then(toml_edit::Item::as_bool)
+        .unwrap_or(true);
+    let country = ap
+        .and_then(|t| t.get("country"))
+        .and_then(|v| v.as_str())
+        .unwrap_or(crate::network::DEFAULT_COUNTRY)
+        .to_string();
+    let stored = ap
+        .and_then(|t| t.get("password"))
+        .and_then(|v| v.as_str())
+        .filter(|p| !p.is_empty());
+    let password = if let Some(p) = stored {
+        p.to_string()
+    } else {
+        // First access with no stored passphrase → generate + persist a unique one.
+        let pw = gen_ap_password();
+        let cfg = SoftApConfig {
+            enabled,
+            password: pw.clone(),
+            country: country.clone(),
+        };
+        if let Err(e) = set_softap_config(cfg).await {
+            tracing::warn!("failed to persist generated AP password: {e:#}");
+        }
+        pw
+    };
     SoftApConfig {
-        enabled: ap
-            .and_then(|t| t.get("enabled"))
-            .and_then(toml_edit::Item::as_bool)
-            .unwrap_or(true),
-        password: ap
-            .and_then(|t| t.get("password"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("snapdog123")
-            .to_string(),
+        enabled,
+        password,
+        country,
+    }
+}
+
+pub async fn get_softap_view() -> SoftApView {
+    let cfg = get_softap_config().await;
+    let password = if crate::network::is_ap_active().await {
+        Some(cfg.password)
+    } else {
+        None
+    };
+    SoftApView {
+        enabled: cfg.enabled,
+        ssid: crate::network::ap_ssid().await,
+        country: cfg.country,
+        password,
     }
 }
 
@@ -1301,6 +1524,7 @@ pub async fn set_softap_config(config: SoftApConfig) -> Result<()> {
         .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
     ap["enabled"] = toml_edit::value(config.enabled);
     ap["password"] = toml_edit::value(&config.password);
+    ap["country"] = toml_edit::value(&config.country);
 
     if let Some(parent) = std::path::Path::new(CTRL_CONFIG).parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -1588,6 +1812,57 @@ mod tests {
     use super::*;
 
     #[test]
+    fn wifi_state_completed_maps_by_ip() {
+        assert_eq!(classify_wifi_state("COMPLETED", true, false), "connected");
+        assert_eq!(
+            classify_wifi_state("COMPLETED", false, false),
+            "acquiring_ip"
+        );
+    }
+
+    #[test]
+    fn wifi_state_temp_disabled_beats_retry_states() {
+        // Regression: after WRONG_KEY the network is TEMP-DISABLED but wpa_supplicant
+        // cycles back through SCANNING/ASSOCIATING while retrying — it must surface as
+        // auth_failed, not a perpetual "associating".
+        assert_eq!(classify_wifi_state("SCANNING", false, true), "auth_failed");
+        assert_eq!(
+            classify_wifi_state("ASSOCIATING", false, true),
+            "auth_failed"
+        );
+        assert_eq!(
+            classify_wifi_state("DISCONNECTED", false, true),
+            "auth_failed"
+        );
+    }
+
+    #[test]
+    fn wifi_state_first_attempt_is_associating() {
+        // Before any failure the network is not temp-disabled → normal progress.
+        assert_eq!(
+            classify_wifi_state("ASSOCIATING", false, false),
+            "associating"
+        );
+        assert_eq!(
+            classify_wifi_state("4WAY_HANDSHAKE", false, false),
+            "associating"
+        );
+        assert_eq!(classify_wifi_state("SCANNING", false, false), "associating");
+    }
+
+    #[test]
+    fn wifi_state_idle_is_disconnected() {
+        assert_eq!(
+            classify_wifi_state("DISCONNECTED", false, false),
+            "disconnected"
+        );
+        assert_eq!(
+            classify_wifi_state("INACTIVE", false, false),
+            "disconnected"
+        );
+    }
+
+    #[test]
     fn hat_detection_covers_tricky_cases() {
         // HiFiBerry: bare model names, brand only in `vendor`.
         assert_eq!(
@@ -1767,5 +2042,25 @@ mod tests {
             parse_resolv_conf_dns("nameserver 9.9.9.9\nnameserver 149.112.112.112\n"),
             "9.9.9.9 149.112.112.112"
         );
+    }
+
+    #[test]
+    fn zone_from_path_extracts_iana_name() {
+        assert_eq!(
+            zone_from_path("/usr/share/zoneinfo/Europe/Berlin").as_deref(),
+            Some("Europe/Berlin")
+        );
+        // canonicalize() can resolve through the parallel posix/ hierarchy.
+        assert_eq!(
+            zone_from_path("/usr/share/zoneinfo/posix/Europe/Berlin").as_deref(),
+            Some("Europe/Berlin")
+        );
+        assert_eq!(
+            zone_from_path("../usr/share/zoneinfo/UTC").as_deref(),
+            Some("UTC")
+        );
+        // Not a zoneinfo path (the one-level /data/localtime target) → no zone.
+        assert_eq!(zone_from_path("/data/localtime"), None);
+        assert_eq!(zone_from_path("/usr/share/zoneinfo/"), None);
     }
 }

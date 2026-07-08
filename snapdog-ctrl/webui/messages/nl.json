@@ -45,7 +45,37 @@
     "subnet": "Subnet",
     "gateway": "Gateway",
     "dns": "DNS",
-    "save": "Opslaan"
+    "save": "Opslaan",
+    "rescan": "Opnieuw zoeken",
+    "otherNetwork": "Ander / verborgen netwerk…",
+    "hiddenSsidHint": "Typ de exacte naam (hoofdlettergevoelig).",
+    "openNetwork": "Open netwerk",
+    "secured": "Beveiligd",
+    "signalAria": "{ssid}, signaal {dbm} dBm",
+    "bannerApMode": "U bent verbonden met het installatienetwerk. Typ hieronder de naam van uw wifi-netwerk.",
+    "bannerScanError": "Kan niet naar wifi-netwerken zoeken. Voer de netwerkgegevens handmatig in.",
+    "bannerNoneFound": "Geen netwerken gevonden. Zoek opnieuw of voer uw netwerk handmatig in.",
+    "submitting": "Opslaan…",
+    "connecting": "Verbinden… dit kan tot 30 seconden duren.",
+    "connectSuccess": "Verbonden met {ssid} — {ip}",
+    "authFailed": "Verbinden mislukt — controleer uw wachtwoord en probeer het opnieuw.",
+    "connectTimeout": "Nog steeds niet verbonden. Probeer het opnieuw.",
+    "connectError": "Kan de instellingen niet toepassen: {reason}",
+    "apRedirectTitle": "Instellingen opgeslagen",
+    "apRedirectBody": "Dit apparaat schakelt over naar uw wifi-netwerk, dus het installatienetwerk verdwijnt. Verbind uw telefoon of computer opnieuw met uw normale wifi en open daarna http://snapdog.local om door te gaan.",
+    "softap": {
+      "title": "Installatie-toegangspunt",
+      "description": "Maakt bij elke start een tijdelijk wifi-netwerk aan wanneer er geen wifi is geconfigureerd en geen Ethernet is aangesloten. Het stopt automatisch zodra er een verbinding tot stand is gebracht.",
+      "enable": "Installatie-AP inschakelen",
+      "networkName": "Netwerknaam (SSID)",
+      "passphrase": "Wachtwoordzin",
+      "password": "AP-wachtwoord",
+      "passwordHint": "Minimaal 8 tekens (WPA2).",
+      "country": "Wifi-land",
+      "countryHint": "Wi-Fi-regelgevingsdomein — geldt voor het setup-AP en Wi-Fi-verbindingen.",
+      "saveError": "Kan het installatie-toegangspunt niet opslaan.",
+      "saved": "Opgeslagen"
+    }
   },
   "audio": {
     "title": "Audio",
@@ -53,7 +83,12 @@
     "dacOverlay": "DAC Overlay",
     "detectedCard": "Gedetecteerde kaart",
     "autoDetect": "Automatisch (HAT EEPROM)",
-    "soundcard": "Geluidskaart"
+    "soundcard": "Geluidskaart",
+    "detected": "Gedetecteerd",
+    "apply": "Toepassen",
+    "usingDetected": "Gedetecteerde DAC wordt gebruikt",
+    "autoDetectResult": "Automatische detectie vond",
+    "autoDetectNone": "Automatische detectie staat aan — nog geen audioapparaat gedetecteerd."
   },
   "client": {
     "title": "Client",
@@ -136,7 +171,12 @@
     "importRebootWarning": "Apparaat herstart na import.",
     "importConfirm": "Importeren & herstarten",
     "importing": "Importeren...",
-    "files": "bestanden"
+    "files": "bestanden",
+    "copyLogs": "Kopiëren",
+    "copied": "Gekopieerd",
+    "saved": "Opgeslagen",
+    "timezoneSaveError": "Kan de tijdzone niet opslaan.",
+    "hostname": "Hostnaam"
   },
   "update": {
     "title": "Firmware-update",
@@ -172,7 +212,7 @@
     "manualDesc": "Upload and flash a local system image directly without online checks.",
     "manualWarningTitle": "⚠️ CRITICAL SYSTEM WARNING: MANUAL FLASH",
     "manualWarningDesc1": "Manual flashing bypasses automatic online signature and compatibility checks. Flashing an incorrect, corrupted, or unsupported system image WILL permanently damage or brick your device.",
-    "manualWarningDesc2": "Make sure you have a valid update package (.tar.gz) specifically compiled for your hardware revision. Proceed ONLY if you are absolutely sure of the image's source and integrity.",
+    "manualWarningDesc2": "Zorg ervoor dat u een geldige RAUC-updatebundle (.raucb) hebt die voor uw hardwarerevisie is gebouwd. RAUC controleert bij de installatie nog steeds de handtekening van de bundle, maar er is geen online versie- of compatibiliteitscontrole. Ga ALLEEN verder als u zeker bent van de bron en integriteit van het image.",
     "manualConfirmCheckbox": "I accept the risks of permanent device damage/data loss.",
     "manualCancel": "Cancel",
     "manualProceed": "Proceed & Upload Image",
@@ -181,7 +221,13 @@
     "uploadError": "Upload failed. Please ensure the file is correct and not corrupted.",
     "confirmInstall": "Ja, installeren & herstarten",
     "cancel": "Annuleren",
-    "updateTimeout": "Update verlopen (time-out)"
+    "updateTimeout": "Update verlopen (time-out)",
+    "phase_uploading": "Update uploaden...",
+    "rebootToActivate": "Herstart om de nieuwe versie te activeren.",
+    "rebootNow": "Nu herstarten",
+    "later": "Later",
+    "reconnectTimeout": "Het apparaat is niet op tijd weer online gekomen. Mogelijk is het teruggedraaid — herlaad de pagina en controleer de actieve versie.",
+    "serverUnreachable": "Kon nu niet op updates controleren."
   },
   "server": {
     "title": "Server",
@@ -308,6 +354,15 @@
     "disableOnboardAudio": "Onboard Audio Uitschakelen",
     "disableOnboardAudioDesc": "Schakelt de standaard 3.5mm jack & HDMI-audio uit om conflicten te voorkomen.",
     "exclusiveCore": "Exclusieve Audiokern",
-    "exclusiveCoreDesc": "Isoleert CPU-kern 3 en vergrendelt de kloksnelheid voor stabiele audio (vereist herstart)."
+    "exclusiveCoreDesc": "Isoleert CPU-kern 3 en vergrendelt de kloksnelheid voor haperingsvrije weergave.",
+    "rebootNote": "Alle wijzigingen worden pas na een herstart actief.",
+    "pending": "in behandeling",
+    "apply": "Wijzigingen toepassen",
+    "discard": "Verwerpen",
+    "applyPrompt": "Deze wijzigingen vereisen een herstart. Nu herstarten of bij de volgende herstart toepassen?",
+    "rebootNow": "Nu herstarten",
+    "applyLater": "Bij volgende herstart",
+    "cancel": "Annuleren",
+    "awaitingReboot": "Opgeslagen. Wijzigingen worden bij de volgende herstart actief."
   }
 }

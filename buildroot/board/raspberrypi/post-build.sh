@@ -44,6 +44,12 @@ ln -sf /data/systemd/resolved.conf.d/snapdog.conf "$TARGET_DIR/etc/systemd/resol
 rm -f "$TARGET_DIR/etc/systemd/system/updater.timer.d/schedule.conf"
 ln -sf /data/systemd/system/updater.timer.d/schedule.conf "$TARGET_DIR/etc/systemd/system/updater.timer.d/schedule.conf"
 
+# The "Exclusive Audio Core" tuning writes a CPUAffinity drop-in here at runtime;
+# the rootfs is read-only, so back the whole drop-in dir with writable /data (also
+# survives OS updates that replace the rootfs slot). snapdog-data-init seeds the dir.
+rm -rf "$TARGET_DIR/etc/systemd/system/snapdog-client.service.d"
+ln -sf /data/systemd/system/snapdog-client.service.d "$TARGET_DIR/etc/systemd/system/snapdog-client.service.d"
+
 rm -f "$TARGET_DIR/etc/snapdog-os.channel"
 ln -sf /data/snapdog-os.channel "$TARGET_DIR/etc/snapdog-os.channel"
 

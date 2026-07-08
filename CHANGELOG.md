@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.1](https://github.com/SnapDogRocks/snapdog-os/compare/v0.7.0...v0.7.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* **os:** set RAUC max-bundle-download-size so URL OTA installs work ([b0c24c4](https://github.com/SnapDogRocks/snapdog-os/commit/b0c24c44898f021a75666fbc99f6e279b48810ff))
+* **os:** set RAUC max-bundle-download-size so URL OTA installs work ([ef3b5f0](https://github.com/SnapDogRocks/snapdog-os/commit/ef3b5f0811f4b95bb9749d0819229906f4c2ffa8))
+
 ## [0.7.0](https://github.com/SnapDogRocks/snapdog-os/compare/v0.6.1...v0.7.0) (2026-07-08)
 
 

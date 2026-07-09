@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.8.0...snapdog-ctrl-v0.8.1) (2026-07-09)
+
+
+### Bug Fixes
+
+* **ctrl:** use tryboot-aware reboot in the auto-update loop ([#75](https://github.com/SnapDogRocks/snapdog-os/issues/75)) ([e376ec0](https://github.com/SnapDogRocks/snapdog-os/commit/e376ec06aed9c6b6b089f0ec4c3a66d6f2ab4b9e))
+
 ## [0.8.0](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.7.1...snapdog-ctrl-v0.8.0) (2026-07-09)
 
 

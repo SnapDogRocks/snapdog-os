@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-update-v0.3.0...snapdog-update-v0.3.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* **snapdog-update:** detect reboot via booted-slot bundle version ([#67](https://github.com/SnapDogRocks/snapdog-os/issues/67)) ([8b6db71](https://github.com/SnapDogRocks/snapdog-os/commit/8b6db71f4620852a22f2853e332809a4360f9f8f))
+
 ## [0.3.0](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-update-v0.2.0...snapdog-update-v0.3.0) (2026-07-08)
 
 

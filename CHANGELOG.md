@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0](https://github.com/SnapDogRocks/snapdog-os/compare/v0.7.3...v0.8.0) (2026-07-09)
+
+
+### Features
+
+* **webui:** confirm Wi-Fi disconnect when it is the device's only link ([#73](https://github.com/SnapDogRocks/snapdog-os/issues/73)) ([d6d9380](https://github.com/SnapDogRocks/snapdog-os/commit/d6d9380b78546cb6c0e128d870e607fa0814107c))
+
+
+### Bug Fixes
+
+* **webui:** stale WiFi-disconnect state and client-config defaults flash ([#71](https://github.com/SnapDogRocks/snapdog-os/issues/71)) ([fe69844](https://github.com/SnapDogRocks/snapdog-os/commit/fe6984457f39da3ddcab5ccd4c6c9ca3a10d0a34))
+
 ## [0.7.3](https://github.com/SnapDogRocks/snapdog-os/compare/v0.7.2...v0.7.3) (2026-07-08)
 
 

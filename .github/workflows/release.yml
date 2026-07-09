@@ -23,7 +23,7 @@ env:
   R2_BUCKET: snapdog-updates
   BUILDROOT_VERSION: "2025.02"
   RUST_TOOLCHAIN: "stable"
-  NODE_VERSION: "22.13.0"
+  NODE_VERSION: "26.5.0"
 
 jobs:
   release-please:

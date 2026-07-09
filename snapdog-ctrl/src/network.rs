@@ -320,6 +320,18 @@ pub async fn disconnect_wifi() -> Result<()> {
         &["restart", &format!("wpa_supplicant@{iface}")],
     )
     .await?;
+    // Tear down networkd's addressing for the interface too. Restarting the
+    // supplicant drops the association, but the DHCP lease/address networkd
+    // assigned lingers on the interface — and `get_wifi()` treats a present IP
+    // (or an up operstate) as `connected`. Without this, the status endpoint
+    // keeps answering `connected: true` for as long as the stale address
+    // survives (indefinitely, since nothing else removes it), so the WebUI
+    // never sees the disconnect land. Mirror the AP teardown: remove the
+    // profile, then reload + reconfigure so networkd flushes the address it
+    // owned. Interface-scoped `reconfigure` leaves ethernet untouched.
+    let _ = tokio::fs::remove_file(WIFI_NETWORK).await;
+    run("networkctl", &["reload"]).await?;
+    run("networkctl", &["reconfigure", &iface]).await?;
     Ok(())
 }
 

@@ -77,7 +77,10 @@
       "saved": "Gespeichert"
     },
     "disconnecting": "Verbindung wird getrennt…",
-    "disconnectError": "Trennen fehlgeschlagen: {reason}"
+    "disconnectError": "Trennen fehlgeschlagen: {reason}",
+    "cancel": "Abbrechen",
+    "disconnectConfirmTitle": "WLAN trennen?",
+    "disconnectConfirmBody": "WLAN ist die einzige Verbindung dieses Geräts. Beim Trennen ist SnapDog nicht mehr erreichbar – auch diese Seite – und verbindet sich nicht von selbst wieder. Du müsstest es über das Einrichtungs-WLAN neu einrichten."
   },
   "audio": {
     "title": "Audio",

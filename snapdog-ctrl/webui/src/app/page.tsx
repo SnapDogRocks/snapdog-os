@@ -9,6 +9,7 @@ import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { AboutButton } from "@/components/AboutButton";
 import { MiniPlayer } from "@/components/MiniPlayer";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   api,
   type SystemInfo,
@@ -431,6 +432,7 @@ function NetworkTab() {
   const [connectResult, setConnectResult] = useState<{ ssid: string; ip: string } | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
   const [disconnectError, setDisconnectError] = useState("");
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [ethStatus, setEthStatus] = useState<import("@/lib/api").EthernetStatus | null>(null);
   const [ethMode, setEthMode] = useState<"dhcp" | "static">("dhcp");
@@ -638,6 +640,23 @@ function NetworkTab() {
     pollRef.current = setInterval(() => { void settle(); }, 2000);
   };
 
+  // Disconnecting WiFi when it is the device's only network path (no Ethernet),
+  // or when this very page is being served over the WiFi address, severs our own
+  // link to the device — and disconnect_wifi() also clears the saved credentials,
+  // so it will not come back on its own (the setup AP only returns after a
+  // reboot). Guard those cases behind a destructive confirmation; when Ethernet
+  // is also up, disconnect stays a single click.
+  const soleWifiLink = !!wifiStatus?.connected && !ethStatus?.connected;
+  const viewingViaWifi =
+    typeof window !== "undefined" &&
+    !!wifiStatus?.ip &&
+    window.location.hostname === wifiStatus.ip;
+  const disconnectSeversAccess = soleWifiLink || viewingViaWifi;
+  const requestDisconnect = () => {
+    if (disconnectSeversAccess) setConfirmDisconnect(true);
+    else void disconnect();
+  };
+
   return (
     <div className="space-y-5">
       <Card title={t("wifi")} id={wifiCardId}>
@@ -780,7 +799,7 @@ function NetworkTab() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => void disconnect()}
+              onClick={requestDisconnect}
               disabled={disconnecting}
               aria-busy={disconnecting}
             >
@@ -828,6 +847,15 @@ function NetworkTab() {
         </div>
       </Card>
       <SoftApCard />
+      <ConfirmDialog
+        open={confirmDisconnect}
+        title={t("disconnectConfirmTitle")}
+        description={t("disconnectConfirmBody")}
+        confirmLabel={t("disconnect")}
+        cancelLabel={t("cancel")}
+        onConfirm={() => { setConfirmDisconnect(false); void disconnect(); }}
+        onCancel={() => setConfirmDisconnect(false)}
+      />
     </div>
   );
 }

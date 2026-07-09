@@ -77,7 +77,10 @@
       "saved": "Opgeslagen"
     },
     "disconnecting": "Verbinding verbreken…",
-    "disconnectError": "Verbinding verbreken mislukt: {reason}"
+    "disconnectError": "Verbinding verbreken mislukt: {reason}",
+    "cancel": "Annuleren",
+    "disconnectConfirmTitle": "Wifi verbreken?",
+    "disconnectConfirmBody": "Wifi is de enige verbinding van dit apparaat. Door te verbreken wordt SnapDog onbereikbaar — ook deze pagina — en maakt het niet vanzelf opnieuw verbinding. Je moet het opnieuw instellen via de configuratie-wifi."
   },
   "audio": {
     "title": "Audio",

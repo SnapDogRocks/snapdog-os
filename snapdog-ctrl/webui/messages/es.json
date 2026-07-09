@@ -77,7 +77,10 @@
       "saved": "Guardado"
     },
     "disconnecting": "Desconectando…",
-    "disconnectError": "No se pudo desconectar: {reason}"
+    "disconnectError": "No se pudo desconectar: {reason}",
+    "cancel": "Cancelar",
+    "disconnectConfirmTitle": "¿Desconectar el Wi-Fi?",
+    "disconnectConfirmBody": "El Wi-Fi es la única conexión de este dispositivo. Al desconectarlo, SnapDog dejará de estar accesible —incluida esta página— y no se reconectará por sí solo. Tendrías que configurarlo de nuevo desde el Wi-Fi de configuración."
   },
   "audio": {
     "title": "Audio",

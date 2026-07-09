@@ -350,6 +350,11 @@ jobs:
     name: Publish
     runs-on: ubuntu-24.04
     needs: [release-please, build-image]
+    # Serialize R2 mutations with the retention cron (see retention.yml). Queue,
+    # don't cancel — a publish upload must never be interrupted mid-flight.
+    concurrency:
+      group: r2-maintenance
+      cancel-in-progress: false
     environment:
       name: ${{ needs.release-please.outputs.release_created == 'true' && 'stable' || 'beta' }}
     permissions:
@@ -447,6 +452,17 @@ jobs:
             --cache-control "public, max-age=60" \
             --content-type "application/json" \
             --endpoint-url "$AWS_ENDPOINT_URL"
+
+      - name: Prune superseded betas from R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/r2venv
+          /tmp/r2venv/bin/pip install --quiet boto3
+          /tmp/r2venv/bin/python tools/r2_maintenance.py --apply
 
       - name: Attach artifacts to GitHub Release
         if: needs.release-please.outputs.release_created == 'true'

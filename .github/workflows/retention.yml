@@ -1,0 +1,49 @@
+# R2 update-bucket retention (safety net)
+name: R2 Retention
+
+# The Publish job (release.yml) already prunes on every release, applying the
+# self-cleaning policy: releases kept forever; betas kept only while their
+# version is unreleased (base_semver > latest_release). This workflow is a
+# weekly backstop for interrupted publishes, plus an on-demand dry-run.
+on:
+  schedule:
+    - cron: "17 4 * * 1" # Mondays 04:17 UTC
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Actually delete (unchecked = dry-run)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Shared with the Publish job's job-level group so cron and publish never mutate
+# R2 concurrently.
+concurrency:
+  group: r2-maintenance
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    name: Prune R2
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Prune superseded betas from R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_BUCKET: snapdog-updates
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/r2venv
+          /tmp/r2venv/bin/pip install --quiet boto3
+          # Scheduled runs prune; manual runs are dry unless apply=true.
+          APPLY=""
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.apply }}" = "true" ]; then
+            APPLY="--apply"
+          fi
+          /tmp/r2venv/bin/python tools/r2_maintenance.py $APPLY

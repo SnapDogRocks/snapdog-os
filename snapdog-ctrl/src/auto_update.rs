@@ -5,7 +5,7 @@
 
 use crate::system::{
     UpdateDecision, current_os_version, decide_update, get_auto_update, last_failed_update,
-    rauc_install, rauc_operation, record_pending_update, remote_channel_version,
+    rauc_install, rauc_operation, reboot, record_pending_update, remote_channel_version,
 };
 
 const UPDATE_BASE_URL: &str = "https://updates.snapdog.cc/os/bundles";
@@ -99,10 +99,11 @@ async fn run_cycle() -> anyhow::Result<()> {
     record_pending_update(&version).await;
 
     tracing::info!("auto-update: install complete, rebooting");
-    let _ = tokio::process::Command::new("systemctl")
-        .arg("reboot")
-        .status()
-        .await;
+    // Tryboot-aware reboot (as the manual / DAC-detect paths use): enters the trial
+    // just armed by the install via RESTART2. A plain `systemctl reboot` would boot
+    // the committed slot instead, so the install would never run and reconcile would
+    // mark it failed on the next boot.
+    reboot().await;
 
     Ok(())
 }

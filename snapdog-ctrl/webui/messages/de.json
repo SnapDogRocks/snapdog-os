@@ -75,7 +75,9 @@
       "countryHint": "WLAN-Regulierungsdomäne – gilt für den Setup-AP und für WLAN-Verbindungen.",
       "saveError": "Einrichtungs-Access-Point konnte nicht gespeichert werden.",
       "saved": "Gespeichert"
-    }
+    },
+    "disconnecting": "Verbindung wird getrennt…",
+    "disconnectError": "Trennen fehlgeschlagen: {reason}"
   },
   "audio": {
     "title": "Audio",
@@ -126,7 +128,9 @@
     "connectionFailed": "Server nicht erreichbar. Überprüfe Adresse und Port.",
     "noServersFound": "Keine SnapDog-Server im lokalen Netzwerk erkannt.",
     "autoConnectOption": "Automatisch mit aktivem Server verbinden",
-    "autoConnectDesc": "Verbindet sich dynamisch per mDNS mit dem ersten gefundenen Server"
+    "autoConnectDesc": "Verbindet sich dynamisch per mDNS mit dem ersten gefundenen Server",
+    "loading": "Lade Client-Konfiguration",
+    "manualSettings": "Manuelle Einstellungen"
   },
   "ssh": {
     "title": "SSH",

@@ -75,7 +75,9 @@
       "countryHint": "Dominio regulatorio Wi-Fi: se aplica al AP de configuración y a las conexiones Wi-Fi.",
       "saveError": "No se pudo guardar el punto de acceso de configuración.",
       "saved": "Guardado"
-    }
+    },
+    "disconnecting": "Desconectando…",
+    "disconnectError": "No se pudo desconectar: {reason}"
   },
   "audio": {
     "title": "Audio",
@@ -126,7 +128,9 @@
     "connectionFailed": "Servidor no accesible. Verifique la dirección y el puerto.",
     "noServersFound": "No se detectaron servidores SnapDog en la red local.",
     "autoConnectOption": "Conectarse automáticamente a cualquier servidor activo",
-    "autoConnectDesc": "Se conecta dinámicamente al primer servidor encontrado mediante mDNS"
+    "autoConnectDesc": "Se conecta dinámicamente al primer servidor encontrado mediante mDNS",
+    "loading": "Cargando",
+    "manualSettings": "Ajustes manuales"
   },
   "ssh": {
     "title": "SSH",

@@ -75,7 +75,9 @@
       "countryHint": "Domaine réglementaire Wi-Fi — s'applique au point d'accès de configuration et aux connexions Wi-Fi.",
       "saveError": "Impossible d'enregistrer le point d'accès de configuration.",
       "saved": "Enregistré"
-    }
+    },
+    "disconnecting": "Déconnexion…",
+    "disconnectError": "Échec de la déconnexion : {reason}"
   },
   "audio": {
     "title": "Audio",
@@ -126,7 +128,9 @@
     "connectionFailed": "Serveur injoignable. Vérifiez l'adresse et le port.",
     "noServersFound": "Aucun serveur SnapDog détecté sur le réseau local.",
     "autoConnectOption": "Se connecter automatiquement à tout serveur actif",
-    "autoConnectDesc": "Se connecte dynamiquement au premier serveur trouvé via mDNS"
+    "autoConnectDesc": "Se connecte dynamiquement au premier serveur trouvé via mDNS",
+    "loading": "Chargement",
+    "manualSettings": "Paramètres manuels"
   },
   "ssh": {
     "title": "SSH",

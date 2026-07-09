@@ -75,7 +75,9 @@
       "countryHint": "Wi-Fi regulatory domain — applies to both the setup AP and Wi-Fi connections.",
       "saveError": "Couldn't save the setup access point.",
       "saved": "Saved"
-    }
+    },
+    "disconnecting": "Disconnecting…",
+    "disconnectError": "Couldn't disconnect: {reason}"
   },
   "audio": {
     "title": "Audio",
@@ -126,7 +128,9 @@
     "connectionFailed": "Server unreachable. Double check address & port.",
     "noServersFound": "No SnapDog servers detected on the local network.",
     "autoConnectOption": "Auto-connect to any active server",
-    "autoConnectDesc": "Connects dynamically to the first found server via mDNS"
+    "autoConnectDesc": "Connects dynamically to the first found server via mDNS",
+    "loading": "Loading client config",
+    "manualSettings": "Manual settings"
   },
   "ssh": {
     "title": "SSH",

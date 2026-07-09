@@ -75,7 +75,9 @@
       "countryHint": "Wi-Fi-regelgevingsdomein — geldt voor het setup-AP en Wi-Fi-verbindingen.",
       "saveError": "Kan het installatie-toegangspunt niet opslaan.",
       "saved": "Opgeslagen"
-    }
+    },
+    "disconnecting": "Verbinding verbreken…",
+    "disconnectError": "Verbinding verbreken mislukt: {reason}"
   },
   "audio": {
     "title": "Audio",
@@ -126,7 +128,9 @@
     "connectionFailed": "Server onbereikbaar. Controleer adres en poort.",
     "noServersFound": "Geen actieve SnapDog-servers gedetecteerd op het lokale netwerk.",
     "autoConnectOption": "Automatisch verbinden met een actieve server",
-    "autoConnectDesc": "Verbindt dynamisch met de eerst gevonden server via mDNS"
+    "autoConnectDesc": "Verbindt dynamisch met de eerst gevonden server via mDNS",
+    "loading": "Laden",
+    "manualSettings": "Handmatige instellingen"
   },
   "ssh": {
     "title": "SSH",

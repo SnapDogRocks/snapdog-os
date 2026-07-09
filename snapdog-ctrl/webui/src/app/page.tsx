@@ -429,6 +429,8 @@ function NetworkTab() {
   >("idle");
   const [connectError, setConnectError] = useState("");
   const [connectResult, setConnectResult] = useState<{ ssid: string; ip: string } | null>(null);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [disconnectError, setDisconnectError] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [ethStatus, setEthStatus] = useState<import("@/lib/api").EthernetStatus | null>(null);
   const [ethMode, setEthMode] = useState<"dhcp" | "static">("dhcp");
@@ -582,6 +584,60 @@ function NetworkTab() {
     pollRef.current = setInterval(() => { void poll(); }, 2000);
   };
 
+  // Disconnect → optimistically drop the "connected" UI at once, then reconcile
+  // with the backend, tolerating teardown lag. The device releases WiFi
+  // asynchronously (the DHCP lease/interface linger for a few seconds), so the
+  // status endpoint can still answer connected:true right after the DELETE — we
+  // must NOT let that stale reading resurrect the banner. We therefore only
+  // accept a reading that AGREES we're disconnected, and otherwise keep the
+  // optimistic view; on request failure we roll back to the real prior state.
+  const disconnect = async () => {
+    if (disconnecting) return;
+    const prev = wifiStatus;
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    resetConnect();
+    setConnectResult(null);
+    setDisconnectError("");
+    setDisconnecting(true);
+    // Optimistic: the banner, network details and Disconnect button all key off
+    // wifiStatus.connected, so flipping it here makes them leave immediately.
+    const optimistic: import("@/lib/api").WifiStatus | null = prev
+      ? { ...prev, connected: false, state: "disconnected", ssid: "", ip: "", signal: 0 }
+      : null;
+    wifiStatusRef.current = optimistic;
+    setWifiStatus(optimistic);
+    try {
+      await api.disconnectWifi();
+    } catch (e) {
+      wifiStatusRef.current = prev;
+      setWifiStatus(prev);
+      setDisconnectError(e instanceof Error ? e.message : String(e));
+      setDisconnecting(false);
+      return;
+    }
+    const startedAt = Date.now();
+    const settle = async () => {
+      try {
+        const w = await api.getWifi();
+        if (!w.connected) {
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+          wifiStatusRef.current = w;
+          setWifiStatus(w);
+          setDisconnecting(false);
+          return;
+        }
+      } catch {
+        // Transient radio bounce during teardown — keep the optimistic view.
+      }
+      if (Date.now() - startedAt >= 8000) {
+        // Give up reconciling; trust the accepted DELETE and keep disconnected.
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+        setDisconnecting(false);
+      }
+    };
+    pollRef.current = setInterval(() => { void settle(); }, 2000);
+  };
+
   return (
     <div className="space-y-5">
       <Card title={t("wifi")} id={wifiCardId}>
@@ -718,8 +774,16 @@ function NetworkTab() {
               {connectState === "submitting" ? t("submitting") : t("connect")}
             </Button>
           )}
+          {disconnecting && <Banner tone="info" busy>{t("disconnecting")}</Banner>}
+          {disconnectError && <Banner tone="warn">{t("disconnectError", { reason: disconnectError })}</Banner>}
           {wifiStatus?.connected && connectState !== "ap_redirect" && (
-            <Button variant="outline" size="sm" onClick={() => { api.disconnectWifi().catch(() => {}).finally(() => { api.getWifi().then(setWifiStatus).catch(() => {}); }); }}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void disconnect()}
+              disabled={disconnecting}
+              aria-busy={disconnecting}
+            >
               {t("disconnect")}
             </Button>
           )}
@@ -990,7 +1054,8 @@ function AudioTab() {
 
 function ClientTab() {
   const t = useTranslations("client");
-  const [config, setConfig] = useState<ClientConfig>({ server_url: "", host_id: "", soundcard: "default", mixer: "", latency: 0 });
+  const [config, setConfig] = useState<ClientConfig | null>(null);
+  const configRef = useRef<ClientConfig | null>(null); // bridges getClient → the async scan's mode refinement
   const [soundcards, setSoundcards] = useState<Soundcard[]>([]);
   const [manualCustomSoundcard, setManualCustomSoundcard] = useState(false);
   const [servers, setServers] = useState<{ name: string; host: string; port: number }[]>([]);
@@ -1006,8 +1071,8 @@ function ClientTab() {
   // Soundcard picker: a dropdown of detected cards, with a "Custom…" escape.
   // Custom mode auto-engages when a saved value isn't "default" or a listed card.
   const soundcardKnown =
-    config.soundcard === "default" || soundcards.some((sc) => sc.device === config.soundcard);
-  const soundcardCustom = manualCustomSoundcard || (!soundcardKnown && config.soundcard !== "");
+    config?.soundcard === "default" || soundcards.some((sc) => sc.device === config?.soundcard);
+  const soundcardCustom = manualCustomSoundcard || (!soundcardKnown && !!config && config.soundcard !== "");
 
   const hostIdFieldId = useId();
   const soundcardId = useId();
@@ -1022,49 +1087,30 @@ function ClientTab() {
   }, []);
 
   useEffect(() => {
-    Promise.all([api.getClient(), api.scanServers()])
-      .then(([c, r]) => {
-        setConfig(c);
-        setClientEnabled(c.server_url !== "__disabled__"); // reflect persisted enable state
-        if (c.available_soundcards) setSoundcards(c.available_soundcards);
-        setServers(r.servers);
-
-        // Smart mode detection
-        if (c.server_url && c.server_url !== "__disabled__") {
-          const match = c.server_url.match(/^tcp:\/\/(.+):(\d+)$/);
-          if (match) {
-            const host = match[1];
-            const port = match[2];
-            setManualHost(host);
-            setManualPort(port);
-            const isDiscovered = r.servers.some((s) => s.host === host && s.port === Number(port));
-            setConnectionMode(isDiscovered ? "auto" : "manual");
-          } else {
-            setConnectionMode("manual");
-          }
-        } else {
-          setConnectionMode("auto");
-        }
-      })
-      .catch(() => {
-        // Resilient fallback in case Promise.all fails
-        api.getClient().then((c) => {
-          setConfig(c);
-          setClientEnabled(c.server_url !== "__disabled__");
-          if (c.available_soundcards) setSoundcards(c.available_soundcards);
-          setConnectionMode(c.server_url ? "manual" : "auto");
-          const match = c.server_url.match(/^tcp:\/\/(.+):(\d+)$/);
-          if (match) {
-            setManualHost(match[1]);
-            setManualPort(match[2]);
-          }
-        }).catch(() => {});
-      })
-      .finally(() => setScanning(false));
-
-    api.getServerStatus().then((s) => {
-      setServerRunning(s.running);
+    // Fast path (~50ms): reveal the real config as soon as it arrives. The mDNS
+    // scan below always burns its full 3s timeout, so coupling the two (the old
+    // Promise.all) was exactly what made the pane paint defaults then flash to the
+    // real values seconds later. Keep them independent.
+    api.getClient().then((c) => {
+      configRef.current = c;
+      setConfig(c);
+      setClientEnabled(c.server_url !== "__disabled__"); // reflect persisted enable state
+      if (c.available_soundcards) setSoundcards(c.available_soundcards);
+      const match = c.server_url.match(/^tcp:\/\/(.+):(\d+)$/);
+      if (match) { setManualHost(match[1]); setManualPort(match[2]); }
+      // Provisional mode from the saved URL; the scan below upgrades manual→auto
+      // if the saved server turns out to be discoverable.
+      setConnectionMode(match ? "manual" : "auto");
     }).catch(() => {});
+
+    // Slow path (~3s): mDNS discovery. Runs in parallel; never blocks first paint.
+    api.scanServers().then((r) => {
+      setServers(r.servers);
+      const m = configRef.current?.server_url.match(/^tcp:\/\/(.+):(\d+)$/);
+      if (m && r.servers.some((s) => s.host === m[1] && s.port === Number(m[2]))) setConnectionMode("auto");
+    }).catch(() => {}).finally(() => setScanning(false));
+
+    api.getServerStatus().then((s) => setServerRunning(s.running)).catch(() => {});
   }, []);
 
   useWebSocket("client_changed", useCallback(() => {
@@ -1076,7 +1122,7 @@ function ClientTab() {
   }, []));
 
   const selectServer = (url: string) => {
-    setConfig((prev) => ({ ...prev, server_url: url }));
+    setConfig((prev) => (prev ? { ...prev, server_url: url } : prev));
   };
 
   const handleManualHostChange = (val: string) => {
@@ -1102,6 +1148,7 @@ function ClientTab() {
   };
 
   const saveConfig = useCallback(async () => {
+    if (!config) return;
     const url = connectionMode === "manual"
       ? (manualHost ? `tcp://${manualHost}:${manualPort}` : "")
       : config.server_url;
@@ -1128,9 +1175,11 @@ function ClientTab() {
     }
   }, [config, connectionMode, manualHost, manualPort, t]);
 
+  if (!config) return <Skeleton className="h-96 w-full" aria-label={t("loading")} />;
+
   return (
     <Card title={t("title")} id={cardId}>
-      <div className="space-y-4">
+      <div className="space-y-4 animate-in fade-in duration-300">
         {/* Enable/disable client */}
         <div className="flex items-center justify-between">
           <label htmlFor={enableId} className="text-sm font-medium">{t("enableClient")}</label>

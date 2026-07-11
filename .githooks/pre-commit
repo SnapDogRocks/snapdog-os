@@ -10,3 +10,9 @@ if git diff --cached --name-only | grep -q 'snapdog-ctrl/webui/'; then
   cd snapdog-ctrl/webui && npx eslint src/ --max-warnings=0 || exit 1
   cd ../..
 fi
+
+# WebUI: i18n completeness when message catalogs change
+if git diff --cached --name-only | grep -q 'snapdog-ctrl/webui/messages/'; then
+  cd snapdog-ctrl/webui && npm run i18n:check || exit 1
+  cd ../..
+fi

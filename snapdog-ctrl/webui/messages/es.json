@@ -229,7 +229,11 @@
     "rebootNow": "Reiniciar ahora",
     "later": "Más tarde",
     "reconnectTimeout": "El dispositivo no volvió a conectarse a tiempo. Es posible que se haya revertido — recargue la página y compruebe la versión en ejecución.",
-    "serverUnreachable": "No se pudo comprobar si hay actualizaciones en este momento."
+    "serverUnreachable": "No se pudo comprobar si hay actualizaciones en este momento.",
+    "saved": "Guardado",
+    "saveError": "No se pudo guardar",
+    "loadError": "No se pudieron cargar los ajustes actuales — se muestran los valores predeterminados.",
+    "timeHint": "Se ejecuta en la zona horaria del dispositivo."
   },
   "server": {
     "title": "Servidor",

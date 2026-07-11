@@ -229,7 +229,11 @@
     "rebootNow": "Redémarrer maintenant",
     "later": "Plus tard",
     "reconnectTimeout": "L'appareil n'est pas revenu en ligne à temps. La mise à jour a peut-être été annulée — rechargez la page et vérifiez la version en cours d'exécution.",
-    "serverUnreachable": "Impossible de vérifier les mises à jour pour le moment."
+    "serverUnreachable": "Impossible de vérifier les mises à jour pour le moment.",
+    "saved": "Enregistré",
+    "saveError": "Échec de l'enregistrement",
+    "loadError": "Impossible de charger les réglages actuels — valeurs par défaut affichées.",
+    "timeHint": "S'exécute dans le fuseau horaire de l'appareil."
   },
   "server": {
     "title": "Serveur",

@@ -40,6 +40,9 @@ jobs:
       - name: Install webui deps
         run: cd snapdog-ctrl/webui && npm install --prefer-offline
 
+      - name: WebUI i18n completeness
+        run: cd snapdog-ctrl/webui && npm run i18n:check
+
       - name: Lint webui
         run: cd snapdog-ctrl/webui && npm run lint
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.8.1...snapdog-ctrl-v0.9.0) (2026-07-11)
+
+
+### Features
+
+* **webui:** complete i18n + enforce full translation (build/commit/CI gates) ([#82](https://github.com/SnapDogRocks/snapdog-os/issues/82)) ([86283a8](https://github.com/SnapDogRocks/snapdog-os/commit/86283a870ec5e9609fefb2cdef2bca91fa0c8f02))
+
 ## [0.8.1](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.8.0...snapdog-ctrl-v0.8.1) (2026-07-09)
 
 

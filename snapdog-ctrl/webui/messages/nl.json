@@ -229,7 +229,11 @@
     "rebootNow": "Nu herstarten",
     "later": "Later",
     "reconnectTimeout": "Het apparaat is niet op tijd weer online gekomen. Mogelijk is het teruggedraaid — herlaad de pagina en controleer de actieve versie.",
-    "serverUnreachable": "Kon nu niet op updates controleren."
+    "serverUnreachable": "Kon nu niet op updates controleren.",
+    "saved": "Opgeslagen",
+    "saveError": "Opslaan mislukt",
+    "loadError": "Kan de huidige instellingen niet laden — standaardwaarden worden getoond.",
+    "timeHint": "Wordt uitgevoerd in de tijdzone van het apparaat."
   },
   "server": {
     "title": "Server",

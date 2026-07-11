@@ -229,7 +229,11 @@
     "rebootNow": "Reboot now",
     "later": "Later",
     "reconnectTimeout": "The device did not come back online in time. It may have rolled back — reload the page and check the running version.",
-    "serverUnreachable": "Couldn't check for updates right now."
+    "serverUnreachable": "Couldn't check for updates right now.",
+    "saved": "Saved",
+    "saveError": "Couldn't save",
+    "loadError": "Couldn't load the current settings — showing defaults.",
+    "timeHint": "Runs in the device's timezone."
   },
   "server": {
     "title": "Server",

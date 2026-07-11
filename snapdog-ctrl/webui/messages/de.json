@@ -229,7 +229,11 @@
     "rebootNow": "Jetzt neu starten",
     "later": "Später",
     "reconnectTimeout": "Das Gerät ist nicht rechtzeitig wieder online gegangen. Möglicherweise wurde es zurückgesetzt — laden Sie die Seite neu und prüfen Sie die laufende Version.",
-    "serverUnreachable": "Nach Updates konnte gerade nicht gesucht werden."
+    "serverUnreachable": "Nach Updates konnte gerade nicht gesucht werden.",
+    "saved": "Gespeichert",
+    "saveError": "Speichern fehlgeschlagen",
+    "loadError": "Aktuelle Einstellungen konnten nicht geladen werden — Standardwerte werden angezeigt.",
+    "timeHint": "Läuft in der Zeitzone des Geräts."
   },
   "server": {
     "title": "Server",

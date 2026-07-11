@@ -17,6 +17,8 @@ mod network;
 mod rauc;
 #[cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
 mod routes;
+#[cfg_attr(debug_assertions, allow(dead_code))]
+mod schedule;
 mod server_config;
 mod settings;
 #[cfg_attr(debug_assertions, allow(dead_code))]

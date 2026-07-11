@@ -41,9 +41,6 @@ ln -sf /data/hostapd/hostapd.conf "$TARGET_DIR/etc/hostapd/hostapd.conf"
 rm -f "$TARGET_DIR/etc/systemd/resolved.conf.d/snapdog.conf"
 ln -sf /data/systemd/resolved.conf.d/snapdog.conf "$TARGET_DIR/etc/systemd/resolved.conf.d/snapdog.conf"
 
-rm -f "$TARGET_DIR/etc/systemd/system/updater.timer.d/schedule.conf"
-ln -sf /data/systemd/system/updater.timer.d/schedule.conf "$TARGET_DIR/etc/systemd/system/updater.timer.d/schedule.conf"
-
 # The "Exclusive Audio Core" tuning writes a CPUAffinity drop-in here at runtime;
 # the rootfs is read-only, so back the whole drop-in dir with writable /data (also
 # survives OS updates that replace the rootfs slot). snapdog-data-init seeds the dir.

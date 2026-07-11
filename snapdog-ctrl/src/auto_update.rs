@@ -1,87 +1,145 @@
 //! Auto-update scheduler.
 //!
-//! Checks daily at the configured time whether a newer bundle is available,
-//! then installs it via RAUC and reboots.
+//! A lightweight 1-minute tick. Once the system clock is trustworthy, each tick asks:
+//! for the configured **local** time-of-day and interval, is an update due and not yet
+//! run this interval? If so, install a strictly-newer bundle via RAUC and tryboot-reboot.
+//!
+//! This replaces an earlier design that blocked on an exact UTC-minute match. The
+//! problems it fixes:
+//!   * the configured time is now **local** (honours `/etc/localtime` → `/data/localtime`),
+//!     not UTC — a user who sets 04:00 gets 04:00 device-local, with correct DST;
+//!   * a persisted last-run date gives **catch-up** (a device powered off at the target
+//!     time still updates on its next boot) and dedup across process restarts;
+//!   * a `>=` window instead of exact-minute equality survives NTP clock steps and
+//!     runtime stalls that used to skip the single target minute (→ a 24 h miss);
+//!   * config changes (enable / time / channel / interval) are picked up within a minute
+//!     instead of after a full day/week/month sleep;
+//!   * transient failures (RAUC busy or unreadable, manifest unreachable) retry on the
+//!     next tick instead of costing a whole interval.
 
+use crate::schedule::{interval_elapsed, parse_time};
 use crate::system::{
-    UpdateDecision, current_os_version, decide_update, get_auto_update, last_failed_update,
-    rauc_install, rauc_operation, reboot, record_pending_update, remote_channel_version,
+    UpdateDecision, current_os_version, decide_update, get_auto_update, last_auto_update_date,
+    last_failed_update, rauc_install, rauc_operation, reboot, record_auto_update_date,
+    record_pending_update, remote_channel_version,
 };
+use chrono::{Local, Timelike};
 
 const UPDATE_BASE_URL: &str = "https://updates.snapdog.cc/os/bundles";
-const SECS_PER_DAY: u64 = 24 * 3600;
-const SECS_PER_WEEK: u64 = 7 * SECS_PER_DAY;
-const SECS_PER_MONTH: u64 = 30 * SECS_PER_DAY;
+const TICK: std::time::Duration = std::time::Duration::from_secs(60);
+/// Epoch of 2025-01-01Z. A Raspberry Pi has no RTC; before the first NTP sync the
+/// clock sits at (or near) the epoch, so anything earlier than this is "not synced".
+const SANE_EPOCH: i64 = 1_735_689_600;
 
 /// Spawn the auto-update background loop.
 pub fn spawn() {
     tokio::spawn(async {
+        wait_for_trustworthy_clock().await;
         loop {
-            if let Err(e) = run_cycle().await {
-                tracing::warn!("auto-update cycle error: {e}");
+            if let Err(e) = tick().await {
+                tracing::warn!("auto-update: cycle error: {e}");
             }
-            // Sleep based on interval before next check
-            let config = get_auto_update().await;
-            let sleep_secs = match config.interval.as_str() {
-                "weekly" => SECS_PER_WEEK,
-                "monthly" => SECS_PER_MONTH,
-                _ => SECS_PER_DAY,
-            };
-            tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
+            tokio::time::sleep(TICK).await;
         }
     });
 }
 
-async fn run_cycle() -> anyhow::Result<()> {
+/// Block until the wall clock looks NTP-synced, so we never compare the configured
+/// time against a pre-sync epoch value. Bounded so we never hang forever; the unit is
+/// also ordered `After=time-sync.target`, so this is normally already satisfied.
+async fn wait_for_trustworthy_clock() {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+    loop {
+        if Local::now().timestamp() >= SANE_EPOCH {
+            return;
+        }
+        if std::time::Instant::now() > deadline {
+            tracing::warn!("auto-update: clock still unsynced after 5 min; proceeding anyway");
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+    }
+}
+
+async fn tick() -> anyhow::Result<()> {
     let config = get_auto_update().await;
     if !config.enabled {
         return Ok(());
     }
 
-    // Wait until configured time
-    wait_until(&config.time).await;
+    let now = Local::now();
+    let today = now.date_naive();
+    let (target_h, target_m) = parse_time(&config.time);
 
-    // Re-read config (user might have disabled in the meantime)
-    let config = get_auto_update().await;
-    if !config.enabled {
+    // Time-of-day gate: only once we've reached the configured LOCAL time today.
+    if (now.hour(), now.minute()) < (target_h, target_m) {
         return Ok(());
     }
 
-    // Don't install if already installing
-    if rauc_operation().await.unwrap_or_default() != "idle" {
-        tracing::info!("auto-update: RAUC busy, skipping");
+    // Interval + dedup gate: a full interval must have elapsed since the last run.
+    // The persisted date makes this survive restarts and gives catch-up when the
+    // device was off at the target minute.
+    if !interval_elapsed(&config.interval, last_auto_update_date().await, today) {
         return Ok(());
     }
 
-    // Decide whether to install. Only apply a strictly newer bundle, and never
-    // retry a version that already failed to boot. Without this gate an unbootable
-    // bundle would install → roll back → reinstall on every cycle, rewriting the
-    // eMMC/SD indefinitely; and even a healthy channel would be needlessly
-    // reflashed every day because the pointer already matches the running version.
+    // RAUC must be idle. Distinguish "genuinely busy" from "status unreadable": on an
+    // error we retry next tick rather than conflating it with busy forever.
+    match rauc_operation().await {
+        Ok(op) if op != "idle" => {
+            tracing::info!("auto-update: RAUC busy ({op}), retrying next tick");
+            return Ok(());
+        }
+        Err(e) => {
+            tracing::warn!("auto-update: RAUC status unreadable ({e}), retrying next tick");
+            return Ok(());
+        }
+        Ok(_) => {}
+    }
+
+    // Fetch the channel's target version. If the manifest is unreachable we do NOT
+    // record a run — the next tick retries, so a transient outage at the target time
+    // no longer costs a whole interval.
     let current = current_os_version().await;
-    let remote = remote_channel_version(&config.channel).await;
+    let Some(remote) = remote_channel_version(&config.channel).await else {
+        tracing::info!("auto-update: update manifest unreachable, retrying next tick");
+        return Ok(());
+    };
+
+    // Reaching the server and making a decision counts as today's run, so we don't
+    // re-check every minute for the rest of the interval. A subsequent install failure
+    // then also waits for the next interval rather than retrying immediately — deliberate,
+    // so a persistently bad bundle can't hammer the eMMC/SD with a re-download+install
+    // every minute. (An unreachable manifest, above, is NOT recorded, so a transient
+    // network outage at the target time still retries on the next tick.)
+    record_auto_update_date(today).await;
+
     let last_failed = last_failed_update().await;
-    let version = match decide_update(remote.as_deref(), &current, last_failed.as_deref()) {
-        UpdateDecision::Install(version) => version,
+    let version = match decide_update(Some(remote.as_str()), &current, last_failed.as_deref()) {
+        UpdateDecision::Install(v) => v,
         UpdateDecision::Skip(reason) => {
             tracing::info!(
-                "auto-update: skipping (running {current}, {} channel offers {}): {reason}",
-                config.channel,
-                remote.as_deref().unwrap_or("unknown")
+                "auto-update: skipping (running {current}, {} channel offers {remote}): {reason}",
+                config.channel
             );
             return Ok(());
         }
     };
 
-    // Construct bundle URL: snapdog-os-<board>-<channel>.raucb (channel is
-    // "release" or "beta", matching the CI/CDN naming).
-    let board = crate::system::detect_board().await;
-    let url = format!("{UPDATE_BASE_URL}/{board}-{}.raucb", config.channel);
+    install_and_reboot(&version, &config.channel).await
+}
 
+/// Download, install via RAUC, and tryboot-reboot into `version`. A plain
+/// `systemctl reboot` would boot the committed slot instead of the trial slot the
+/// install just armed (RESTART2), so reconcile would then mark the bundle failed.
+async fn install_and_reboot(version: &str, channel: &str) -> anyhow::Result<()> {
+    // Bundle URL: <board>-<channel>.raucb (channel is "release" or "beta").
+    let board = crate::system::detect_board().await;
+    let url = format!("{UPDATE_BASE_URL}/{board}-{channel}.raucb");
     tracing::info!("auto-update: installing {version} from {url}");
     rauc_install(&url).await?;
 
-    // Wait for RAUC to finish (max 30 minutes), then reboot
+    // Wait for RAUC to finish (max 30 minutes), then reboot.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1800);
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -94,49 +152,10 @@ async fn run_cycle() -> anyhow::Result<()> {
         }
     }
 
-    // Record the version we are about to boot into so the next boot can confirm it
-    // took — or mark it bad if the bootloader rolls back to the previous slot.
-    record_pending_update(&version).await;
-
+    // Record the version we are about to boot into so the next boot can confirm it took —
+    // or mark it bad if the bootloader rolls back to the previous slot.
+    record_pending_update(version).await;
     tracing::info!("auto-update: install complete, rebooting");
-    // Tryboot-aware reboot (as the manual / DAC-detect paths use): enters the trial
-    // just armed by the install via RESTART2. A plain `systemctl reboot` would boot
-    // the committed slot instead, so the install would never run and reconcile would
-    // mark it failed on the next boot.
     reboot().await;
-
     Ok(())
-}
-
-async fn wait_until(time: &str) {
-    let (target_h, target_m) = parse_time(time);
-
-    loop {
-        let now = chrono_now();
-        let (h, m) = (now / 60 % 24, now % 60);
-
-        if h == target_h && m == target_m {
-            break;
-        }
-
-        // Sleep 30s and check again
-        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-    }
-}
-
-fn parse_time(s: &str) -> (u64, u64) {
-    let parts: Vec<&str> = s.split(':').collect();
-    let h = parts.first().and_then(|v| v.parse().ok()).unwrap_or(4);
-    let m = parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(0);
-    (h, m)
-}
-
-/// Minutes since midnight (UTC) from system clock.
-fn chrono_now() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    (secs / 60) % (24 * 60)
 }

@@ -2173,53 +2173,99 @@ function RawFlashSection() {
 function AutoUpdateSettings() {
   const t = useTranslations("update");
   const [config, setConfig] = useState({ enabled: true, channel: "release", interval: "daily", time: "04:00" });
+  const [status, setStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState(false);
   const channelId = useId();
   const intervalId = useId();
   const timeId = useId();
 
   useEffect(() => {
-    api.getAutoUpdate().then(setConfig).catch(() => {});
+    api.getAutoUpdate()
+      .then((c) => { setConfig(c); setLoadError(false); })
+      .catch(() => setLoadError(true)); // don't present the hard-coded defaults as real settings
   }, []);
 
-  const save = (updated: typeof config) => {
+  // Persist the config and surface the result, mirroring TimezoneCard: await the write,
+  // confirm on success, and revert to the last-persisted values on failure so the UI
+  // never shows an unsaved value as if it took. `extra` lets saveChannel fold its
+  // OS-channel mirror write into the SAME await/revert path.
+  const save = async (updated: typeof config, extra?: () => Promise<unknown>) => {
+    const previous = config;
     setConfig(updated);
-    api.setAutoUpdate(updated);
+    setError("");
+    setStatus("saving");
+    try {
+      await Promise.all([api.setAutoUpdate(updated), ...(extra ? [extra()] : [])]);
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+    } catch (e) {
+      setStatus("idle");
+      setError(e instanceof Error ? e.message : String(e));
+      // A partial channel double-write can leave ctrl.toml changed even though this
+      // failed, so an optimistic revert would misreport. Re-sync to the authoritative
+      // persisted state instead (fall back to the pre-edit value if that also fails).
+      api.getAutoUpdate().then(setConfig).catch(() => setConfig(previous));
+    }
   };
   // The channel is the single source of truth the backend uses for BOTH manual
-  // check/install and auto-update, so it is always visible (not gated on the
-  // auto-update toggle). Also mirror it to the OS channel file so the settings
-  // export / system view stay consistent.
-  const saveChannel = (channel: string) => {
-    save({ ...config, channel });
-    api.setSystem({ channel }).catch(() => {});
-  };
+  // check/install and auto-update, so it is always visible (not gated on the toggle).
+  // Mirror it to the OS channel file in the same await so the two stores can't diverge
+  // silently when one write fails.
+  const saveChannel = (channel: string) =>
+    void save({ ...config, channel }, () => api.setSystem({ channel }));
+
+  const saving = status === "saving";
+  // A failed load must not let a stray toggle overwrite the real (never-loaded) config
+  // with the hard-coded defaults, so lock the settings until a successful load.
+  const locked = saving || loadError;
 
   return (
     <div className="space-y-3 border-t border-border pt-3">
+      {loadError && (
+        <div className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive" role="status">
+          {t("loadError")}
+        </div>
+      )}
       <Field label={t("channel")} htmlFor={channelId}>
-        <Select id={channelId} value={config.channel} onChange={(e) => saveChannel(e.target.value)}>
+        <Select id={channelId} value={config.channel} disabled={locked} onChange={(e) => saveChannel(e.target.value)}>
           <option value="release">{t("stable")}</option>
           <option value="beta">{t("beta")}</option>
         </Select>
       </Field>
       <div className="flex items-center justify-between">
         <span className="text-sm text-muted-foreground">{t("autoUpdate")}</span>
-        <Switch checked={config.enabled} onCheckedChange={(enabled) => save({ ...config, enabled })} />
+        <Switch checked={config.enabled} disabled={locked} onCheckedChange={(enabled) => void save({ ...config, enabled })} />
       </div>
       {config.enabled && (
         <>
           <Field label={t("checkInterval")} htmlFor={intervalId}>
-            <Select id={intervalId} value={config.interval} onChange={(e) => save({ ...config, interval: e.target.value })}>
+            <Select id={intervalId} value={config.interval} disabled={locked} onChange={(e) => void save({ ...config, interval: e.target.value })}>
               <option value="daily">{t("daily")}</option>
               <option value="weekly">{t("weekly")}</option>
               <option value="monthly">{t("monthly")}</option>
             </Select>
           </Field>
           <Field label={t("updateTime")} htmlFor={timeId}>
-            <Input id={timeId} type="time" value={config.time} onChange={(e) => save({ ...config, time: e.target.value })} />
+            <Input
+              id={timeId}
+              type="time"
+              required
+              value={config.time}
+              disabled={loadError}
+              onChange={(e) => { if (e.target.value) void save({ ...config, time: e.target.value }); }}
+            />
           </Field>
+          <p className="text-xs text-muted-foreground">{t("timeHint")}</p>
         </>
       )}
+      {error && (
+        <div className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive" role="status">
+          <p className="font-medium">{t("saveError")}</p>
+          <p className="mt-0.5 opacity-90">{error}</p>
+        </div>
+      )}
+      {status === "saved" && !error && <p className="text-xs text-green-600">{t("saved")}</p>}
     </div>
   );
 }

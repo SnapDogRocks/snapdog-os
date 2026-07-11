@@ -39,6 +39,9 @@ tracing-journald = "0.3"
 # TOML editing (preserves comments)
 toml_edit = "0.25"
 
+# Local wall-clock time for the auto-update scheduler (reads /etc/localtime, DST-aware)
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
 # Error handling
 thiserror = "2"
 anyhow = "1"

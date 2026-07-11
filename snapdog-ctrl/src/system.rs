@@ -1054,6 +1054,24 @@ pub async fn record_pending_update(version: &str) {
     }
 }
 
+/// Device-local date (`YYYY-MM-DD`) of the last completed auto-update check. Drives
+/// the interval/dedup gate and catch-up so a device that was off at the configured
+/// time still updates on its next boot. Lives on the writable `/data` partition.
+const LAST_AUTO_UPDATE_FILE: &str = "/data/snapdog-os.last-auto-update";
+
+/// The date of the last completed auto-update run, if recorded.
+pub async fn last_auto_update_date() -> Option<chrono::NaiveDate> {
+    let raw = read_file(LAST_AUTO_UPDATE_FILE).await.ok()?;
+    chrono::NaiveDate::parse_from_str(raw.trim(), "%Y-%m-%d").ok()
+}
+
+/// Record `date` (device-local) as the last auto-update run.
+pub async fn record_auto_update_date(date: chrono::NaiveDate) {
+    if let Err(e) = tokio::fs::write(LAST_AUTO_UPDATE_FILE, format!("{date}\n")).await {
+        tracing::warn!("auto-update: failed to record last-run date {date}: {e}");
+    }
+}
+
 async fn remove_state_file(path: &str) {
     if let Err(e) = tokio::fs::remove_file(path).await {
         if e.kind() != std::io::ErrorKind::NotFound {

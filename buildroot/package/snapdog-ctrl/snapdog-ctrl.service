@@ -1,6 +1,9 @@
 [Unit]
 Description=SnapDog Setup (device configuration web UI)
-After=network.target
+# time-sync.target: the Pi has no RTC, so the clock is only trustworthy after the
+# first NTP sync. The auto-update scheduler compares the wall clock against the
+# configured local time; ordering after time-sync avoids honouring a pre-sync clock.
+After=network.target time-sync.target
 # When the ctrl fails to stay up on a bad OTA trial slot, rauc-trial-failed
 # reboots NORMALLY, which reverts to the committed slot. OnFailure fires as soon
 # as the unit reaches the failed state (verified on-device: a hard-broken ctrl

@@ -23,7 +23,6 @@ const EXPORT_PATHS: &[&str] = &[
     "wpa_supplicant",
     "ssh",
     "snapdog-os.channel",
-    "snapdog-os.auto-update",
     "default",
 ];
 

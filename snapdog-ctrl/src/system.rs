@@ -1185,7 +1185,7 @@ pub async fn factory_reset() -> Result<()> {
     let _ = tokio::fs::remove_file("/data/default/snapdog-client").await;
     let _ = tokio::fs::remove_file("/data/hostname").await;
     let _ = tokio::fs::remove_file("/data/snapdog-os.channel").await;
-    let _ = tokio::fs::remove_file("/data/snapdog-os.auto-update").await;
+    let _ = tokio::fs::remove_file("/data/snapdog-os.last-auto-update").await;
     let _ = tokio::fs::remove_file(PENDING_UPDATE_FILE).await;
     let _ = tokio::fs::remove_file(FAILED_UPDATE_FILE).await;
     let _ = tokio::fs::remove_file("/data/snapdog/snapdog.toml").await;
@@ -1346,7 +1346,16 @@ pub async fn set_timezone(tz: &str) -> Result<()> {
         let target = format!("/usr/share/zoneinfo/{tz}");
         tokio::fs::symlink(target, path)
             .await
-            .context("failed to update /data/localtime timezone symlink")
+            .context("failed to update /data/localtime timezone symlink")?;
+        // Re-create /etc/localtime → /data/localtime so its OWN mtime bumps. chrono's
+        // `Local` cache keys invalidation on the /etc/localtime symlink's mtime (it lstats,
+        // does not follow the link), and set_timezone only rewrites /data/localtime — so
+        // without this the long-running auto-update scheduler keeps using the OLD zone
+        // until a restart. /etc/localtime is in the unit's ReadWritePaths.
+        let etc = std::path::Path::new("/etc/localtime");
+        tokio::fs::remove_file(etc).await.ok();
+        tokio::fs::symlink("/data/localtime", etc).await.ok();
+        Ok(())
     } else {
         run_cmd("timedatectl", &["set-timezone", tz]).await
     }

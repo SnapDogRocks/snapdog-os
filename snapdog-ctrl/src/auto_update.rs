@@ -106,8 +106,12 @@ async fn tick() -> anyhow::Result<()> {
         return Ok(());
     };
 
-    // We reached the server and made a decision — count this as today's run so we
-    // don't re-check every minute for the rest of the interval.
+    // Reaching the server and making a decision counts as today's run, so we don't
+    // re-check every minute for the rest of the interval. A subsequent install failure
+    // then also waits for the next interval rather than retrying immediately — deliberate,
+    // so a persistently bad bundle can't hammer the eMMC/SD with a re-download+install
+    // every minute. (An unreachable manifest, above, is NOT recorded, so a transient
+    // network outage at the target time still retries on the next tick.)
     record_auto_update_date(today).await;
 
     let last_failed = last_failed_update().await;

@@ -2200,9 +2200,12 @@ function AutoUpdateSettings() {
       setStatus("saved");
       setTimeout(() => setStatus("idle"), 2000);
     } catch (e) {
-      setConfig(previous);
       setStatus("idle");
       setError(e instanceof Error ? e.message : String(e));
+      // A partial channel double-write can leave ctrl.toml changed even though this
+      // failed, so an optimistic revert would misreport. Re-sync to the authoritative
+      // persisted state instead (fall back to the pre-edit value if that also fails).
+      api.getAutoUpdate().then(setConfig).catch(() => setConfig(previous));
     }
   };
   // The channel is the single source of truth the backend uses for BOTH manual
@@ -2213,6 +2216,9 @@ function AutoUpdateSettings() {
     void save({ ...config, channel }, () => api.setSystem({ channel }));
 
   const saving = status === "saving";
+  // A failed load must not let a stray toggle overwrite the real (never-loaded) config
+  // with the hard-coded defaults, so lock the settings until a successful load.
+  const locked = saving || loadError;
 
   return (
     <div className="space-y-3 border-t border-border pt-3">
@@ -2222,19 +2228,19 @@ function AutoUpdateSettings() {
         </div>
       )}
       <Field label={t("channel")} htmlFor={channelId}>
-        <Select id={channelId} value={config.channel} disabled={saving} onChange={(e) => saveChannel(e.target.value)}>
+        <Select id={channelId} value={config.channel} disabled={locked} onChange={(e) => saveChannel(e.target.value)}>
           <option value="release">{t("stable")}</option>
           <option value="beta">{t("beta")}</option>
         </Select>
       </Field>
       <div className="flex items-center justify-between">
         <span className="text-sm text-muted-foreground">{t("autoUpdate")}</span>
-        <Switch checked={config.enabled} disabled={saving} onCheckedChange={(enabled) => void save({ ...config, enabled })} />
+        <Switch checked={config.enabled} disabled={locked} onCheckedChange={(enabled) => void save({ ...config, enabled })} />
       </div>
       {config.enabled && (
         <>
           <Field label={t("checkInterval")} htmlFor={intervalId}>
-            <Select id={intervalId} value={config.interval} disabled={saving} onChange={(e) => void save({ ...config, interval: e.target.value })}>
+            <Select id={intervalId} value={config.interval} disabled={locked} onChange={(e) => void save({ ...config, interval: e.target.value })}>
               <option value="daily">{t("daily")}</option>
               <option value="weekly">{t("weekly")}</option>
               <option value="monthly">{t("monthly")}</option>
@@ -2246,7 +2252,7 @@ function AutoUpdateSettings() {
               type="time"
               required
               value={config.time}
-              disabled={saving}
+              disabled={loadError}
               onChange={(e) => { if (e.target.value) void save({ ...config, time: e.target.value }); }}
             />
           </Field>

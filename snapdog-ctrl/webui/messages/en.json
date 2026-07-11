@@ -307,7 +307,12 @@
     "validationFailed": "Please fix the highlighted fields.",
     "saveFailed": "Save failed. Check the configuration and try again.",
     "save": "Save",
-    "saved": "Saved!"
+    "saved": "Saved!",
+    "airplayMode": "Protocol",
+    "deviceName": "Device Name",
+    "streamingFormat": "Streaming format",
+    "advertiseSnapcast": "Advertise for Snapcast clients",
+    "airplayPasswordHint": "Leave empty for unrestricted access"
   },
   "about": {
     "title": "About",

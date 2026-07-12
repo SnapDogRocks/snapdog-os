@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2](https://github.com/SnapDogRocks/snapdog-os/compare/v0.9.1...v0.9.2) (2026-07-12)
+
+
+### Bug Fixes
+
+* **ci:** pass --repo to gh pr merge in release workflow ([#88](https://github.com/SnapDogRocks/snapdog-os/issues/88)) ([3384166](https://github.com/SnapDogRocks/snapdog-os/commit/3384166431375b0f19b770b79fb6c78c57bff219))
+
 ## [0.9.1](https://github.com/SnapDogRocks/snapdog-os/compare/v0.9.0...v0.9.1) (2026-07-11)
 
 

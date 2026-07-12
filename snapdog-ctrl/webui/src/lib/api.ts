@@ -388,8 +388,14 @@ export const api = {
   // Health
   getHealth: () => request<{ ok: boolean; warnings: { id: string; severity: string }[] }>("/api/system/health"),
 
-  // Reboot
-  reboot: () => request<void>("/api/system/reboot", { method: "POST" }),
+  // Reboot — any reboot drops the connection within seconds. Announce it so the app can
+  // show the reconnect overlay immediately on click, instead of waiting for the ~5s health
+  // poll to notice the device went away. Covers every reboot path (update, tuning, raw-flash,
+  // plain) since they all funnel through here.
+  reboot: () => {
+    if (typeof window !== "undefined") window.dispatchEvent(new Event("snapdog:reboot"));
+    return request<void>("/api/system/reboot", { method: "POST" });
+  },
 
   // Settings export/import
   exportSettings: async (): Promise<Blob> => {

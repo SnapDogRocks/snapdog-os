@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.9.1...snapdog-ctrl-v0.9.2) (2026-07-12)
+
+
+### Bug Fixes
+
+* **webui:** show the reconnect overlay immediately on any reboot ([#91](https://github.com/SnapDogRocks/snapdog-os/issues/91)) ([57eeed9](https://github.com/SnapDogRocks/snapdog-os/commit/57eeed91fdef681b2917ad6bfdac7ee3b8f12fad))
+
 ## [0.9.1](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.9.0...snapdog-ctrl-v0.9.1) (2026-07-11)
 
 

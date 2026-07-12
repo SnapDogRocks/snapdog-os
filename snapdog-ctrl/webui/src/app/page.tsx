@@ -3508,6 +3508,16 @@ function SetupPage() {
     return () => clearInterval(interval);
   }, []);
 
+  // Any reboot (update, tuning, raw-flash, plain) drops the device within seconds.
+  // `api.reboot()` announces itself, so we optimistically show the reconnect overlay from
+  // the click instead of waiting for the 5s health poll. The poll above reconciles: it flips
+  // back to connected once the device answers again (and self-corrects if the reboot no-oped).
+  useEffect(() => {
+    const onReboot = () => setIsConnected(false);
+    window.addEventListener("snapdog:reboot", onReboot);
+    return () => window.removeEventListener("snapdog:reboot", onReboot);
+  }, []);
+
   return (
     <>
       <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-primary focus:px-4 focus:py-2 focus:text-primary-foreground">

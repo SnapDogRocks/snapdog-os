@@ -371,13 +371,13 @@ fn parse_document(doc: &DocumentMut) -> ServerConfig {
         config.system.log_level = get_str(system, "log_level", "info");
     }
 
-    if let Some(http) = doc.get("http").and_then(Item::as_table) {
-        if let Some(keys) = http.get("api_keys").and_then(|v| v.as_array()) {
-            config.http.api_keys = keys
-                .iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect();
-        }
+    if let Some(http) = doc.get("http").and_then(Item::as_table)
+        && let Some(keys) = http.get("api_keys").and_then(|v| v.as_array())
+    {
+        config.http.api_keys = keys
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
     }
 
     if let Some(audio) = doc.get("audio").and_then(Item::as_table) {

@@ -15,13 +15,12 @@ impl ProgressUi {
         } else {
             ProgressBar::hidden()
         };
-        if enabled {
-            if let Ok(style) = ProgressStyle::default_bar()
+        if enabled
+            && let Ok(style) = ProgressStyle::default_bar()
                 .template("{spinner:.green} {msg} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
             {
                 pb.set_style(style.progress_chars("#>-"));
             }
-        }
         pb.set_message(message);
         Self { pb }
     }

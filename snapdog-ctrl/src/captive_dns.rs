@@ -69,10 +69,10 @@ pub async fn start() {
 
 /// Stop the responder and free `:53` (so systemd-resolved can reclaim it).
 pub fn stop() {
-    if let Ok(mut guard) = TASK.lock() {
-        if let Some(handle) = guard.take() {
-            handle.abort();
-        }
+    if let Ok(mut guard) = TASK.lock()
+        && let Some(handle) = guard.take()
+    {
+        handle.abort();
     }
 }
 

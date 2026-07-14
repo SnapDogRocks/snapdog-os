@@ -91,15 +91,13 @@ async fn main() -> ExitCode {
         args.non_interactive || matches!(args.output, OutputArg::Json),
     );
 
-    if let Some(file) = &args.file {
-        if !file.exists() {
-            let err = UpgradeError::InvalidArgument(format!(
-                "local file does not exist: {}",
-                file.display()
-            ));
-            reporter.error(&err);
-            return ExitCode::from(1);
-        }
+    if let Some(file) = &args.file
+        && !file.exists()
+    {
+        let err =
+            UpgradeError::InvalidArgument(format!("local file does not exist: {}", file.display()));
+        reporter.error(&err);
+        return ExitCode::from(1);
     }
 
     let Some(timeout_secs) = args.timeout_mins.checked_mul(60) else {

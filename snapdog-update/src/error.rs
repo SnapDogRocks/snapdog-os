@@ -77,11 +77,11 @@ fn describe_http_error(err: &reqwest::Error) -> String {
         deepest = Some(s.to_string());
         source = s.source();
     }
-    if let Some(cause) = deepest {
-        if !msg.contains(cause.as_str()) {
-            use std::fmt::Write as _;
-            let _ = write!(msg, ": {cause}");
-        }
+    if let Some(cause) = deepest
+        && !msg.contains(cause.as_str())
+    {
+        use std::fmt::Write as _;
+        let _ = write!(msg, ": {cause}");
     }
     msg
 }

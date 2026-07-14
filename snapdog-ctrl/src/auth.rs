@@ -136,10 +136,10 @@ async fn persist_password_hash(hash: Option<&str>) -> anyhow::Result<()> {
             .entry("auth")
             .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
         auth["password_hash"] = toml_edit::value(h);
-    } else if let Some(auth) = doc.get_mut("auth") {
-        if let Some(tbl) = auth.as_table_mut() {
-            tbl.remove("password_hash");
-        }
+    } else if let Some(auth) = doc.get_mut("auth")
+        && let Some(tbl) = auth.as_table_mut()
+    {
+        tbl.remove("password_hash");
     }
 
     // Ensure parent directory exists

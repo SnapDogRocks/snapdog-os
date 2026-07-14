@@ -79,3 +79,12 @@ updates:
         update-types:
           - minor
           - patch
+
+  - package-ecosystem: docker
+    directory: /dev
+    schedule:
+      interval: daily
+    target-branch: main
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies

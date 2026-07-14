@@ -23,9 +23,12 @@ snapdog-ctrl/webui/tsconfig.tsbuildinfo
 *.swp
 .vscode/
 .idea/
-secrets/
-buildroot/board/raspberrypi/overlay/usr/bin/snapdog-ctrl
 dev/Image
 dev/rpi4.dtb
-snapdog-os-pi4-qemu.img
 .wrangler/
+
+# Local development artifacts
+dev/.*.log
+dev/.*.sh
+*.raucb
+*.img

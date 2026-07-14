@@ -8,6 +8,8 @@ set -euo pipefail
 
 export DOCKER_HOST="${DOCKER_HOST:-unix://$HOME/.colima/default/docker.sock}"
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 INPUT="${1:-$HOME/Desktop/snapdog-os-pi4.img}"
 OUTPUT="${2:-$HOME/Desktop/snapdog-os-pi4-qemu.img}"
 
@@ -45,8 +47,8 @@ echo ""
 echo "Boot with:"
 echo "  qemu-system-aarch64 \\"
 echo "    -machine virt -cpu cortex-a72 -m 1G \\"
-echo "    -kernel /Volumes/Dev/Source/snapdog-os/dev/Image \\"
-echo "    -drive file=$OUTPUT,format=raw,if=none,id=hd0 \\"
+printf '    -kernel %q \\\n' "$REPO_ROOT/dev/Image"
+printf '    -drive file=%q,format=raw,if=none,id=hd0 \\\n' "$OUTPUT"
 echo "    -device virtio-blk-device,drive=hd0 \\"
 echo "    -append \"root=/dev/vda2 rootwait console=tty0 console=ttyAMA0,115200 rauc.slot=A\" \\"
 echo "    -device virtio-gpu-pci -display cocoa -serial mon:stdio"

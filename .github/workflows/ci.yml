@@ -15,7 +15,8 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
   RUST_TOOLCHAIN: "stable"
-  NODE_VERSION: "26.5.0"
+  RUST_MSRV: "1.88.0"
+  NODE_VERSION: "24.17.0"
 
 jobs:
   check:
@@ -66,6 +67,24 @@ jobs:
 
       - name: Test (snapdog-update)
         run: cd snapdog-update && cargo test --locked
+
+  msrv:
+    name: Rust MSRV
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust MSRV
+        run: rustup toolchain install "$RUST_MSRV" --profile minimal
+
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libavahi-compat-libdnssd-dev
+
+      - name: Check snapdog-ctrl at MSRV
+        run: cd snapdog-ctrl && cargo "+$RUST_MSRV" check --locked --all-targets
+
+      - name: Check snapdog-update at MSRV
+        run: cd snapdog-update && cargo "+$RUST_MSRV" check --locked --all-targets
 
   security-audit:
     name: Security Audit
@@ -147,6 +166,7 @@ jobs:
       - name: Validate release config
         run: |
           ruby -e 'require "json"; JSON.parse(File.read("release-please-config.json")); JSON.parse(File.read(".release-please-manifest.json"))'
+          scripts/check-version-pins.sh
           test -x buildroot/board/raspberrypi/post-image-ab.sh
           test -f buildroot/keys/rauc-ca.cert.pem
           test -f buildroot/package/snapdog-rauc/system.conf.in

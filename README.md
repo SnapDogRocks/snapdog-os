@@ -17,7 +17,7 @@
 ---
 
 > [!WARNING]
-> **Alpha — not ready for production use.**
+> **Beta — not ready for production use.**
 > SnapDog OS is under active development and has not been sufficiently tested on real hardware. Do not deploy it on devices you rely on.
 >
 > For a working multiroom audio setup today, use **Raspberry Pi OS** with the [SnapDog `.deb` package](https://github.com/SnapDogRocks/snapdog/releases) from [SnapDogRocks/snapdog](https://github.com/SnapDogRocks/snapdog).
@@ -61,18 +61,18 @@ All builds are 64-bit (aarch64). Kernel: Raspberry Pi Linux 6.6 LTS.
 
 ```bash
 # macOS
-gunzip -k snapdog-os-pi4-0.1.0.img.gz
-sudo dd if=snapdog-os-pi4-0.1.0.img of=/dev/rdiskN bs=4m status=progress
+gunzip -k snapdog-os-pi4-release.img.gz
+sudo dd if=snapdog-os-pi4-release.img of=/dev/rdiskN bs=4m status=progress
 
 # Linux
-gunzip -k snapdog-os-pi4-0.1.0.img.gz
-sudo dd if=snapdog-os-pi4-0.1.0.img of=/dev/sdX bs=4M status=progress conv=fsync
+gunzip -k snapdog-os-pi4-release.img.gz
+sudo dd if=snapdog-os-pi4-release.img of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
 ### First boot
 
 1. Insert SD card and power on the Pi
-2. If no Ethernet is connected, the device creates a WiFi access point: **SnapDog-Setup** (password: `snapdog123`)
+2. If no working network is available, the device creates **SnapDog-XXXX**, where `XXXX` is derived from its Wi-Fi MAC address. Each device generates a unique 12-character password and prints it to the HDMI/serial console.
 3. Connect to the AP — your phone/laptop will automatically open the setup UI
 4. Configure WiFi, select your SnapDog server, choose your DAC — done
 
@@ -127,7 +127,7 @@ server = false    # default: off
 
 [auto-update]
 enabled = true
-channel = "stable"
+channel = "release"
 time = "04:00"
 
 [auth]
@@ -150,11 +150,11 @@ time = "04:00"
 - **Auto-rollback**: If `snapdog-ctrl` fails to start 3 times → previous slot
 - **Auto-update**: Daily check at configured time, install + reboot
 - **Manual**: Upload `.raucb` via web UI or install from URL
-- **Channels**: `stable` (`snapdog-os-<board>.raucb`) / `beta` (`snapdog-os-<board>-beta.raucb`) for `pi3`, `pi4`, `pi5`, and `zero2w`
+- **Channels**: `release` (`snapdog-os-<board>-release.raucb`) / `beta` (`snapdog-os-<board>-beta.raucb`) for `pi3`, `pi4`, `pi5`, and `zero2w`
 
 ### SoftAP
 
-Started automatically when no network is available (no WiFi configured AND no Ethernet link). Stops automatically when a network connection is established. SSID: `SnapDog-Setup`.
+Started automatically when no network is available (no WiFi configured and no Ethernet link). Stops automatically when a network connection is established. The SSID is `SnapDog-XXXX`; the unique password is generated on first use and can be changed in the web UI.
 
 ## snapdog-ctrl
 
@@ -179,7 +179,7 @@ The device configuration service is a single Rust binary with an embedded web UI
 - **Audio** — DAC overlay selection from detected boards
 - **Client** — server discovery (mDNS), soundcard, volume control, latency
 - **SSH** — enable/disable, pubkey management
-- **Update** — OTA check/install, channel (stable/beta), auto-update schedule
+- **Update** — OTA check/install, channel (release/beta), auto-update schedule
 - **System** — timezone, logs, reboot, factory reset
 
 ### Local development
@@ -187,7 +187,7 @@ The device configuration service is a single Rust binary with an embedded web UI
 ```bash
 cd snapdog-ctrl
 SNAPDOG_SETUP_PORT=8080 cargo run
-# → http://localhost:80 (mock mode, all APIs functional)
+# → http://localhost:8080 (mock mode, all APIs functional)
 ```
 
 ## DAC Support
@@ -209,7 +209,7 @@ Set via the web UI or `BR2_PACKAGE_CONFIGTXT_DAC_OVERLAY` at build time. Leave e
 Requires a Linux host with standard buildroot dependencies (`build-essential`, `git`, `wget`, `cpio`, `unzip`, `rsync`, `bc`).
 
 ```bash
-make setup                         # Download buildroot 2025.02
+make setup                         # Download pinned Buildroot 2025.02.15
 # provide an aarch64 snapdog-ctrl binary at ./snapdog-ctrl-binary
 make BOARD=pi4 config               # Configure for Raspberry Pi 4
 make BOARD=pi4 build                # Build SD card image
@@ -224,9 +224,9 @@ Output: `../buildroot-<board>/images/sdcard.img`
 |--------|---------|
 | Web UI | Optional password (protects UI + console login) |
 | SSH | Disabled, key-only when enabled via UI |
-| Root password | `snapdog` (changeable via Web UI) |
+| Root password | Console login follows the optional Web UI password; resetting UI authentication restores the development default |
 | OTA bundles | X.509 signed RAUC verity bundles, auto-rollback |
-| SoftAP | WPA2, configurable password (default: `snapdog123`) |
+| SoftAP | WPA2, unique generated password, configurable via Web UI |
 | Filesystem | Read-only rootfs; mutable config on `/data` partition |
 | Raw flash | Challenge-response gated (not automatable) |
 
@@ -272,9 +272,7 @@ The CA certificate is baked into the OS image at `/etc/rauc/ca.cert.pem`. Only b
 ## Roadmap
 
 - [ ] Per-board configuration structure (`buildroot/boards/{pi3,pi4,pi5,cm4}/`)
-- [ ] WebUI i18n completion (all new strings in de/fr/es/nl)
 - [ ] Zone presence/scheduling UI
-- [ ] Per-zone KNX group address configuration
 - [ ] Custom Docker build image for CI (faster builds)
 - [ ] Hardware test suite (automated boot + API verification)
 

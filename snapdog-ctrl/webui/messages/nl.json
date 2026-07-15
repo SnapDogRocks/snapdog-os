@@ -236,7 +236,8 @@
     "timeHint": "Wordt uitgevoerd in de tijdzone van het apparaat.",
     "downgrade": "Downgraden",
     "downgradeConfirm": "Downgraden en herstarten?",
-    "confirmDowngrade": "Ja, downgraden & herstarten"
+    "confirmDowngrade": "Ja, downgraden & herstarten",
+    "stagedTitle": "Update klaar om te activeren"
   },
   "server": {
     "title": "Server",

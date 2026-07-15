@@ -1733,7 +1733,6 @@ function UpdateTab() {
 
   useEffect(() => {
     api.checkUpdate().then(setUpdate).catch(() => {});
-    api.getUpdateStatus().then((s) => { if (s.rolled_back) setRolledBack(true); }).catch(() => {});
   }, []);
 
   const checkForUpdate = useCallback(() => {
@@ -1786,6 +1785,30 @@ function UpdateTab() {
       }),
     [t],
   );
+
+  // On mount (incl. a reload mid-update): surface a rollback, and if RAUC is still
+  // installing, resume the progress indicator + completion polling instead of
+  // dropping back to an "idle" panel that would let the user start a second install.
+  useEffect(() => {
+    let cancelled = false;
+    api.getUpdateStatus()
+      .then((s) => {
+        if (cancelled) return;
+        if (s.rolled_back) setRolledBack(true);
+        if (s.operation === "installing") {
+          setPhase("installing");
+          setProgress(s.progress?.percentage ?? null);
+          pollInstallToCompletion()
+            .then(() => setPhase("done"))
+            .catch((e: unknown) => {
+              setErrorMsg(e instanceof Error ? e.message : String(e));
+              setPhase("failed");
+            });
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [pollInstallToCompletion]);
 
   const performUpdate = useCallback(() => {
     setPhase("installing");
@@ -1928,7 +1951,7 @@ function UpdateTab() {
             <p className="text-xs text-muted-foreground">{t("rebootToActivate")}</p>
             <div className="flex gap-2">
               <Button size="sm" onClick={rebootAndVerify}>{t("rebootNow")}</Button>
-              <Button variant="outline" size="sm" onClick={() => setPhase("idle")}>{t("later")}</Button>
+              <Button variant="outline" size="sm" onClick={() => { setPhase("idle"); checkForUpdate(); }}>{t("later")}</Button>
             </div>
           </div>
         )}
@@ -1954,6 +1977,19 @@ function UpdateTab() {
                   <Button size="sm" onClick={() => { setConfirming(false); performUpdate(); }}>{update?.is_downgrade ? t("confirmDowngrade") : t("confirmInstall")}</Button>
                   <Button variant="outline" size="sm" onClick={() => setConfirming(false)}>{t("cancel")}</Button>
                 </div>
+              </div>
+            ) : update?.staged_version && !update.available && !update.is_downgrade ? (
+              // An update is installed and waiting for a reboot to activate. Offer the
+              // reboot (not another install of the same version) until a newer one appears.
+              <div className="flex flex-col gap-3 rounded-lg bg-primary/10 p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium">{t("stagedTitle")}</p>
+                    <p className="text-xs font-mono text-muted-foreground">{update.current_version} → {update.staged_version}</p>
+                  </div>
+                  <Button size="sm" onClick={rebootAndVerify}>{t("rebootNow")}</Button>
+                </div>
+                <p className="text-xs text-muted-foreground border-t border-primary/20 pt-2">{t("rebootToActivate")}</p>
               </div>
             ) : update?.available ? (
               <div className="flex flex-col gap-3 rounded-lg bg-primary/10 p-4">

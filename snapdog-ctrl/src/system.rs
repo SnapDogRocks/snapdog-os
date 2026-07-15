@@ -503,10 +503,10 @@ fn parse_default_gateway(output: &str) -> Option<String> {
 }
 
 async fn dns_servers(iface: &str) -> Result<String> {
-    if let Ok(output) = command_stdout("resolvectl", &["dns", iface]).await {
-        if let Some(servers) = parse_resolvectl_dns(&output) {
-            return Ok(servers);
-        }
+    if let Ok(output) = command_stdout("resolvectl", &["dns", iface]).await
+        && let Some(servers) = parse_resolvectl_dns(&output)
+    {
+        return Ok(servers);
     }
 
     let resolv_conf = read_file("/etc/resolv.conf").await.unwrap_or_default();
@@ -1077,10 +1077,10 @@ pub async fn record_auto_update_date(date: chrono::NaiveDate) {
 }
 
 async fn remove_state_file(path: &str) {
-    if let Err(e) = tokio::fs::remove_file(path).await {
-        if e.kind() != std::io::ErrorKind::NotFound {
-            tracing::warn!("auto-update: failed to remove {path}: {e}");
-        }
+    if let Err(e) = tokio::fs::remove_file(path).await
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!("auto-update: failed to remove {path}: {e}");
     }
 }
 
@@ -1285,15 +1285,15 @@ fn zone_from_path(path: &str) -> Option<String> {
 /// canonical path.
 async fn read_localtime_zone() -> Option<String> {
     for path in ["/data/localtime", "/etc/localtime"] {
-        if let Ok(target) = tokio::fs::read_link(path).await {
-            if let Some(z) = zone_from_path(&target.to_string_lossy()) {
-                return Some(z);
-            }
+        if let Ok(target) = tokio::fs::read_link(path).await
+            && let Some(z) = zone_from_path(&target.to_string_lossy())
+        {
+            return Some(z);
         }
-        if let Ok(real) = tokio::fs::canonicalize(path).await {
-            if let Some(z) = zone_from_path(&real.to_string_lossy()) {
-                return Some(z);
-            }
+        if let Ok(real) = tokio::fs::canonicalize(path).await
+            && let Some(z) = zone_from_path(&real.to_string_lossy())
+        {
+            return Some(z);
         }
     }
     None
@@ -1586,10 +1586,10 @@ async fn set_ssh_enabled_flag(enabled: bool) -> Result<()> {
         tokio::fs::write(SSH_ENABLED_FLAG, b"")
             .await
             .context("failed to create SSH enable flag")?;
-    } else if let Err(e) = tokio::fs::remove_file(SSH_ENABLED_FLAG).await {
-        if e.kind() != std::io::ErrorKind::NotFound {
-            return Err(e).context("failed to remove SSH enable flag");
-        }
+    } else if let Err(e) = tokio::fs::remove_file(SSH_ENABLED_FLAG).await
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        return Err(e).context("failed to remove SSH enable flag");
     }
     Ok(())
 }

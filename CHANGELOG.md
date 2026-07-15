@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.4](https://github.com/SnapDogRocks/snapdog-os/compare/v0.9.3...v0.9.4) (2026-07-15)
+
+
+### Bug Fixes
+
+* **deps:** bump snapdog to 0.25.2 ([#96](https://github.com/SnapDogRocks/snapdog-os/issues/96)) ([9fd14cf](https://github.com/SnapDogRocks/snapdog-os/commit/9fd14cf579168c3b42a197aafd5ece8719108454))
+
 ## [0.9.3](https://github.com/SnapDogRocks/snapdog-os/compare/v0.9.2...v0.9.3) (2026-07-12)
 
 

@@ -233,7 +233,10 @@
     "saved": "Gespeichert",
     "saveError": "Speichern fehlgeschlagen",
     "loadError": "Aktuelle Einstellungen konnten nicht geladen werden — Standardwerte werden angezeigt.",
-    "timeHint": "Läuft in der Zeitzone des Geräts."
+    "timeHint": "Läuft in der Zeitzone des Geräts.",
+    "downgrade": "Herabstufen",
+    "downgradeConfirm": "Herabstufen und neu starten?",
+    "confirmDowngrade": "Ja, herabstufen & neu starten"
   },
   "server": {
     "title": "Server",

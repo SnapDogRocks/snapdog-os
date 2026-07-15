@@ -984,12 +984,25 @@ pub async fn check_update() -> UpdateCheckResponse {
     // When the manifest is unreachable, `latest_version` is left empty and the UI
     // presents that as "cannot reach the update server" (NOT "up to date").
     let remote = remote_channel_version(&config.channel).await;
-    let (available, is_downgrade, latest_version) = match remote {
+    let (mut available, mut is_downgrade, latest_version) = match remote {
         Some(r) if version_is_newer(&r, &current) => (true, false, r),
         Some(r) if version_is_newer(&current, &r) => (false, true, r),
         Some(r) => (false, false, r), // same version — up to date
         None => (false, false, String::new()), // manifest unknown/unreachable
     };
+
+    // A version already written to the boot slot, waiting for a reboot to activate
+    // (RAUC marks the freshly-installed slot `primary`). When the version a channel
+    // would install is already staged, DON'T re-offer it — the UI shows a reboot
+    // button instead, until a genuinely newer version appears.
+    let staged_version = staged_reboot_version().await;
+    if let Some(staged) = staged_version.as_deref()
+        && !latest_version.is_empty()
+        && !version_is_newer(&latest_version, staged)
+    {
+        available = false;
+        is_downgrade = false;
+    }
 
     UpdateCheckResponse {
         available,
@@ -1008,7 +1021,30 @@ pub async fn check_update() -> UpdateCheckResponse {
         is_downgrade,
         signature_verified,
         bundle_url: url,
+        staged_version,
     }
+}
+
+/// The version installed to the boot-target slot and awaiting a reboot to activate.
+/// RAUC marks the freshly-installed (inactive) slot as `primary`, so `primary` not
+/// being the booted slot means an update is staged. Returns `None` in the normal
+/// state (booted slot is primary). Covers both upgrades and downgrades, and is
+/// derived from RAUC state so it survives a `WebUI` reload.
+async fn staged_reboot_version() -> Option<String> {
+    let rauc = crate::rauc::Rauc::connect().await.ok()?;
+    let primary = rauc.primary().await.ok()?;
+    if primary.is_empty() {
+        return None;
+    }
+    let slots = rauc.slot_status().await.ok()?;
+    // Already running the primary slot → nothing pending.
+    if slots.iter().any(|s| s.booted && s.name == primary) {
+        return None;
+    }
+    slots
+        .iter()
+        .find(|s| s.name == primary && !s.version.is_empty())
+        .map(|s| s.version.clone())
 }
 
 // --- Auto-Update Version Gating ---

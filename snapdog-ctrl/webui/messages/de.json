@@ -236,7 +236,8 @@
     "timeHint": "Läuft in der Zeitzone des Geräts.",
     "downgrade": "Herabstufen",
     "downgradeConfirm": "Herabstufen und neu starten?",
-    "confirmDowngrade": "Ja, herabstufen & neu starten"
+    "confirmDowngrade": "Ja, herabstufen & neu starten",
+    "stagedTitle": "Update bereit zur Aktivierung"
   },
   "server": {
     "title": "Server",

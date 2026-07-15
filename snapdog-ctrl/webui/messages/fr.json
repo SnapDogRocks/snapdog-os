@@ -236,7 +236,8 @@
     "timeHint": "S'exécute dans le fuseau horaire de l'appareil.",
     "downgrade": "Rétrograder",
     "downgradeConfirm": "Rétrograder et redémarrer ?",
-    "confirmDowngrade": "Oui, rétrograder & redémarrer"
+    "confirmDowngrade": "Oui, rétrograder & redémarrer",
+    "stagedTitle": "Mise à jour prête à activer"
   },
   "server": {
     "title": "Serveur",

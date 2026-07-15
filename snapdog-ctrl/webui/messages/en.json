@@ -236,7 +236,8 @@
     "timeHint": "Runs in the device's timezone.",
     "downgrade": "Downgrade",
     "downgradeConfirm": "Downgrade and reboot?",
-    "confirmDowngrade": "Yes, downgrade & reboot"
+    "confirmDowngrade": "Yes, downgrade & reboot",
+    "stagedTitle": "Update ready to activate"
   },
   "server": {
     "title": "Server",

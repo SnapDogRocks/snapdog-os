@@ -346,6 +346,7 @@ mod mock_handlers {
             is_downgrade: false,
             signature_verified: true,
             bundle_url: "https://update.snapdog.cc/os/bundles/pi4.raucb".into(),
+            staged_version: None,
         })
     }
     pub async fn update_upload(
@@ -788,6 +789,10 @@ pub struct UpdateCheckResponse {
     pub is_downgrade: bool,
     pub signature_verified: bool,
     pub bundle_url: String,
+    /// Version already installed to the boot slot and awaiting a reboot to activate
+    /// (RAUC `primary` != booted). `None` in the normal state. Lets the UI offer a
+    /// reboot instead of re-installing the same version.
+    pub staged_version: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -853,6 +858,12 @@ async fn put_auto_update(Json(body): Json<AutoUpdateConfig>) -> StatusCode {
 }
 
 async fn post_update() -> StatusCode {
+    // A concurrent install (e.g. a reload + a second "Install") would make RAUC
+    // error out — surface a clean 409 instead of a 500 so the UI can say "already
+    // installing" rather than "update failed".
+    if matches!(system::rauc_operation().await.as_deref(), Ok("installing")) {
+        return StatusCode::CONFLICT;
+    }
     // Install from the channel's bundle URL
     let config = system::get_auto_update().await;
     let url = system::bundle_url(&config.channel).await;
@@ -918,6 +929,10 @@ async fn post_update_upload(
 }
 
 async fn post_update_install() -> StatusCode {
+    // Refuse a concurrent install with 409 rather than a RAUC 500 (see post_update).
+    if matches!(system::rauc_operation().await.as_deref(), Ok("installing")) {
+        return StatusCode::CONFLICT;
+    }
     // Install the uploaded bundle (staged on shared /data, see UPDATE_BUNDLE_PATH).
     // rauc's D-Bus InstallBundle is ASYNCHRONOUS: install_bundle() returns as soon
     // as the install is triggered, not when it completes. So we must NOT delete the

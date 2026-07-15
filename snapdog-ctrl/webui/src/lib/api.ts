@@ -156,6 +156,8 @@ export interface UpdateCheck {
   channel: string;
   is_downgrade: boolean;
   signature_verified: boolean;
+  /** Version installed to the boot slot and awaiting a reboot (null if none). */
+  staged_version: string | null;
 }
 
 export interface RaucProgress {

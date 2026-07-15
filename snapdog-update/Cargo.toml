@@ -2,7 +2,7 @@
 name = "snapdog-update"
 version = "0.3.1"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "GPL-3.0-only"
 repository = "https://github.com/SnapDogRocks/snapdog-os"
 authors = ["Fabian Schmieder"]

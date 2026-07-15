@@ -11,11 +11,11 @@ BRSRC := ../buildroot
 
 setup: ## Download and prepare buildroot
 	@git config core.hooksPath .githooks
-	@echo "Fetching buildroot 2025.02..."
+	@echo "Fetching buildroot 2025.02.16..."
 	@if [ ! -d ../buildroot-src/.git ]; then \
-		cd .. && git clone --depth 1 --branch 2025.02 https://github.com/buildroot/buildroot buildroot-src; \
+		cd .. && git clone --depth 1 --branch 2025.02.16 https://github.com/buildroot/buildroot buildroot-src; \
 	else \
-		cd ../buildroot-src && git fetch --depth 1 origin tag 2025.02 && git checkout 2025.02; \
+		cd ../buildroot-src && git fetch --depth 1 origin tag 2025.02.16 && git checkout 2025.02.16; \
 	fi
 	@rm -f ../buildroot && ln -s buildroot-src ../buildroot
 	@buildroot/scripts/patch-buildroot ../buildroot

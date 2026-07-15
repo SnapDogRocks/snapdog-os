@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.10.0...snapdog-ctrl-v0.10.1) (2026-07-15)
+
+
+### Bug Fixes
+
+* **ctrl:** resume update on reload + reboot-when-staged (no reinstall) ([#102](https://github.com/SnapDogRocks/snapdog-os/issues/102)) ([4c9cf9a](https://github.com/SnapDogRocks/snapdog-os/commit/4c9cf9a64296469d6e3255c9bc3916b0fba9586f))
+
 ## [0.10.0](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.9.2...snapdog-ctrl-v0.10.0) (2026-07-15)
 
 

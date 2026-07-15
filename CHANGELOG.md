@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/SnapDogRocks/snapdog-os/compare/v0.10.0...v0.10.1) (2026-07-15)
+
+
+### Bug Fixes
+
+* **release:** --copy-props none when advancing the beta pointer ([852abde](https://github.com/SnapDogRocks/snapdog-os/commit/852abde1f78bf43660cacbaec87bd14b01731dc2))
+
 ## [0.10.0](https://github.com/SnapDogRocks/snapdog-os/compare/v0.9.4...v0.10.0) (2026-07-15)
 
 

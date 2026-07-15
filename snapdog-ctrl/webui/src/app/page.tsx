@@ -1913,7 +1913,13 @@ function UpdateTab() {
           <UpdatePhaseIndicator label={`${t(`phase_${phase}`)}${
             phase === "uploading" && uploadFraction != null && uploadFraction >= 0
               ? ` — ${Math.round(uploadFraction * 100)}%`
-              : progress != null ? ` — ${progress}%` : ""
+              // A percentage only means something while bytes are moving. "rebooting" and
+              // "reconnecting" are indeterminate, so don't append the last install value —
+              // RAUC typically ends the write at 99%, which would otherwise linger as a
+              // misleading "Reconnecting — 99%" as the device comes back after the update.
+              : (phase === "downloading" || phase === "verifying" || phase === "installing") && progress != null
+                ? ` — ${progress}%`
+                : ""
           }`} />
         )}
         {phase === "done" && (

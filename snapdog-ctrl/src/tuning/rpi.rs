@@ -53,10 +53,10 @@ impl RpiTuningDriver {
                 .await;
             if let Err(e) = status {
                 tracing::error!("failed to execute systemd remount-ro helper: {e}");
-            } else if let Ok(s) = status {
-                if !s.success() {
-                    tracing::error!("systemd remount-ro helper failed with exit code: {s}");
-                }
+            } else if let Ok(s) = status
+                && !s.success()
+            {
+                tracing::error!("systemd remount-ro helper failed with exit code: {s}");
             }
         }
 

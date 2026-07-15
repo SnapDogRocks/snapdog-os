@@ -510,15 +510,20 @@ jobs:
 
           # Copy the release channel aliases onto the beta aliases (server-side,
           # same bucket → no re-upload; identical bytes → identical sha256).
+          # --copy-props none: R2 does not implement GetObjectTagging, which the
+          # aws-cli calls by default to preserve tags on a copy — skipping props
+          # avoids that (NotImplemented) error and does a plain CopyObject.
           for board in pi3 pi4 pi5 zero2w; do
             aws s3 cp \
               "s3://${R2_BUCKET}/os/bundles/snapdog-os-${board}-release.raucb" \
               "s3://${R2_BUCKET}/os/bundles/snapdog-os-${board}-beta.raucb" \
+              --copy-props none \
               --cache-control "public, max-age=300" \
               --endpoint-url "$AWS_ENDPOINT_URL"
             aws s3 cp \
               "s3://${R2_BUCKET}/os/images/snapdog-os-${board}-release.img.gz" \
               "s3://${R2_BUCKET}/os/images/snapdog-os-${board}-beta.img.gz" \
+              --copy-props none \
               --cache-control "public, max-age=300" \
               --endpoint-url "$AWS_ENDPOINT_URL"
           done

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/SnapDogRocks/snapdog-os/compare/v0.9.4...v0.10.0) (2026-07-15)
+
+
+### Features
+
+* **ctrl:** updater view — channel refresh, downgrade & honest reconnect status ([#98](https://github.com/SnapDogRocks/snapdog-os/issues/98)) ([d2057b0](https://github.com/SnapDogRocks/snapdog-os/commit/d2057b033bb75a372e34ace1c96c370bcb5dc541))
+
 ## [0.9.4](https://github.com/SnapDogRocks/snapdog-os/compare/v0.9.3...v0.9.4) (2026-07-15)
 
 

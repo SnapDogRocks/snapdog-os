@@ -49,10 +49,10 @@ fn wpa_conf_path(iface: &str) -> String {
 pub async fn detect_wifi_interface() -> String {
     if let Ok(mut entries) = tokio::fs::read_dir("/sys/class/net").await {
         while let Ok(Some(entry)) = entries.next_entry().await {
-            if let Ok(name) = entry.file_name().into_string() {
-                if name.starts_with("wl") {
-                    return name;
-                }
+            if let Ok(name) = entry.file_name().into_string()
+                && name.starts_with("wl")
+            {
+                return name;
             }
         }
     }
@@ -65,10 +65,10 @@ pub async fn detect_ethernet_interfaces() -> Vec<String> {
     let mut eths = Vec::new();
     if let Ok(mut entries) = tokio::fs::read_dir("/sys/class/net").await {
         while let Ok(Some(entry)) = entries.next_entry().await {
-            if let Ok(name) = entry.file_name().into_string() {
-                if name.starts_with("eth") || name.starts_with("en") {
-                    eths.push(name);
-                }
+            if let Ok(name) = entry.file_name().into_string()
+                && (name.starts_with("eth") || name.starts_with("en"))
+            {
+                eths.push(name);
             }
         }
     }

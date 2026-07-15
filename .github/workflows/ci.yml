@@ -15,6 +15,9 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
   RUST_TOOLCHAIN: "stable"
+  # Minimum supported Rust — enforced by the `msrv` job and cross-checked against
+  # both Cargo.toml `rust-version` + dev/Dockerfile by scripts/check-version-pins.sh.
+  RUST_MSRV: "1.88.0"
   NODE_VERSION: "26.5.0"
 
 jobs:
@@ -66,6 +69,36 @@ jobs:
 
       - name: Test (snapdog-update)
         run: cd snapdog-update && cargo test --locked
+
+  msrv:
+    name: Rust MSRV
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust MSRV
+        run: rustup toolchain install "$RUST_MSRV" --profile minimal
+
+      # snapdog-ctrl's build.rs builds the embedded webui, so this Rust check needs
+      # Node + node_modules (with node_modules present, build.rs skips its own strict
+      # `npm ci`). Use the pinned Node so the lockfile resolves the same as elsewhere.
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: snapdog-ctrl/webui/package-lock.json
+
+      - name: Install webui deps
+        run: cd snapdog-ctrl/webui && npm install --prefer-offline
+
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libavahi-compat-libdnssd-dev
+
+      - name: Check snapdog-ctrl at MSRV
+        run: cd snapdog-ctrl && cargo "+$RUST_MSRV" check --locked --all-targets
+
+      - name: Check snapdog-update at MSRV
+        run: cd snapdog-update && cargo "+$RUST_MSRV" check --locked --all-targets
 
   security-audit:
     name: Security Audit
@@ -147,6 +180,7 @@ jobs:
       - name: Validate release config
         run: |
           ruby -e 'require "json"; JSON.parse(File.read("release-please-config.json")); JSON.parse(File.read(".release-please-manifest.json"))'
+          scripts/check-version-pins.sh
           test -x buildroot/board/raspberrypi/post-image-ab.sh
           test -f buildroot/keys/rauc-ca.cert.pem
           test -f buildroot/package/snapdog-rauc/system.conf.in

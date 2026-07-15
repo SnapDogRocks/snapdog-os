@@ -1913,7 +1913,13 @@ function UpdateTab() {
           <UpdatePhaseIndicator label={`${t(`phase_${phase}`)}${
             phase === "uploading" && uploadFraction != null && uploadFraction >= 0
               ? ` — ${Math.round(uploadFraction * 100)}%`
-              : progress != null ? ` — ${progress}%` : ""
+              // A percentage only means something while bytes are moving. "rebooting" and
+              // "reconnecting" are indeterminate, so don't append the last install value —
+              // RAUC typically ends the write at 99%, which would otherwise linger as a
+              // misleading "Reconnecting — 99%" as the device comes back after the update.
+              : (phase === "downloading" || phase === "verifying" || phase === "installing") && progress != null
+                ? ` — ${progress}%`
+                : ""
           }`} />
         )}
         {phase === "done" && (
@@ -1936,8 +1942,8 @@ function UpdateTab() {
         {phase === "idle" && (
           <>
             {confirming ? (
-              <div className="flex flex-col gap-3 rounded-lg bg-primary/10 p-4" role="alertdialog" aria-label={t("updateConfirm")}>
-                <p className="text-sm font-medium">{t("updateConfirm")}</p>
+              <div className="flex flex-col gap-3 rounded-lg bg-primary/10 p-4" role="alertdialog" aria-label={update?.is_downgrade ? t("downgradeConfirm") : t("updateConfirm")}>
+                <p className="text-sm font-medium">{update?.is_downgrade ? t("downgradeConfirm") : t("updateConfirm")}</p>
                 {update?.latest_version && (
                   <p className="text-xs font-mono text-muted-foreground">{update.current_version} → {update.latest_version}</p>
                 )}
@@ -1945,7 +1951,7 @@ function UpdateTab() {
                   <p className="text-xs font-medium text-destructive">{t("signatureUnverified")}</p>
                 )}
                 <div className="flex gap-2">
-                  <Button size="sm" onClick={() => { setConfirming(false); performUpdate(); }}>{t("confirmInstall")}</Button>
+                  <Button size="sm" onClick={() => { setConfirming(false); performUpdate(); }}>{update?.is_downgrade ? t("confirmDowngrade") : t("confirmInstall")}</Button>
                   <Button variant="outline" size="sm" onClick={() => setConfirming(false)}>{t("cancel")}</Button>
                 </div>
               </div>
@@ -1969,7 +1975,7 @@ function UpdateTab() {
                     <p className="text-sm font-medium">{t("downgradeAvailable")}</p>
                     <p className="text-xs text-muted-foreground">{update.current_version}{update.latest_version ? ` → ${update.latest_version}` : ""}</p>
                   </div>
-                  <Button variant="outline" size="sm" disabled={!update.installable} onClick={() => setConfirming(true)}>{t("installVersion")}</Button>
+                  <Button variant="outline" size="sm" disabled={!update.installable} onClick={() => setConfirming(true)}>{t("downgrade")}</Button>
                 </div>
                 <div className={`text-xs font-semibold flex items-center gap-1 border-t pt-2 ${update.signature_verified ? "border-border text-green-600 dark:text-green-400" : "border-destructive/30 text-destructive"}`}>
                   {update.signature_verified ? t("signatureVerified") : t("signatureUnverified")}
@@ -1998,8 +2004,9 @@ function UpdateTab() {
 
         {/* Channel lives in AutoUpdateSettings (always visible) — it is the single
             source of truth the backend uses for both manual check/install and
-            auto-update, so there is no separate decoupled selector here. */}
-        <AutoUpdateSettings />
+            auto-update, so there is no separate decoupled selector here. Changing it
+            re-checks the available version so the panel reflects the new channel. */}
+        <AutoUpdateSettings onChannelChange={checkForUpdate} />
 
         {phase === "idle" && (
           <>
@@ -2170,7 +2177,7 @@ function RawFlashSection() {
   );
 }
 
-function AutoUpdateSettings() {
+function AutoUpdateSettings({ onChannelChange }: { onChannelChange?: () => void }) {
   const t = useTranslations("update");
   const [config, setConfig] = useState({ enabled: true, channel: "release", interval: "daily", time: "04:00" });
   const [status, setStatus] = useState<"idle" | "saving" | "saved">("idle");
@@ -2190,7 +2197,7 @@ function AutoUpdateSettings() {
   // confirm on success, and revert to the last-persisted values on failure so the UI
   // never shows an unsaved value as if it took. `extra` lets saveChannel fold its
   // OS-channel mirror write into the SAME await/revert path.
-  const save = async (updated: typeof config, extra?: () => Promise<unknown>) => {
+  const save = async (updated: typeof config, extra?: () => Promise<unknown>): Promise<boolean> => {
     const previous = config;
     setConfig(updated);
     setError("");
@@ -2199,6 +2206,7 @@ function AutoUpdateSettings() {
       await Promise.all([api.setAutoUpdate(updated), ...(extra ? [extra()] : [])]);
       setStatus("saved");
       setTimeout(() => setStatus("idle"), 2000);
+      return true;
     } catch (e) {
       setStatus("idle");
       setError(e instanceof Error ? e.message : String(e));
@@ -2206,14 +2214,21 @@ function AutoUpdateSettings() {
       // failed, so an optimistic revert would misreport. Re-sync to the authoritative
       // persisted state instead (fall back to the pre-edit value if that also fails).
       api.getAutoUpdate().then(setConfig).catch(() => setConfig(previous));
+      return false;
     }
   };
   // The channel is the single source of truth the backend uses for BOTH manual
   // check/install and auto-update, so it is always visible (not gated on the toggle).
   // Mirror it to the OS channel file in the same await so the two stores can't diverge
   // silently when one write fails.
-  const saveChannel = (channel: string) =>
-    void save({ ...config, channel }, () => api.setSystem({ channel }));
+  const saveChannel = async (channel: string) => {
+    // Only refresh once the new channel is persisted — check_update reads it back as
+    // the SSOT, so the panel then shows the version THIS channel points at (which may
+    // be a downgrade, e.g. beta → stable).
+    if (await save({ ...config, channel }, () => api.setSystem({ channel }))) {
+      onChannelChange?.();
+    }
+  };
 
   const saving = status === "saving";
   // A failed load must not let a stray toggle overwrite the real (never-loaded) config
@@ -2228,7 +2243,7 @@ function AutoUpdateSettings() {
         </div>
       )}
       <Field label={t("channel")} htmlFor={channelId}>
-        <Select id={channelId} value={config.channel} disabled={locked} onChange={(e) => saveChannel(e.target.value)}>
+        <Select id={channelId} value={config.channel} disabled={locked} onChange={(e) => void saveChannel(e.target.value)}>
           <option value="release">{t("stable")}</option>
           <option value="beta">{t("beta")}</option>
         </Select>

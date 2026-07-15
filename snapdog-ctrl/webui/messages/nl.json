@@ -233,7 +233,10 @@
     "saved": "Opgeslagen",
     "saveError": "Opslaan mislukt",
     "loadError": "Kan de huidige instellingen niet laden — standaardwaarden worden getoond.",
-    "timeHint": "Wordt uitgevoerd in de tijdzone van het apparaat."
+    "timeHint": "Wordt uitgevoerd in de tijdzone van het apparaat.",
+    "downgrade": "Downgraden",
+    "downgradeConfirm": "Downgraden en herstarten?",
+    "confirmDowngrade": "Ja, downgraden & herstarten"
   },
   "server": {
     "title": "Server",

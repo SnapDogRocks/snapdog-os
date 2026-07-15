@@ -233,7 +233,10 @@
     "saved": "Guardado",
     "saveError": "No se pudo guardar",
     "loadError": "No se pudieron cargar los ajustes actuales — se muestran los valores predeterminados.",
-    "timeHint": "Se ejecuta en la zona horaria del dispositivo."
+    "timeHint": "Se ejecuta en la zona horaria del dispositivo.",
+    "downgrade": "Degradar",
+    "downgradeConfirm": "¿Degradar y reiniciar?",
+    "confirmDowngrade": "Sí, degradar y reiniciar"
   },
   "server": {
     "title": "Servidor",

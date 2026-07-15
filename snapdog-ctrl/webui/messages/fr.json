@@ -233,7 +233,10 @@
     "saved": "Enregistré",
     "saveError": "Échec de l'enregistrement",
     "loadError": "Impossible de charger les réglages actuels — valeurs par défaut affichées.",
-    "timeHint": "S'exécute dans le fuseau horaire de l'appareil."
+    "timeHint": "S'exécute dans le fuseau horaire de l'appareil.",
+    "downgrade": "Rétrograder",
+    "downgradeConfirm": "Rétrograder et redémarrer ?",
+    "confirmDowngrade": "Oui, rétrograder & redémarrer"
   },
   "server": {
     "title": "Serveur",

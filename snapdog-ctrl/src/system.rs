@@ -993,7 +993,11 @@ pub async fn check_update() -> UpdateCheckResponse {
 
     UpdateCheckResponse {
         available,
-        installable: available && signature_verified,
+        // A downgrade is manually installable too (e.g. switching the beta channel
+        // back to stable): RAUC installs any signature-verified bundle regardless of
+        // version, and only AUTO-update refuses to go backwards. Gate on the same
+        // signature check as a forward update.
+        installable: (available || is_downgrade) && signature_verified,
         current_version: if current.is_empty() {
             "unknown".into()
         } else {

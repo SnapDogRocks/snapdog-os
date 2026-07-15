@@ -233,7 +233,10 @@
     "saved": "Saved",
     "saveError": "Couldn't save",
     "loadError": "Couldn't load the current settings — showing defaults.",
-    "timeHint": "Runs in the device's timezone."
+    "timeHint": "Runs in the device's timezone.",
+    "downgrade": "Downgrade",
+    "downgradeConfirm": "Downgrade and reboot?",
+    "confirmDowngrade": "Yes, downgrade & reboot"
   },
   "server": {
     "title": "Server",

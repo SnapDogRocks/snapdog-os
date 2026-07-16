@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.3](https://github.com/SnapDogRocks/snapdog-os/compare/v0.10.2...v0.10.3) (2026-07-16)
+
+
+### Bug Fixes
+
+* **os:** zero2w build race (systemd dep) + stop cancelling release builds ([#104](https://github.com/SnapDogRocks/snapdog-os/issues/104)) ([85bc00b](https://github.com/SnapDogRocks/snapdog-os/commit/85bc00b7256981256ce654a580e9207d58f3ac85))
+
 ## [0.10.2](https://github.com/SnapDogRocks/snapdog-os/compare/v0.10.1...v0.10.2) (2026-07-15)
 
 

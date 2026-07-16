@@ -16,8 +16,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: true
+  # Per-commit group so a later push NEVER cancels an in-flight build. The old
+  # shared `release-<ref>` group + cancel-in-progress silently killed several
+  # release builds mid-flight (a push landing during the ~90-min image build
+  # aborted the release → nothing published). Each commit now runs to completion.
+  group: release-${{ github.sha }}
+  cancel-in-progress: false
 
 env:
   R2_BUCKET: snapdog-updates

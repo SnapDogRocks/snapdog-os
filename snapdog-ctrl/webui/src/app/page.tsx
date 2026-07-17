@@ -2332,55 +2332,196 @@ function UpdatePhaseIndicator({ label }: { label: string }) {
   );
 }
 
+function PasswordRevealInput({
+  id,
+  value,
+  onChange,
+  show,
+  onToggleShow,
+  autoFocus,
+}: {
+  id: string;
+  value: string;
+  onChange: (v: string) => void;
+  show: boolean;
+  onToggleShow: () => void;
+  autoFocus?: boolean;
+}) {
+  const t = useTranslations("system");
+  return (
+    <div className="relative">
+      <Input
+        id={id}
+        type={show ? "text" : "password"}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        autoComplete="new-password"
+        autoFocus={autoFocus}
+        className="pr-9"
+      />
+      <button
+        type="button"
+        onClick={onToggleShow}
+        aria-label={show ? t("hidePassword") : t("showPassword")}
+        className="absolute right-1 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+      >
+        {show ? (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="size-4" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="size-4" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        )}
+      </button>
+    </div>
+  );
+}
+
+type PasswordFlow = "idle" | "enable" | "change" | "disable";
+
 function DevicePasswordCard() {
+  const t = useTranslations("system");
+  const id = useId();
+
+  const [authEnabled, setAuthEnabled] = useState<boolean | null>(null);
+  const [flow, setFlow] = useState<PasswordFlow>("idle");
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [confirmPw, setConfirmPw] = useState("");
+  const [showPw, setShowPw] = useState(false);
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [authEnabled, setAuthEnabled] = useState(false);
-  const id = useId();
 
   useEffect(() => {
-    api.getAuthStatus().then((s) => setAuthEnabled(s.enabled)).catch(() => {});
+    api.getAuthStatus().then((s) => setAuthEnabled(s.enabled)).catch(() => setAuthEnabled(false));
   }, []);
 
-  const handleSave = async () => {
-    if (newPw !== confirmPw) { setStatus("error"); return; }
+  const mismatch = newPw.length > 0 && confirmPw.length > 0 && newPw !== confirmPw;
+
+  const closeFlow = () => {
+    setFlow("idle");
+    setCurrentPw(""); setNewPw(""); setConfirmPw(""); setShowPw(false);
+    setStatus("idle");
+  };
+
+  const finishSuccess = (nextEnabled: boolean) => {
+    setAuthEnabled(nextEnabled);
+    setCurrentPw(""); setNewPw(""); setConfirmPw(""); setShowPw(false);
+    setStatus("saved");
+    setTimeout(() => { setFlow("idle"); setStatus("idle"); }, 1500);
+  };
+
+  const handleToggle = (next: boolean) => {
+    if (next && !authEnabled) setFlow("enable");
+    else if (!next && authEnabled) setFlow("disable");
+  };
+
+  const handleEnable = async () => {
+    if (!newPw || mismatch) { setStatus("error"); return; }
     setStatus("saving");
     try {
-      await api.setPassword(authEnabled ? currentPw : null, newPw || null);
-      setStatus("saved");
-      setCurrentPw(""); setNewPw(""); setConfirmPw("");
-      setAuthEnabled(!!newPw);
-      setTimeout(() => setStatus("idle"), 2000);
+      await api.setPassword(null, newPw);
+      finishSuccess(true);
+    } catch { setStatus("error"); }
+  };
+
+  const handleChange = async () => {
+    if (!newPw || mismatch) { setStatus("error"); return; }
+    setStatus("saving");
+    try {
+      await api.setPassword(currentPw, newPw);
+      finishSuccess(true);
+    } catch { setStatus("error"); }
+  };
+
+  const handleDisable = async () => {
+    setStatus("saving");
+    try {
+      await api.setPassword(currentPw, null);
+      finishSuccess(false);
     } catch { setStatus("error"); }
   };
 
   return (
-    <Card title="Device Password" id={id}>
-      <div className="space-y-3">
-        <p className="text-sm text-muted-foreground">
-          Protects the web UI and console login. Leave empty to disable.
-        </p>
-        {authEnabled && (
-          <div>
-            <label htmlFor={`${id}-current`} className="text-sm font-medium">Current password</label>
-            <Input id={`${id}-current`} type="password" value={currentPw} onChange={(e) => setCurrentPw(e.target.value)} />
+    <Card title={t("devicePassword")} id={id}>
+      <div className="space-y-4">
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">{t("passwordProtection")}</p>
+            <p className="text-sm text-muted-foreground">{t("passwordDescription")}</p>
+          </div>
+          <Switch
+            checked={!!authEnabled}
+            onCheckedChange={handleToggle}
+            disabled={authEnabled === null || status === "saving"}
+            aria-label={t("passwordProtection")}
+          />
+        </div>
+
+        {authEnabled && flow === "idle" && (
+          <Button variant="outline" size="sm" onClick={() => setFlow("change")}>
+            {t("changePassword")}
+          </Button>
+        )}
+
+        {flow === "enable" && (
+          <div className="space-y-3 rounded-lg border border-border/70 bg-muted/25 p-3 animate-in fade-in slide-in-from-top-2 duration-200">
+            <Field label={t("newPassword")} htmlFor={`${id}-new`}>
+              <PasswordRevealInput id={`${id}-new`} value={newPw} onChange={setNewPw} show={showPw} onToggleShow={() => setShowPw((v) => !v)} autoFocus />
+            </Field>
+            <Field label={t("confirmPassword")} htmlFor={`${id}-confirm`}>
+              <PasswordRevealInput id={`${id}-confirm`} value={confirmPw} onChange={setConfirmPw} show={showPw} onToggleShow={() => setShowPw((v) => !v)} />
+            </Field>
+            {(mismatch || status === "error") && <p className="text-sm text-destructive">{t("passwordError")}</p>}
+            {status === "saved" && <p className="text-sm text-green-600">{t("passwordUpdated")}</p>}
+            <div className="flex gap-2">
+              <Button onClick={handleEnable} disabled={!newPw || mismatch || status === "saving"}>
+                {status === "saving" ? t("saving") : t("turnOnPasswordProtection")}
+              </Button>
+              <Button variant="ghost" onClick={closeFlow}>{t("cancel")}</Button>
+            </div>
           </div>
         )}
-        <div>
-          <label htmlFor={`${id}-new`} className="text-sm font-medium">New password</label>
-          <Input id={`${id}-new`} type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="Leave empty to disable" />
-        </div>
-        <div>
-          <label htmlFor={`${id}-confirm`} className="text-sm font-medium">Confirm password</label>
-          <Input id={`${id}-confirm`} type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} />
-        </div>
-        {status === "error" && <p className="text-sm text-destructive">Passwords don&apos;t match or current password is wrong.</p>}
-        {status === "saved" && <p className="text-sm text-green-600">Password updated.</p>}
-        <Button onClick={handleSave} disabled={status === "saving" || (newPw !== confirmPw)}>
-          {status === "saving" ? "Saving..." : "Save"}
-        </Button>
+
+        {flow === "change" && (
+          <div className="space-y-3 rounded-lg border border-border/70 bg-muted/25 p-3 animate-in fade-in slide-in-from-top-2 duration-200">
+            <Field label={t("currentPassword")} htmlFor={`${id}-current`}>
+              <PasswordRevealInput id={`${id}-current`} value={currentPw} onChange={setCurrentPw} show={showPw} onToggleShow={() => setShowPw((v) => !v)} autoFocus />
+            </Field>
+            <Field label={t("newPassword")} htmlFor={`${id}-new`}>
+              <PasswordRevealInput id={`${id}-new`} value={newPw} onChange={setNewPw} show={showPw} onToggleShow={() => setShowPw((v) => !v)} />
+            </Field>
+            <Field label={t("confirmPassword")} htmlFor={`${id}-confirm`}>
+              <PasswordRevealInput id={`${id}-confirm`} value={confirmPw} onChange={setConfirmPw} show={showPw} onToggleShow={() => setShowPw((v) => !v)} />
+            </Field>
+            {(mismatch || status === "error") && <p className="text-sm text-destructive">{t("passwordError")}</p>}
+            {status === "saved" && <p className="text-sm text-green-600">{t("passwordUpdated")}</p>}
+            <div className="flex gap-2">
+              <Button onClick={handleChange} disabled={!currentPw || !newPw || mismatch || status === "saving"}>
+                {status === "saving" ? t("saving") : t("save")}
+              </Button>
+              <Button variant="ghost" onClick={closeFlow}>{t("cancel")}</Button>
+            </div>
+          </div>
+        )}
+
+        {flow === "disable" && (
+          <div className="space-y-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 animate-in fade-in slide-in-from-top-2 duration-200">
+            <p className="text-sm text-muted-foreground">{t("turnOffPasswordProtectionConfirm")}</p>
+            <Field label={t("currentPassword")} htmlFor={`${id}-disable-current`}>
+              <PasswordRevealInput id={`${id}-disable-current`} value={currentPw} onChange={setCurrentPw} show={showPw} onToggleShow={() => setShowPw((v) => !v)} autoFocus />
+            </Field>
+            {status === "error" && <p className="text-sm text-destructive">{t("passwordError")}</p>}
+            <div className="flex gap-2">
+              <Button variant="destructive" onClick={handleDisable} disabled={!currentPw || status === "saving"}>
+                {status === "saving" ? t("saving") : t("turnOffPasswordProtection")}
+              </Button>
+              <Button variant="ghost" onClick={closeFlow}>{t("cancel")}</Button>
+            </div>
+          </div>
+        )}
       </div>
     </Card>
   );
@@ -3403,7 +3544,14 @@ export default function Page() {
   const [authState, setAuthState] = useState<"loading" | "login" | "ready">("loading");
   const [loginError, setLoginError] = useState(false);
   const [password, setPassword] = useState("");
+  const [lockedSeconds, setLockedSeconds] = useState(0);
   const passwordId = useId();
+
+  useEffect(() => {
+    if (lockedSeconds <= 0) return;
+    const id = setTimeout(() => setLockedSeconds((s) => Math.max(0, s - 1)), 1000);
+    return () => clearTimeout(id);
+  }, [lockedSeconds]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3424,12 +3572,13 @@ export default function Page() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(false);
-    const ok = await api.login(password);
-    if (ok) {
+    const result = await api.login(password);
+    if (result.ok) {
       setPassword("");
       setAuthState("ready");
     } else {
       setLoginError(true);
+      setLockedSeconds(result.retryAfter);
     }
   };
 
@@ -3446,6 +3595,7 @@ export default function Page() {
       <div className="flex items-center justify-center min-h-screen p-4">
         <form onSubmit={handleLogin} className="w-full max-w-sm space-y-4">
           <div className="text-center space-y-2">
+            <img src="/icon.svg" alt="" className="mx-auto size-16" aria-hidden="true" />
             <h1 className="text-2xl font-bold">SnapDog</h1>
             <p className="text-sm text-muted-foreground">{t("prompt")}</p>
           </div>
@@ -3458,16 +3608,17 @@ export default function Page() {
               onChange={(e) => { setPassword(e.target.value); setLoginError(false); }}
               placeholder={t("password")}
               autoFocus
+              disabled={lockedSeconds > 0}
               aria-invalid={loginError}
               aria-describedby={loginError ? `${passwordId}-error` : undefined}
             />
             {loginError && (
               <p id={`${passwordId}-error`} className="text-sm text-destructive" role="alert">
-                {t("incorrectPassword")}
+                {lockedSeconds > 0 ? t("tooManyAttempts", { seconds: lockedSeconds }) : t("incorrectPassword")}
               </p>
             )}
           </div>
-          <Button type="submit" className="w-full" disabled={!password}>
+          <Button type="submit" className="w-full" disabled={!password || lockedSeconds > 0}>
             {t("login")}
           </Button>
         </form>

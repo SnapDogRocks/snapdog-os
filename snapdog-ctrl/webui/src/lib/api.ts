@@ -325,17 +325,20 @@ export const api = {
 
   // Auth
   getAuthStatus: () => request<AuthStatus>("/api/auth/status"),
-  login: async (password: string): Promise<boolean> => {
-    try {
-      const res = await request<{ token: string }>("/api/auth/login", {
-        method: "POST",
-        body: JSON.stringify({ password }),
-      });
-      setToken(res.token);
-      return true;
-    } catch {
-      return false;
+  login: async (password: string): Promise<LoginResult> => {
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+    if (res.status === 429) {
+      const retryAfter = Number(res.headers.get("Retry-After")) || 0;
+      return { ok: false, retryAfter };
     }
+    if (!res.ok) return { ok: false, retryAfter: 0 };
+    const { token } = (await res.json()) as { token: string };
+    setToken(token);
+    return { ok: true };
   },
   logout: async (): Promise<void> => {
     try { await request<void>("/api/auth/logout", { method: "POST" }); } catch { /* ignore */ }
@@ -430,6 +433,8 @@ export interface AuthStatus {
   enabled: boolean;
   authenticated: boolean;
 }
+
+export type LoginResult = { ok: true } | { ok: false; retryAfter: number };
 
 export interface SettingsPreview {
   hostname: string | null;

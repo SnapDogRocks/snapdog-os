@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/SnapDogRocks/snapdog-os/compare/v0.10.4...v0.11.0) (2026-07-17)
+
+
+### Features
+
+* **webui:** translate remaining hardcoded strings, add Italian locale ([#112](https://github.com/SnapDogRocks/snapdog-os/issues/112)) ([b6a1bf8](https://github.com/SnapDogRocks/snapdog-os/commit/b6a1bf8442211f62a78bc5725197b3f8d2f3ed49))
+
 ## [0.10.4](https://github.com/SnapDogRocks/snapdog-os/compare/v0.10.3...v0.10.4) (2026-07-17)
 
 

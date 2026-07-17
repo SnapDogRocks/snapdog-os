@@ -5,6 +5,7 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -15,6 +16,25 @@ use tokio::sync::RwLock;
 const CTRL_CONFIG_PATH: &str = "/data/snapdog/ctrl.toml";
 const TOKEN_BYTES: usize = 32;
 
+/// Number of wrong-password attempts allowed before a lockout delay kicks in.
+const LOCKOUT_FREE_ATTEMPTS: u32 = 3;
+/// Delay applied on the first attempt past the free budget.
+const LOCKOUT_BASE_SECS: u64 = 5;
+/// Delay never grows past this, no matter how many attempts follow.
+const LOCKOUT_MAX_SECS: u64 = 300;
+
+/// Seconds to lock out login after `attempt` total failed attempts (0 = no lockout).
+/// Doubles per attempt past the free budget: 5, 10, 20, 40, 80, 160, 300 (capped).
+fn backoff_delay_secs(attempt: u32) -> u64 {
+    if attempt <= LOCKOUT_FREE_ATTEMPTS {
+        return 0;
+    }
+    let exp = (attempt - LOCKOUT_FREE_ATTEMPTS - 1).min(6);
+    LOCKOUT_BASE_SECS
+        .saturating_mul(1u64 << exp)
+        .min(LOCKOUT_MAX_SECS)
+}
+
 /// Shared auth state, passed as axum extension.
 #[derive(Clone)]
 pub struct AuthState(pub Arc<AuthInner>);
@@ -24,6 +44,10 @@ pub struct AuthInner {
     pub password_hash: RwLock<Option<String>>,
     /// Set of valid bearer tokens.
     pub tokens: RwLock<HashSet<String>>,
+    /// Count of consecutive failed login attempts (global, not per-client).
+    failed_attempts: RwLock<u32>,
+    /// When the current lockout (if any) expires.
+    locked_until: RwLock<Option<Instant>>,
 }
 
 impl AuthState {
@@ -33,6 +57,8 @@ impl AuthState {
         Self(Arc::new(AuthInner {
             password_hash: RwLock::new(hash),
             tokens: RwLock::new(HashSet::new()),
+            failed_attempts: RwLock::new(0),
+            locked_until: RwLock::new(None),
         }))
     }
 
@@ -69,13 +95,50 @@ impl AuthState {
     pub async fn set_password(&self, password: &str) -> anyhow::Result<()> {
         let hash = bcrypt::hash(password, bcrypt::DEFAULT_COST)?;
         *self.0.password_hash.write().await = Some(hash.clone());
+        self.reset_lockout().await;
         persist_password_hash(Some(&hash)).await
     }
 
     pub async fn remove_password(&self) -> anyhow::Result<()> {
         *self.0.password_hash.write().await = None;
         self.revoke_all().await;
+        self.reset_lockout().await;
         persist_password_hash(None).await
+    }
+
+    /// Seconds remaining in the current login lockout, or `None` if login attempts
+    /// are currently allowed.
+    pub async fn lockout_remaining(&self) -> Option<u64> {
+        let until = (*self.0.locked_until.read().await)?;
+        let now = Instant::now();
+        if now >= until {
+            None
+        } else {
+            Some((until - now).as_secs().max(1))
+        }
+    }
+
+    /// Record a wrong-password attempt and, past the free budget, arm/extend the lockout.
+    pub async fn record_failed_login(&self) {
+        let attempt = {
+            let mut attempts = self.0.failed_attempts.write().await;
+            *attempts = attempts.saturating_add(1);
+            *attempts
+        };
+        let delay = backoff_delay_secs(attempt);
+        if delay > 0 {
+            *self.0.locked_until.write().await = Some(Instant::now() + Duration::from_secs(delay));
+        }
+    }
+
+    /// Clear the failure count after a successful login.
+    pub async fn record_successful_login(&self) {
+        self.reset_lockout().await;
+    }
+
+    async fn reset_lockout(&self) {
+        *self.0.failed_attempts.write().await = 0;
+        *self.0.locked_until.write().await = None;
     }
 }
 
@@ -148,4 +211,28 @@ async fn persist_password_hash(hash: Option<&str>) -> anyhow::Result<()> {
     }
     crate::system::atomic_write(CTRL_CONFIG_PATH, &doc.to_string()).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn free_attempts_have_no_delay() {
+        for attempt in 1..=LOCKOUT_FREE_ATTEMPTS {
+            assert_eq!(backoff_delay_secs(attempt), 0);
+        }
+    }
+
+    #[test]
+    fn delay_doubles_then_caps() {
+        assert_eq!(backoff_delay_secs(4), 5);
+        assert_eq!(backoff_delay_secs(5), 10);
+        assert_eq!(backoff_delay_secs(6), 20);
+        assert_eq!(backoff_delay_secs(7), 40);
+        assert_eq!(backoff_delay_secs(8), 80);
+        assert_eq!(backoff_delay_secs(9), 160);
+        assert_eq!(backoff_delay_secs(10), 300);
+        assert_eq!(backoff_delay_secs(50), 300);
+    }
 }

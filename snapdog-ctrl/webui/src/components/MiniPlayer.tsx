@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { api, type NowPlaying } from "@/lib/api";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { useTranslations } from "next-intl";
 
 function formatTime(ms: number): string {
   const s = Math.floor(ms / 1000);
@@ -74,6 +75,7 @@ function VolumeIcon({ muted, className }: { muted: boolean; className?: string }
 // ── NowPlayingSheet ───────────────────────────────────────────
 
 function NowPlayingSheet({ np, open, onClose }: { np: NowPlaying; open: boolean; onClose: () => void }) {
+  const t = useTranslations("player");
   const [localPosition, setLocalPosition] = useState(np.position_ms);
   const [dragging, setDragging] = useState(false);
   const [localVolume, setLocalVolume] = useState(np.volume);
@@ -98,7 +100,7 @@ function NowPlayingSheet({ np, open, onClose }: { np: NowPlaying; open: boolean;
       className={`fixed inset-0 z-50 flex flex-col transition-transform duration-300 ease-out motion-reduce:transition-none ${open ? "translate-y-0" : "translate-y-full"}`}
       role="dialog"
       aria-modal="true"
-      aria-label="Now Playing"
+      aria-label={t("nowPlaying")}
       aria-hidden={!open}
     >
       {/* Backdrop */}
@@ -111,7 +113,7 @@ function NowPlayingSheet({ np, open, onClose }: { np: NowPlaying; open: boolean;
           type="button"
           onClick={onClose}
           className="absolute top-4 left-1/2 -translate-x-1/2 rounded-full p-2 text-white/80 hover:text-white transition-colors focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:outline-none"
-          aria-label="Close"
+          aria-label={t("close")}
         >
           <ChevronDownIcon className="size-7" />
         </button>
@@ -159,7 +161,7 @@ function NowPlayingSheet({ np, open, onClose }: { np: NowPlaying; open: boolean;
               onMouseUp={() => { setDragging(false); api.nowPlayingSeek(localPosition); }}
               onTouchEnd={() => { setDragging(false); api.nowPlayingSeek(localPosition); }}
               className="w-full h-1 appearance-none rounded-full bg-white/20 accent-amber-500 cursor-pointer [&::-webkit-slider-thumb]:size-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white"
-              aria-label="Seek"
+              aria-label={t("seek")}
             />
             <div className="flex justify-between mt-1 text-[10px] text-white/40 font-mono">
               <span>{formatTime(positionSource)}</span>
@@ -175,7 +177,7 @@ function NowPlayingSheet({ np, open, onClose }: { np: NowPlaying; open: boolean;
             onClick={() => api.nowPlayingCommand("previous")}
             disabled={!np.can_prev}
             className="p-3 text-white/80 hover:text-white disabled:text-white/20 transition-colors"
-            aria-label="Previous"
+            aria-label={t("previous")}
           >
             <PrevIcon className="size-7" />
           </button>
@@ -183,7 +185,7 @@ function NowPlayingSheet({ np, open, onClose }: { np: NowPlaying; open: boolean;
             type="button"
             onClick={() => api.nowPlayingCommand("play_pause")}
             className="flex size-16 items-center justify-center rounded-full bg-white text-black hover:bg-white/90 transition-colors focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:outline-none"
-            aria-label={np.playing ? "Pause" : "Play"}
+            aria-label={np.playing ? t("pause") : t("play")}
           >
             {np.playing ? <PauseIcon className="size-7" /> : <PlayIcon className="size-7 ml-0.5" />}
           </button>
@@ -192,7 +194,7 @@ function NowPlayingSheet({ np, open, onClose }: { np: NowPlaying; open: boolean;
             onClick={() => api.nowPlayingCommand("next")}
             disabled={!np.can_next}
             className="p-3 text-white/80 hover:text-white disabled:text-white/20 transition-colors"
-            aria-label="Next"
+            aria-label={t("next")}
           >
             <NextIcon className="size-7" />
           </button>
@@ -204,7 +206,7 @@ function NowPlayingSheet({ np, open, onClose }: { np: NowPlaying; open: boolean;
             type="button"
             onClick={() => api.setNowPlayingVolume(np.muted ? np.volume : 0)}
             className="text-white/80 hover:text-white transition-colors focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:outline-none"
-            aria-label={np.muted ? "Unmute" : "Mute"}
+            aria-label={np.muted ? t("unmute") : t("mute")}
           >
             <VolumeIcon muted={np.muted} className="size-4" />
           </button>
@@ -223,13 +225,13 @@ function NowPlayingSheet({ np, open, onClose }: { np: NowPlaying; open: boolean;
             onMouseUp={() => { setVolumeDragging(false); api.setNowPlayingVolume(localVolume); }}
             onTouchEnd={() => { setVolumeDragging(false); api.setNowPlayingVolume(localVolume); }}
             className="flex-1 h-1 appearance-none rounded-full bg-white/20 accent-amber-500 cursor-pointer [&::-webkit-slider-thumb]:size-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white"
-            aria-label="Volume"
+            aria-label={t("volume")}
           />
         </div>
 
         {/* Source badge */}
         {np.album && (
-          <p className="mt-6 text-[10px] text-white/30 uppercase tracking-wider">Now Playing</p>
+          <p className="mt-6 text-[10px] text-white/30 uppercase tracking-wider">{t("nowPlaying")}</p>
         )}
       </div>
     </div>
@@ -239,6 +241,7 @@ function NowPlayingSheet({ np, open, onClose }: { np: NowPlaying; open: boolean;
 // ── MiniPlayer ────────────────────────────────────────────────
 
 export function MiniPlayer({ clientEnabled }: { clientEnabled: boolean }) {
+  const t = useTranslations("player");
   const [np, setNp] = useState<NowPlaying | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
 
@@ -263,7 +266,7 @@ export function MiniPlayer({ clientEnabled }: { clientEnabled: boolean }) {
         onClick={() => setSheetOpen(true)}
         role="button"
         tabIndex={0}
-        aria-label={`Now playing: ${np.title} by ${np.artist}`}
+        aria-label={t("nowPlayingBy", { title: np.title, artist: np.artist })}
         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSheetOpen(true); } }}
       >
         <div className="flex items-center gap-3">
@@ -289,7 +292,7 @@ export function MiniPlayer({ clientEnabled }: { clientEnabled: boolean }) {
             type="button"
             onClick={(e) => { e.stopPropagation(); api.nowPlayingCommand("play_pause"); }}
             className="flex size-9 items-center justify-center rounded-full text-white hover:bg-white/10 transition-colors focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:outline-none"
-            aria-label={np.playing ? "Pause" : "Play"}
+            aria-label={np.playing ? t("pause") : t("play")}
           >
             {np.playing ? <PauseIcon className="size-5" /> : <PlayIcon className="size-5 ml-0.5" />}
           </button>

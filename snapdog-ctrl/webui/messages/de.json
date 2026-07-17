@@ -133,7 +133,8 @@
     "autoConnectOption": "Automatisch mit aktivem Server verbinden",
     "autoConnectDesc": "Verbindet sich dynamisch per mDNS mit dem ersten gefundenen Server",
     "loading": "Lade Client-Konfiguration",
-    "manualSettings": "Manuelle Einstellungen"
+    "manualSettings": "Manuelle Einstellungen",
+    "targetUrl": "Ziel-URL"
   },
   "ssh": {
     "title": "SSH",
@@ -178,7 +179,21 @@
     "copied": "Kopiert",
     "saved": "Gespeichert",
     "timezoneSaveError": "Zeitzone konnte nicht gespeichert werden.",
-    "hostname": "Hostname"
+    "hostname": "Hostname",
+    "devicePassword": "Gerätepasswort",
+    "passwordDescription": "Schützt die Web-Oberfläche und die Konsolenanmeldung. Leer lassen, um zu deaktivieren.",
+    "currentPassword": "Aktuelles Passwort",
+    "newPassword": "Neues Passwort",
+    "confirmPassword": "Passwort bestätigen",
+    "passwordDisableHint": "Leer lassen, um zu deaktivieren",
+    "passwordError": "Die Passwörter stimmen nicht überein oder das aktuelle Passwort ist falsch.",
+    "passwordUpdated": "Passwort aktualisiert.",
+    "saving": "Wird gespeichert...",
+    "save": "Speichern",
+    "wifiConfig": "WLAN",
+    "sshKeys": "SSH-Schlüssel",
+    "authentication": "Authentifizierung",
+    "moreInfo": "Weitere Informationen"
   },
   "update": {
     "title": "Firmware-Update",
@@ -237,13 +252,33 @@
     "downgrade": "Herabstufen",
     "downgradeConfirm": "Herabstufen und neu starten?",
     "confirmDowngrade": "Ja, herabstufen & neu starten",
-    "stagedTitle": "Update bereit zur Aktivierung"
+    "stagedTitle": "Update bereit zur Aktivierung",
+    "rawAdvanced": "Erweitert: Roh-Image flashen (Notfalloption)",
+    "rawWarning": "Umgeht die Signaturprüfung. Nur zur Wiederherstellung oder Entwicklung verwenden.",
+    "rawImageLabel": "Root-Dateisystem-Image (.img oder .img.gz)",
+    "rawPrepare": "Hochladen und vorbereiten",
+    "rawUploading": "Wird hochgeladen...",
+    "rawConfirmBefore": "Zum Bestätigen des Flash-Vorgangs",
+    "rawConfirmAfter": "eingeben:",
+    "rawConfirm": "Flash-Vorgang bestätigen",
+    "rawFlashing": "Inaktive Partition wird beschrieben...",
+    "rawComplete": "Flash-Vorgang abgeschlossen. Zum Aktivieren neu starten.",
+    "rawError": "Fehlgeschlagen. Bestätigungscode abgelaufen oder Fehler beim Hochladen."
   },
   "server": {
     "title": "Server",
     "deviceName": "Gerätename",
     "advertiseSnapcast": "Für Snapcast-Clients ankündigen",
     "airplayPasswordHint": "Leer lassen für uneingeschränkten Zugang",
+    "pickIcon": "Symbol auswählen",
+    "legacy": "Veraltet",
+    "remove": "Entfernen",
+    "maxVolume": "Maximale Lautstärke",
+    "maxVolumeShort": "Max. Lautst.",
+    "apiKeysDescription": "Schlüssel für den Zugriff auf die HTTP-API des SnapDog-Servers.",
+    "removeKey": "Schlüssel entfernen",
+    "addKey": "Schlüssel hinzufügen",
+    "originalRaw": "Original (roh)",
     "airplayMode": "Protokoll",
     "streamingFormat": "Stream-Format",
     "enable": "Server aktivieren",
@@ -334,14 +369,19 @@
     "sourceValue": "SnapDogRocks/snapdog ↗",
     "licenseLabel": "LIZENZ",
     "licenseValue": "GPL-3.0 ↗",
-    "done": "Fertig"
+    "done": "Fertig",
+    "logoAlt": "SnapDog-Logo"
   },
   "health": {
     "boot_not_mounted": "Boot-Partition nicht gemountet — OTA-Updates deaktiviert",
     "no_wlan": "Kein WLAN-Adapter — Setup-AP nicht verfügbar",
     "no_inactive_partition": "Inaktive Partition nicht gefunden — Updates deaktiviert",
     "data_not_mounted": "Datenpartition (/data) ist nicht gemountet",
-    "data_not_writable": "Datenpartition (/data) ist nicht beschreibbar"
+    "data_not_writable": "Datenpartition (/data) ist nicht beschreibbar",
+    "systemError": "Systemfehler",
+    "criticalDetail": "Das Gerät kann nicht normal betrieben werden. Versuchen Sie einen Neustart oder flashen Sie die SD-Karte neu.",
+    "reboot": "Neu starten",
+    "dismiss": "Ausblenden"
   },
   "player": {
     "play": "Wiedergabe",
@@ -352,7 +392,9 @@
     "unmute": "Ton an",
     "close": "Schließen",
     "nowPlaying": "Aktuelle Wiedergabe",
-    "seek": "Spulen"
+    "seek": "Spulen",
+    "volume": "Lautstärke",
+    "nowPlayingBy": "Aktuelle Wiedergabe: {title} von {artist}"
   },
   "tuning": {
     "title": "Hardware-Optimierung",
@@ -374,5 +416,11 @@
     "applyLater": "Beim nächsten Neustart",
     "cancel": "Abbrechen",
     "awaitingReboot": "Gespeichert. Änderungen werden beim nächsten Neustart wirksam."
+  },
+  "auth": {
+    "prompt": "Passwort eingeben, um fortzufahren",
+    "password": "Passwort",
+    "incorrectPassword": "Falsches Passwort",
+    "login": "Anmelden"
   }
 }

@@ -31,13 +31,14 @@ type Tab = "dashboard" | "network" | "audio" | "client" | "server" | "ssh" | "up
 const EMOJI_PRESETS = ["🔊", "🛋️", "🍽️", "🛏️", "🎵", "🏠", "🚿", "📺", "💻", "🎧", "🎶", "🌙", "☀️", "🌿", "🏢", "🎮", "📻", "🎹", "🎸", "🥁", "🎺"];
 
 function EmojiPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const t = useTranslations("server");
   const [open, setOpen] = useState(false);
   const [custom, setCustom] = useState(false);
   const isCustom = !EMOJI_PRESETS.includes(value) && value !== "";
 
   return (
     <div className="relative">
-      <button type="button" onClick={() => setOpen(!open)} className="flex size-8 items-center justify-center rounded-md border border-border text-base hover:bg-muted" aria-label="Pick icon">
+      <button type="button" onClick={() => setOpen(!open)} className="flex size-8 items-center justify-center rounded-md border border-border text-base hover:bg-muted" aria-label={t("pickIcon")}>
         {value || "🔊"}
       </button>
       {open && (
@@ -1417,7 +1418,7 @@ function ClientTab() {
                   {manualHost && (
                     <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between rounded-lg bg-muted/30 p-3 border border-border/50 animate-in slide-in-from-top-2 duration-200">
                       <div className="space-y-0.5">
-                        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Target URL</span>
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{t("targetUrl")}</span>
                         <div className="font-mono text-xs text-foreground bg-background px-2.5 py-1.5 rounded border border-border/70 shadow-xs">
                           tcp://{manualHost}:{manualPort || "1704"}
                         </div>
@@ -2148,6 +2149,7 @@ function UpdateTab() {
 }
 
 function RawFlashSection() {
+  const t = useTranslations("update");
   const [expanded, setExpanded] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [challenge, setChallenge] = useState<string | null>(null);
@@ -2177,36 +2179,36 @@ function RawFlashSection() {
   return (
     <div className="border-t border-border pt-3 mt-3">
       <button type="button" onClick={() => setExpanded(!expanded)} className="text-xs text-muted-foreground hover:text-foreground">
-        ▸ Advanced: Raw Flash (escape hatch)
+        ▸ {t("rawAdvanced")}
       </button>
       {expanded && (
         <div className="mt-3 space-y-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
-          <p className="text-xs text-destructive font-medium">⚠️ Bypasses signature verification. Use only for recovery or development.</p>
+          <p className="text-xs text-destructive font-medium">⚠️ {t("rawWarning")}</p>
           {status === "idle" && (
             <>
               <div>
-                <label htmlFor={id} className="text-xs font-medium">Root filesystem image (.img or .img.gz)</label>
+                <label htmlFor={id} className="text-xs font-medium">{t("rawImageLabel")}</label>
                 <input id={id} type="file" accept=".img,.img.gz,.gz" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="mt-1 block w-full text-xs" />
               </div>
-              <Button size="sm" variant="outline" disabled={!file} onClick={handleUpload}>Upload &amp; prepare</Button>
+              <Button size="sm" variant="outline" disabled={!file} onClick={handleUpload}>{t("rawPrepare")}</Button>
             </>
           )}
-          {status === "uploading" && <p className="text-xs">Uploading...</p>}
+          {status === "uploading" && <p className="text-xs">{t("rawUploading")}</p>}
           {status === "confirming" && challenge && (
             <div className="space-y-2">
-              <p className="text-xs">Type <code className="font-bold text-destructive">{challenge}</code> to confirm flash:</p>
+              <p className="text-xs">{t("rawConfirmBefore")} <code className="font-bold text-destructive">{challenge}</code> {t("rawConfirmAfter")}</p>
               <Input value={input} onChange={(e) => setInput(e.target.value.toUpperCase())} placeholder={challenge} className="font-mono text-center" />
-              <Button size="sm" variant="outline" disabled={input !== challenge} onClick={handleConfirm}>Confirm flash</Button>
+              <Button size="sm" variant="outline" disabled={input !== challenge} onClick={handleConfirm}>{t("rawConfirm")}</Button>
             </div>
           )}
-          {status === "flashing" && <p className="text-xs">Flashing to inactive partition...</p>}
+          {status === "flashing" && <p className="text-xs">{t("rawFlashing")}</p>}
           {status === "done" && (
             <div className="space-y-2">
-              <p className="text-xs text-green-600">Flash complete. Reboot to activate.</p>
-              <Button size="sm" onClick={() => api.reboot()}>Reboot now</Button>
+              <p className="text-xs text-green-600">{t("rawComplete")}</p>
+              <Button size="sm" onClick={() => api.reboot()}>{t("rebootNow")}</Button>
             </div>
           )}
-          {status === "error" && <p className="text-xs text-destructive">Failed. Challenge expired or upload error.</p>}
+          {status === "error" && <p className="text-xs text-destructive">{t("rawError")}</p>}
         </div>
       )}
     </div>
@@ -2440,10 +2442,10 @@ function SettingsCard() {
           <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 space-y-2">
             <p className="text-xs font-medium">{t("importPreview")}</p>
             <ul className="text-xs text-muted-foreground space-y-1">
-              {preview.hostname && <li>Hostname: <span className="font-mono">{preview.hostname}</span></li>}
-              <li>WiFi: {preview.wifi_configured ? "✓" : "—"}</li>
-              <li>SSH Keys: {preview.ssh_keys_present ? "✓" : "—"}</li>
-              <li>Auth: {preview.has_auth ? "✓" : "—"}</li>
+              {preview.hostname && <li>{t("hostname")}: <span className="font-mono">{preview.hostname}</span></li>}
+              <li>{t("wifiConfig")}: {preview.wifi_configured ? "✓" : "—"}</li>
+              <li>{t("sshKeys")}: {preview.ssh_keys_present ? "✓" : "—"}</li>
+              <li>{t("authentication")}: {preview.has_auth ? "✓" : "—"}</li>
               <li>{preview.files.length} {t("files")}</li>
             </ul>
             <p className="text-xs text-amber-500">{t("importRebootWarning")}</p>
@@ -2458,6 +2460,7 @@ function SettingsCard() {
 }
 
 function InfoTooltip({ content }: { content: string }) {
+  const t = useTranslations("system");
   const [isOpen, setIsOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -2481,7 +2484,7 @@ function InfoTooltip({ content }: { content: string }) {
         onMouseEnter={() => setIsOpen(true)}
         onMouseLeave={() => setIsOpen(false)}
         className="text-muted-foreground/60 hover:text-foreground transition-colors cursor-help inline-flex items-center justify-center p-0.5 rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-        aria-label="More info"
+        aria-label={t("moreInfo")}
       >
         <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z" />
@@ -3013,7 +3016,7 @@ function ServerSourcesSubTab({ config, setConfig }: { config: ServerConfig; setC
             <Field label={t("password")} htmlFor={subPassId}><Input id={subPassId} type="password" value={config.subsonic.password} onChange={(e) => updateSub("password", e.target.value)} /></Field>
             <Field label={t("streamingFormat")} htmlFor={`${subPassId}-fmt`}>
               <Select id={`${subPassId}-fmt`} value={config.subsonic.format} onChange={(e) => updateSub("format", e.target.value)}>
-                <option value="raw">Original (raw)</option>
+                <option value="raw">{t("originalRaw")}</option>
                 <option value="flac">FLAC</option>
                 <option value="mp3">MP3</option>
                 <option value="opus">Opus</option>
@@ -3051,7 +3054,7 @@ function ServerSourcesSubTab({ config, setConfig }: { config: ServerConfig; setC
             <Field label={t("airplayMode")} htmlFor={`${airPassId}-mode`}>
               <Select id={`${airPassId}-mode`} value={config.airplay.mode} onChange={(e) => { const c = structuredClone(config); c.airplay = { ...c.airplay!, mode: e.target.value }; setConfig(c); }}>
                 <option value="airplay2">AirPlay 2</option>
-                <option value="airplay1">AirPlay 1 (Legacy)</option>
+                <option value="airplay1">AirPlay 1 ({t("legacy")})</option>
               </Select>
             </Field>
           </div>
@@ -3067,7 +3070,7 @@ function ServerSourcesSubTab({ config, setConfig }: { config: ServerConfig; setC
               <Input placeholder={t("stationUrl")} value={r.url} onChange={(e) => updateRadio(i, "url", e.target.value)} aria-label={`${t("stationUrl")} ${i + 1}`} />
               <Input placeholder={t("stationCover")} value={r.cover ?? ""} onChange={(e) => updateRadio(i, "cover", e.target.value)} aria-label={`${t("stationCover")} ${i + 1}`} />
             </div>
-            <Button variant="outline" size="icon-xs" onClick={() => removeRadio(i)} aria-label="Remove">×</Button>
+            <Button variant="outline" size="icon-xs" onClick={() => removeRadio(i)} aria-label={t("remove")}>×</Button>
           </div>
         ))}
         <Button variant="outline" size="xs" onClick={addRadio}>{t("addStation")}</Button>
@@ -3100,7 +3103,7 @@ function ServerZonesSubTab({ config, setConfig }: { config: ServerConfig; setCon
           <div key={i} className="flex items-center gap-2">
             <Input className="flex-1" placeholder={t("zoneName")} value={z.name} onChange={(e) => updateZone(i, "name", e.target.value)} aria-label={`${t("zoneName")} ${i + 1}`} />
             <Input className="w-16" placeholder={t("icon")} value={z.icon} onChange={(e) => updateZone(i, "icon", e.target.value)} aria-label={`${t("icon")} ${i + 1}`} />
-            <Button variant="outline" size="icon-xs" onClick={() => removeZone(i)} aria-label="Remove">×</Button>
+            <Button variant="outline" size="icon-xs" onClick={() => removeZone(i)} aria-label={t("remove")}>×</Button>
           </div>
         ))}
         <Button variant="outline" size="xs" onClick={addZone}>{t("addZone")}</Button>
@@ -3116,11 +3119,11 @@ function ServerZonesSubTab({ config, setConfig }: { config: ServerConfig; setCon
               <Select className="w-28" value={cl.zone} onChange={(e) => updateClient(i, "zone", e.target.value)} aria-label={`${t("zone")} ${i + 1}`}>
                 {config.zones.map((z) => <option key={z.name} value={z.name}>{z.name}</option>)}
               </Select>
-              <Button variant="outline" size="icon-xs" onClick={() => removeClient(i)} aria-label="Remove">×</Button>
+              <Button variant="outline" size="icon-xs" onClick={() => removeClient(i)} aria-label={t("remove")}>×</Button>
             </div>
             <div className="flex items-center gap-2 pl-8">
-              <span className="text-xs text-muted-foreground w-16">Max Vol</span>
-              <input type="range" min={1} max={100} value={cl.max_volume} onChange={(e) => updateClient(i, "max_volume", Number(e.target.value))} className="flex-1 h-1.5 accent-primary" aria-label={`Max volume ${i + 1}`} />
+              <span className="text-xs text-muted-foreground w-16">{t("maxVolumeShort")}</span>
+              <input type="range" min={1} max={100} value={cl.max_volume} onChange={(e) => updateClient(i, "max_volume", Number(e.target.value))} className="flex-1 h-1.5 accent-primary" aria-label={`${t("maxVolume")} ${i + 1}`} />
               <span className="text-xs w-8 text-right">{cl.max_volume}%</span>
             </div>
           </div>
@@ -3272,7 +3275,7 @@ function ServerIntegrationsSubTab({ config, setConfig }: { config: ServerConfig;
       {/* API Keys */}
       <div className="space-y-2">
         <span className="text-sm font-medium">{t("apiKeys")}</span>
-        <p className="text-xs text-muted-foreground">Keys required to access the SnapDog server HTTP API.</p>
+        <p className="text-xs text-muted-foreground">{t("apiKeysDescription")}</p>
         {config.http.api_keys.map((key, i) => (
           <div key={i} className="flex items-center gap-2">
             <Input className="flex-1 font-mono text-xs" value={key} onChange={(e) => {
@@ -3284,14 +3287,14 @@ function ServerIntegrationsSubTab({ config, setConfig }: { config: ServerConfig;
               const c = structuredClone(config);
               c.http.api_keys.splice(i, 1);
               setConfig(c);
-            }} aria-label="Remove key">✕</Button>
+            }} aria-label={t("removeKey")}>✕</Button>
           </div>
         ))}
         <Button variant="outline" size="sm" onClick={() => {
           const c = structuredClone(config);
           c.http.api_keys.push("");
           setConfig(c);
-        }}>+ Add Key</Button>
+        }}>+ {t("addKey")}</Button>
       </div>
 
       {/* MQTT */}
@@ -3396,6 +3399,7 @@ function ServerIntegrationsSubTab({ config, setConfig }: { config: ServerConfig;
 const TABS: Tab[] = ["dashboard", "network", "audio", "client", "server", "ssh", "update", "system"];
 
 export default function Page() {
+  const t = useTranslations("auth");
   const [authState, setAuthState] = useState<"loading" | "login" | "ready">("loading");
   const [loginError, setLoginError] = useState(false);
   const [password, setPassword] = useState("");
@@ -3443,28 +3447,28 @@ export default function Page() {
         <form onSubmit={handleLogin} className="w-full max-w-sm space-y-4">
           <div className="text-center space-y-2">
             <h1 className="text-2xl font-bold">SnapDog</h1>
-            <p className="text-sm text-muted-foreground">Enter password to continue</p>
+            <p className="text-sm text-muted-foreground">{t("prompt")}</p>
           </div>
           <div className="space-y-2">
-            <label htmlFor={passwordId} className="sr-only">Password</label>
+            <label htmlFor={passwordId} className="sr-only">{t("password")}</label>
             <Input
               id={passwordId}
               type="password"
               value={password}
               onChange={(e) => { setPassword(e.target.value); setLoginError(false); }}
-              placeholder="Password"
+              placeholder={t("password")}
               autoFocus
               aria-invalid={loginError}
               aria-describedby={loginError ? `${passwordId}-error` : undefined}
             />
             {loginError && (
               <p id={`${passwordId}-error`} className="text-sm text-destructive" role="alert">
-                Incorrect password
+                {t("incorrectPassword")}
               </p>
             )}
           </div>
           <Button type="submit" className="w-full" disabled={!password}>
-            Login
+            {t("login")}
           </Button>
         </form>
       </div>
@@ -3502,14 +3506,14 @@ function HealthBanner() {
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/95 p-6">
         <div className="w-full max-w-md space-y-4 text-center">
           <div className="text-4xl">⚠️</div>
-          <h1 className="text-xl font-bold text-destructive">System Error</h1>
+          <h1 className="text-xl font-bold text-destructive">{t("systemError")}</h1>
           <div className="space-y-2">
             {critical.map((w) => (
               <p key={w.id} className="text-sm text-destructive">{t(w.id)}</p>
             ))}
           </div>
-          <p className="text-xs text-muted-foreground">The device cannot operate normally. Try rebooting or re-flashing the SD card.</p>
-          <Button onClick={() => api.reboot()}>Reboot</Button>
+          <p className="text-xs text-muted-foreground">{t("criticalDetail")}</p>
+          <Button onClick={() => api.reboot()}>{t("reboot")}</Button>
         </div>
       </div>
     );
@@ -3522,7 +3526,7 @@ function HealthBanner() {
       {nonCritical.map((w) => (
         <div key={w.id} className={`flex items-center justify-between rounded-lg px-3 py-2 text-xs ${w.severity === "warn" ? "bg-yellow-500/10 text-yellow-800 dark:text-yellow-300" : "bg-blue-500/10 text-blue-800 dark:text-blue-300"}`} role="alert">
           <span>{t(w.id)}</span>
-          <button type="button" onClick={() => dismiss(w.id)} className="ml-2 opacity-60 hover:opacity-100" aria-label="Dismiss">✕</button>
+          <button type="button" onClick={() => dismiss(w.id)} className="ml-2 opacity-60 hover:opacity-100" aria-label={t("dismiss")}>✕</button>
         </div>
       ))}
     </div>

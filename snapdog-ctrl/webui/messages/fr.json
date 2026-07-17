@@ -133,7 +133,8 @@
     "autoConnectOption": "Se connecter automatiquement à tout serveur actif",
     "autoConnectDesc": "Se connecte dynamiquement au premier serveur trouvé via mDNS",
     "loading": "Chargement",
-    "manualSettings": "Paramètres manuels"
+    "manualSettings": "Paramètres manuels",
+    "targetUrl": "URL cible"
   },
   "ssh": {
     "title": "SSH",
@@ -178,7 +179,21 @@
     "copied": "Copié",
     "saved": "Enregistré",
     "timezoneSaveError": "Impossible d'enregistrer le fuseau horaire.",
-    "hostname": "Nom d'hôte"
+    "hostname": "Nom d'hôte",
+    "devicePassword": "Mot de passe de l’appareil",
+    "passwordDescription": "Protège l'interface web et la connexion à la console. Laissez vide pour désactiver.",
+    "currentPassword": "Mot de passe actuel",
+    "newPassword": "Nouveau mot de passe",
+    "confirmPassword": "Confirmer le mot de passe",
+    "passwordDisableHint": "Laissez vide pour désactiver",
+    "passwordError": "Les mots de passe ne correspondent pas ou le mot de passe actuel est incorrect.",
+    "passwordUpdated": "Mot de passe mis à jour.",
+    "saving": "Enregistrement...",
+    "save": "Enregistrer",
+    "wifiConfig": "Wi-Fi",
+    "sshKeys": "Clés SSH",
+    "authentication": "Authentification",
+    "moreInfo": "Plus d’informations"
   },
   "update": {
     "title": "Mise à jour",
@@ -237,13 +252,33 @@
     "downgrade": "Rétrograder",
     "downgradeConfirm": "Rétrograder et redémarrer ?",
     "confirmDowngrade": "Oui, rétrograder & redémarrer",
-    "stagedTitle": "Mise à jour prête à activer"
+    "stagedTitle": "Mise à jour prête à activer",
+    "rawAdvanced": "Avancé : flashage brut (solution de secours)",
+    "rawWarning": "Contourne la vérification de signature. À utiliser uniquement pour la récupération ou le développement.",
+    "rawImageLabel": "Image du système de fichiers racine (.img ou .img.gz)",
+    "rawPrepare": "Téléverser et préparer",
+    "rawUploading": "Téléversement...",
+    "rawConfirmBefore": "Saisissez",
+    "rawConfirmAfter": "pour confirmer le flashage :",
+    "rawConfirm": "Confirmer le flashage",
+    "rawFlashing": "Flashage de la partition inactive...",
+    "rawComplete": "Flashage terminé. Redémarrez pour activer.",
+    "rawError": "Échec. Code de confirmation expiré ou erreur de téléversement."
   },
   "server": {
     "title": "Serveur",
     "deviceName": "Nom de l'appareil",
     "advertiseSnapcast": "Annoncer pour les clients Snapcast",
     "airplayPasswordHint": "Laisser vide pour accès sans restriction",
+    "pickIcon": "Choisir une icône",
+    "legacy": "Ancien",
+    "remove": "Supprimer",
+    "maxVolume": "Volume maximal",
+    "maxVolumeShort": "Vol. max.",
+    "apiKeysDescription": "Clés requises pour accéder à l’API HTTP du serveur SnapDog.",
+    "removeKey": "Supprimer la clé",
+    "addKey": "Ajouter une clé",
+    "originalRaw": "Original (brut)",
     "airplayMode": "Protocole",
     "streamingFormat": "Format de streaming",
     "enable": "Activer le serveur",
@@ -334,14 +369,19 @@
     "sourceValue": "SnapDogRocks/snapdog ↗",
     "licenseLabel": "LICENCE",
     "licenseValue": "GPL-3.0 ↗",
-    "done": "Terminé"
+    "done": "Terminé",
+    "logoAlt": "Logo SnapDog"
   },
   "health": {
     "boot_not_mounted": "Partition boot non montée — mises à jour OTA désactivées",
     "no_wlan": "Pas d’adaptateur WiFi — AP indisponible",
     "no_inactive_partition": "Partition inactive introuvable — mises à jour désactivées",
     "data_not_mounted": "Partition de données (/data) non montée",
-    "data_not_writable": "Partition de données (/data) non inscriptible"
+    "data_not_writable": "Partition de données (/data) non inscriptible",
+    "systemError": "Erreur système",
+    "criticalDetail": "L’appareil ne peut pas fonctionner normalement. Essayez de le redémarrer ou de reflasher la carte SD.",
+    "reboot": "Redémarrer",
+    "dismiss": "Masquer"
   },
   "player": {
     "play": "Lecture",
@@ -352,7 +392,9 @@
     "unmute": "Son",
     "close": "Fermer",
     "nowPlaying": "En cours",
-    "seek": "Rechercher"
+    "seek": "Rechercher",
+    "volume": "Volume",
+    "nowPlayingBy": "Lecture en cours : {title} par {artist}"
   },
   "tuning": {
     "title": "Optimisation Matérielle",
@@ -374,5 +416,11 @@
     "applyLater": "Au prochain redémarrage",
     "cancel": "Annuler",
     "awaitingReboot": "Enregistré. Les modifications s'appliqueront au prochain redémarrage."
+  },
+  "auth": {
+    "prompt": "Saisissez le mot de passe pour continuer",
+    "password": "Mot de passe",
+    "incorrectPassword": "Mot de passe incorrect",
+    "login": "Se connecter"
   }
 }

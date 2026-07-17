@@ -133,7 +133,8 @@
     "autoConnectOption": "Automatisch verbinden met een actieve server",
     "autoConnectDesc": "Verbindt dynamisch met de eerst gevonden server via mDNS",
     "loading": "Laden",
-    "manualSettings": "Handmatige instellingen"
+    "manualSettings": "Handmatige instellingen",
+    "targetUrl": "Doel-URL"
   },
   "ssh": {
     "title": "SSH",
@@ -178,7 +179,21 @@
     "copied": "Gekopieerd",
     "saved": "Opgeslagen",
     "timezoneSaveError": "Kan de tijdzone niet opslaan.",
-    "hostname": "Hostnaam"
+    "hostname": "Hostnaam",
+    "devicePassword": "Apparaatwachtwoord",
+    "passwordDescription": "Beveiligt de webinterface en de console-aanmelding. Laat leeg om uit te schakelen.",
+    "currentPassword": "Huidig wachtwoord",
+    "newPassword": "Nieuw wachtwoord",
+    "confirmPassword": "Wachtwoord bevestigen",
+    "passwordDisableHint": "Laat leeg om uit te schakelen",
+    "passwordError": "De wachtwoorden komen niet overeen of het huidige wachtwoord is onjuist.",
+    "passwordUpdated": "Wachtwoord bijgewerkt.",
+    "saving": "Opslaan...",
+    "save": "Opslaan",
+    "wifiConfig": "Wifi",
+    "sshKeys": "SSH-sleutels",
+    "authentication": "Authenticatie",
+    "moreInfo": "Meer informatie"
   },
   "update": {
     "title": "Firmware-update",
@@ -237,13 +252,33 @@
     "downgrade": "Downgraden",
     "downgradeConfirm": "Downgraden en herstarten?",
     "confirmDowngrade": "Ja, downgraden & herstarten",
-    "stagedTitle": "Update klaar om te activeren"
+    "stagedTitle": "Update klaar om te activeren",
+    "rawAdvanced": "Geavanceerd: raw-image flashen (noodoptie)",
+    "rawWarning": "Omzeilt de handtekeningcontrole. Alleen gebruiken voor herstel of ontwikkeling.",
+    "rawImageLabel": "Rootbestandssysteem-image (.img of .img.gz)",
+    "rawPrepare": "Uploaden en voorbereiden",
+    "rawUploading": "Uploaden...",
+    "rawConfirmBefore": "Typ",
+    "rawConfirmAfter": "om het flashen te bevestigen:",
+    "rawConfirm": "Flashen bevestigen",
+    "rawFlashing": "Inactieve partitie wordt geflasht...",
+    "rawComplete": "Flashen voltooid. Start opnieuw op om te activeren.",
+    "rawError": "Mislukt. Bevestigingscode verlopen of uploadfout."
   },
   "server": {
     "title": "Server",
     "deviceName": "Apparaatnaam",
     "advertiseSnapcast": "Adverteren voor Snapcast-clients",
     "airplayPasswordHint": "Leeg laten voor onbeperkte toegang",
+    "pickIcon": "Pictogram kiezen",
+    "legacy": "Verouderd",
+    "remove": "Verwijderen",
+    "maxVolume": "Maximaal volume",
+    "maxVolumeShort": "Max. vol.",
+    "apiKeysDescription": "Sleutels die nodig zijn voor toegang tot de HTTP-API van de SnapDog-server.",
+    "removeKey": "Sleutel verwijderen",
+    "addKey": "Sleutel toevoegen",
+    "originalRaw": "Origineel (raw)",
     "airplayMode": "Protocol",
     "streamingFormat": "Streamingformaat",
     "enable": "Server inschakelen",
@@ -334,14 +369,19 @@
     "sourceValue": "SnapDogRocks/snapdog ↗",
     "licenseLabel": "LICENTIE",
     "licenseValue": "GPL-3.0 ↗",
-    "done": "Gereed"
+    "done": "Gereed",
+    "logoAlt": "SnapDog-logo"
   },
   "health": {
     "boot_not_mounted": "Boot-partitie niet gemount — OTA-updates uitgeschakeld",
     "no_wlan": "Geen WiFi-adapter — Setup-AP niet beschikbaar",
     "no_inactive_partition": "Inactieve partitie niet gevonden — updates uitgeschakeld",
     "data_not_mounted": "Datapartitie (/data) niet gemount",
-    "data_not_writable": "Datapartitie (/data) niet schrijfbaar"
+    "data_not_writable": "Datapartitie (/data) niet schrijfbaar",
+    "systemError": "Systeemfout",
+    "criticalDetail": "Het apparaat kan niet normaal functioneren. Probeer opnieuw op te starten of flash de SD-kaart opnieuw.",
+    "reboot": "Opnieuw opstarten",
+    "dismiss": "Sluiten"
   },
   "player": {
     "play": "Afspelen",
@@ -352,7 +392,9 @@
     "unmute": "Geluid aan",
     "close": "Sluiten",
     "nowPlaying": "Nu aan het spelen",
-    "seek": "Zoeken"
+    "seek": "Zoeken",
+    "volume": "Volume",
+    "nowPlayingBy": "Nu afgespeeld: {title} van {artist}"
   },
   "tuning": {
     "title": "Hardware Optimalisatie",
@@ -374,5 +416,11 @@
     "applyLater": "Bij volgende herstart",
     "cancel": "Annuleren",
     "awaitingReboot": "Opgeslagen. Wijzigingen worden bij de volgende herstart actief."
+  },
+  "auth": {
+    "prompt": "Voer het wachtwoord in om door te gaan",
+    "password": "Wachtwoord",
+    "incorrectPassword": "Onjuist wachtwoord",
+    "login": "Aanmelden"
   }
 }

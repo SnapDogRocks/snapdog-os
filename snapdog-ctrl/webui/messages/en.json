@@ -133,7 +133,8 @@
     "autoConnectOption": "Auto-connect to any active server",
     "autoConnectDesc": "Connects dynamically to the first found server via mDNS",
     "loading": "Loading client config",
-    "manualSettings": "Manual settings"
+    "manualSettings": "Manual settings",
+    "targetUrl": "Target URL"
   },
   "ssh": {
     "title": "SSH",
@@ -178,7 +179,21 @@
     "copied": "Copied",
     "saved": "Saved",
     "timezoneSaveError": "Couldn't save the timezone.",
-    "hostname": "Hostname"
+    "hostname": "Hostname",
+    "devicePassword": "Device Password",
+    "passwordDescription": "Protects the web UI and console login. Leave empty to disable.",
+    "currentPassword": "Current password",
+    "newPassword": "New password",
+    "confirmPassword": "Confirm password",
+    "passwordDisableHint": "Leave empty to disable",
+    "passwordError": "Passwords don't match or the current password is wrong.",
+    "passwordUpdated": "Password updated.",
+    "saving": "Saving...",
+    "save": "Save",
+    "wifiConfig": "WiFi",
+    "sshKeys": "SSH keys",
+    "authentication": "Authentication",
+    "moreInfo": "More info"
   },
   "update": {
     "title": "Firmware Update",
@@ -237,7 +252,18 @@
     "downgrade": "Downgrade",
     "downgradeConfirm": "Downgrade and reboot?",
     "confirmDowngrade": "Yes, downgrade & reboot",
-    "stagedTitle": "Update ready to activate"
+    "stagedTitle": "Update ready to activate",
+    "rawAdvanced": "Advanced: Raw Flash (escape hatch)",
+    "rawWarning": "Bypasses signature verification. Use only for recovery or development.",
+    "rawImageLabel": "Root filesystem image (.img or .img.gz)",
+    "rawPrepare": "Upload & prepare",
+    "rawUploading": "Uploading...",
+    "rawConfirmBefore": "Type",
+    "rawConfirmAfter": "to confirm flash:",
+    "rawConfirm": "Confirm flash",
+    "rawFlashing": "Flashing to inactive partition...",
+    "rawComplete": "Flash complete. Reboot to activate.",
+    "rawError": "Failed. Challenge expired or upload error."
   },
   "server": {
     "title": "Server",
@@ -320,7 +346,16 @@
     "deviceName": "Device Name",
     "streamingFormat": "Streaming format",
     "advertiseSnapcast": "Advertise for Snapcast clients",
-    "airplayPasswordHint": "Leave empty for unrestricted access"
+    "airplayPasswordHint": "Leave empty for unrestricted access",
+    "pickIcon": "Pick icon",
+    "legacy": "Legacy",
+    "remove": "Remove",
+    "maxVolume": "Maximum volume",
+    "maxVolumeShort": "Max vol",
+    "apiKeysDescription": "Keys required to access the SnapDog server HTTP API.",
+    "removeKey": "Remove key",
+    "addKey": "Add key",
+    "originalRaw": "Original (raw)"
   },
   "about": {
     "title": "About",
@@ -334,14 +369,19 @@
     "sourceValue": "SnapDogRocks/snapdog ↗",
     "licenseLabel": "LICENSE",
     "licenseValue": "GPL-3.0 ↗",
-    "done": "Done"
+    "done": "Done",
+    "logoAlt": "SnapDog logo"
   },
   "health": {
     "boot_not_mounted": "Boot partition not mounted — OTA updates disabled",
     "no_wlan": "No WiFi adapter — Setup AP unavailable",
     "no_inactive_partition": "Inactive partition not found — updates disabled",
     "data_not_mounted": "Data partition (/data) is not mounted",
-    "data_not_writable": "Data partition (/data) is not writable"
+    "data_not_writable": "Data partition (/data) is not writable",
+    "systemError": "System Error",
+    "criticalDetail": "The device cannot operate normally. Try rebooting or re-flashing the SD card.",
+    "reboot": "Reboot",
+    "dismiss": "Dismiss"
   },
   "player": {
     "play": "Play",
@@ -352,7 +392,9 @@
     "unmute": "Unmute",
     "close": "Close",
     "nowPlaying": "Now Playing",
-    "seek": "Seek"
+    "seek": "Seek",
+    "volume": "Volume",
+    "nowPlayingBy": "Now playing: {title} by {artist}"
   },
   "tuning": {
     "title": "Hardware Tuning",
@@ -374,5 +416,11 @@
     "applyLater": "Apply on next reboot",
     "cancel": "Cancel",
     "awaitingReboot": "Saved. Changes apply on the next reboot."
+  },
+  "auth": {
+    "prompt": "Enter password to continue",
+    "password": "Password",
+    "incorrectPassword": "Incorrect password",
+    "login": "Login"
   }
 }

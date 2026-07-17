@@ -115,7 +115,7 @@ function AboutOverlay({ onClose }: { onClose: () => void }) {
         <div className="flex flex-col items-center gap-2 mt-0.5 flex-shrink-0">
           <img
             src="/icon.svg"
-            alt="SnapDog Logo"
+            alt={t("logoAlt")}
             className="size-12 sm:size-16 mx-auto opacity-95 animate-pulse-slow"
           />
           <h2 className="text-xl sm:text-2xl font-bold tracking-tight mt-0.5">SnapDog</h2>

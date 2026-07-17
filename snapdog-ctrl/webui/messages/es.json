@@ -133,7 +133,8 @@
     "autoConnectOption": "Conectarse automáticamente a cualquier servidor activo",
     "autoConnectDesc": "Se conecta dinámicamente al primer servidor encontrado mediante mDNS",
     "loading": "Cargando",
-    "manualSettings": "Ajustes manuales"
+    "manualSettings": "Ajustes manuales",
+    "targetUrl": "URL de destino"
   },
   "ssh": {
     "title": "SSH",
@@ -178,7 +179,21 @@
     "copied": "Copiado",
     "saved": "Guardado",
     "timezoneSaveError": "No se pudo guardar la zona horaria.",
-    "hostname": "Nombre de host"
+    "hostname": "Nombre de host",
+    "devicePassword": "Contraseña del dispositivo",
+    "passwordDescription": "Protege la interfaz web y el inicio de sesión de la consola. Déjalo vacío para desactivarlo.",
+    "currentPassword": "Contraseña actual",
+    "newPassword": "Nueva contraseña",
+    "confirmPassword": "Confirmar contraseña",
+    "passwordDisableHint": "Déjalo vacío para desactivarlo",
+    "passwordError": "Las contraseñas no coinciden o la contraseña actual es incorrecta.",
+    "passwordUpdated": "Contraseña actualizada.",
+    "saving": "Guardando...",
+    "save": "Guardar",
+    "wifiConfig": "Wi-Fi",
+    "sshKeys": "Claves SSH",
+    "authentication": "Autenticación",
+    "moreInfo": "Más información"
   },
   "update": {
     "title": "Actualización",
@@ -237,13 +252,33 @@
     "downgrade": "Degradar",
     "downgradeConfirm": "¿Degradar y reiniciar?",
     "confirmDowngrade": "Sí, degradar y reiniciar",
-    "stagedTitle": "Actualización lista para activar"
+    "stagedTitle": "Actualización lista para activar",
+    "rawAdvanced": "Avanzado: flasheo sin procesar (opción de emergencia)",
+    "rawWarning": "Omite la verificación de la firma. Úsalo solo para recuperación o desarrollo.",
+    "rawImageLabel": "Imagen del sistema de archivos raíz (.img o .img.gz)",
+    "rawPrepare": "Subir y preparar",
+    "rawUploading": "Subiendo...",
+    "rawConfirmBefore": "Escribe",
+    "rawConfirmAfter": "para confirmar el flasheo:",
+    "rawConfirm": "Confirmar flasheo",
+    "rawFlashing": "Flasheando la partición inactiva...",
+    "rawComplete": "Flasheo completado. Reinicia para activarlo.",
+    "rawError": "Error. El código de confirmación ha caducado o hubo un error de subida."
   },
   "server": {
     "title": "Servidor",
     "deviceName": "Nombre del dispositivo",
     "advertiseSnapcast": "Anunciar para clientes Snapcast",
     "airplayPasswordHint": "Dejar vacío para acceso sin restricción",
+    "pickIcon": "Elegir icono",
+    "legacy": "Antiguo",
+    "remove": "Eliminar",
+    "maxVolume": "Volumen máximo",
+    "maxVolumeShort": "Vol. máx.",
+    "apiKeysDescription": "Claves necesarias para acceder a la API HTTP del servidor SnapDog.",
+    "removeKey": "Eliminar clave",
+    "addKey": "Añadir clave",
+    "originalRaw": "Original (sin procesar)",
     "airplayMode": "Protocolo",
     "streamingFormat": "Formato de streaming",
     "enable": "Activar servidor",
@@ -334,14 +369,19 @@
     "sourceValue": "SnapDogRocks/snapdog ↗",
     "licenseLabel": "LICENCIA",
     "licenseValue": "GPL-3.0 ↗",
-    "done": "Hecho"
+    "done": "Hecho",
+    "logoAlt": "Logotipo de SnapDog"
   },
   "health": {
     "boot_not_mounted": "Partición boot no montada — actualizaciones OTA desactivadas",
     "no_wlan": "Sin adaptador WiFi — AP no disponible",
     "no_inactive_partition": "Partición inactiva no encontrada — actualizaciones desactivadas",
     "data_not_mounted": "Partición de datos (/data) no montada",
-    "data_not_writable": "Partición de datos (/data) no escribible"
+    "data_not_writable": "Partición de datos (/data) no escribible",
+    "systemError": "Error del sistema",
+    "criticalDetail": "El dispositivo no puede funcionar con normalidad. Prueba a reiniciarlo o a volver a flashear la tarjeta SD.",
+    "reboot": "Reiniciar",
+    "dismiss": "Descartar"
   },
   "player": {
     "play": "Reproducir",
@@ -352,7 +392,9 @@
     "unmute": "Activar sonido",
     "close": "Cerrar",
     "nowPlaying": "Reproduciendo",
-    "seek": "Buscar"
+    "seek": "Buscar",
+    "volume": "Volumen",
+    "nowPlayingBy": "Reproduciendo: {title} de {artist}"
   },
   "tuning": {
     "title": "Ajuste de Hardware",
@@ -374,5 +416,11 @@
     "applyLater": "En el próximo reinicio",
     "cancel": "Cancelar",
     "awaitingReboot": "Guardado. Los cambios se aplicarán en el próximo reinicio."
+  },
+  "auth": {
+    "prompt": "Introduce la contraseña para continuar",
+    "password": "Contraseña",
+    "incorrectPassword": "Contraseña incorrecta",
+    "login": "Iniciar sesión"
   }
 }

@@ -233,6 +233,10 @@ async fn build_app() -> Router {
             system::apply_service_config().await;
         });
 
+        // Consolidate the legacy /data/snapdog-os.channel mirror into ctrl.toml
+        // before the scheduler reads its canonical channel configuration.
+        system::migrate_legacy_update_channel().await;
+
         // Start auto-update scheduler
         auto_update::spawn();
     }

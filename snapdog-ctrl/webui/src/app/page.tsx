@@ -1731,6 +1731,12 @@ function UpdateTab() {
   // null = not uploading; 0..1 = fraction sent (or -1 when total is unknown).
   const [uploadFraction, setUploadFraction] = useState<number | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const externalInstallTracked = useRef(false);
+  const phaseRef = useRef(phase);
+
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
 
   useEffect(() => {
     api.checkUpdate().then(setUpdate).catch(() => {});
@@ -1746,10 +1752,10 @@ function UpdateTab() {
   // watch the operation transition installing→idle (and surface last_error) rather
   // than treating the 202 as "done". Resolves on success, rejects with the reason.
   const pollInstallToCompletion = useCallback(
-    () =>
+    (alreadySawInstalling = false) =>
       new Promise<void>((resolve, reject) => {
         const started = Date.now();
-        let sawInstalling = false;
+        let sawInstalling = alreadySawInstalling;
         const poll = setInterval(async () => {
           if (Date.now() - started > 20 * 60 * 1000) {
             clearInterval(poll);
@@ -1787,28 +1793,35 @@ function UpdateTab() {
     [t],
   );
 
-  // On mount (incl. a reload mid-update): surface a rollback, and if RAUC is still
-  // installing, resume the progress indicator + completion polling instead of
-  // dropping back to an "idle" panel that would let the user start a second install.
+  // Detect installs started outside this page (including the auto-updater), not only
+  // on mount. This makes automatic-update progress appear while the tab is open and
+  // also resumes correctly after a reload during a manual install.
   useEffect(() => {
     let cancelled = false;
-    api.getUpdateStatus()
+    const inspect = () => api.getUpdateStatus()
       .then((s) => {
         if (cancelled) return;
         if (s.rolled_back) setRolledBack(true);
-        if (s.operation === "installing") {
+        if (s.operation === "installing" && phaseRef.current === "idle" && !externalInstallTracked.current) {
+          externalInstallTracked.current = true;
           setPhase("installing");
           setProgress(s.progress?.percentage ?? null);
-          pollInstallToCompletion()
+          pollInstallToCompletion(true)
             .then(() => setPhase("done"))
             .catch((e: unknown) => {
               setErrorMsg(e instanceof Error ? e.message : String(e));
               setPhase("failed");
-            });
+            })
+            .finally(() => { externalInstallTracked.current = false; });
         }
       })
       .catch(() => {});
-    return () => { cancelled = true; };
+    void inspect();
+    const timer = setInterval(inspect, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
   }, [pollInstallToCompletion]);
 
   const performUpdate = useCallback(() => {
@@ -2221,6 +2234,7 @@ function AutoUpdateSettings({ onChannelChange }: { onChannelChange?: () => void 
   const [status, setStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState(false);
+  const [runtime, setRuntime] = useState<import("@/lib/api").AutoUpdateRuntimeStatus | null>(null);
   const channelId = useId();
   const intervalId = useId();
   const timeId = useId();
@@ -2229,6 +2243,13 @@ function AutoUpdateSettings({ onChannelChange }: { onChannelChange?: () => void 
     api.getAutoUpdate()
       .then((c) => { setConfig(c); setLoadError(false); })
       .catch(() => setLoadError(true)); // don't present the hard-coded defaults as real settings
+  }, []);
+
+  useEffect(() => {
+    const refresh = () => api.getAutoUpdateStatus().then(setRuntime).catch(() => {});
+    void refresh();
+    const timer = setInterval(refresh, 10000);
+    return () => clearInterval(timer);
   }, []);
 
   // Persist the config and surface the result, mirroring TimezoneCard: await the write,
@@ -2257,13 +2278,11 @@ function AutoUpdateSettings({ onChannelChange }: { onChannelChange?: () => void 
   };
   // The channel is the single source of truth the backend uses for BOTH manual
   // check/install and auto-update, so it is always visible (not gated on the toggle).
-  // Mirror it to the OS channel file in the same await so the two stores can't diverge
-  // silently when one write fails.
   const saveChannel = async (channel: string) => {
     // Only refresh once the new channel is persisted — check_update reads it back as
     // the SSOT, so the panel then shows the version THIS channel points at (which may
     // be a downgrade, e.g. beta → stable).
-    if (await save({ ...config, channel }, () => api.setSystem({ channel }))) {
+    if (await save({ ...config, channel })) {
       onChannelChange?.();
     }
   };
@@ -2272,6 +2291,14 @@ function AutoUpdateSettings({ onChannelChange }: { onChannelChange?: () => void 
   // A failed load must not let a stray toggle overwrite the real (never-loaded) config
   // with the hard-coded defaults, so lock the settings until a successful load.
   const locked = saving || loadError;
+  const schedulerState = runtime ? ({
+    never_run: t("stateNeverRun"),
+    checking: t("stateChecking"),
+    up_to_date: t("stateUpToDate"),
+    installing: t("stateInstalling"),
+    rebooting: t("stateRebooting"),
+    error: t("stateError"),
+  } as Record<string, string>)[runtime.state] ?? runtime.state : "";
 
   return (
     <div className="space-y-3 border-t border-border pt-3">
@@ -2319,6 +2346,19 @@ function AutoUpdateSettings({ onChannelChange }: { onChannelChange?: () => void 
         </div>
       )}
       {status === "saved" && !error && <p className="text-xs text-green-600">{t("saved")}</p>}
+      {runtime && (
+        <div className="rounded-lg bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          <span>{t("schedulerStatus")}: </span>
+          <span>{schedulerState}</span>
+          {runtime.last_check && (
+            <span> · {t("lastCheck")}: {new Date(runtime.last_check).toLocaleString()}</span>
+          )}
+          {runtime.next_check && (
+            <p className="mt-1">{t("nextCheck")}: {new Date(runtime.next_check).toLocaleString()}</p>
+          )}
+          {runtime.last_error && <p className="mt-1 text-destructive">{runtime.last_error}</p>}
+        </div>
+      )}
     </div>
   );
 }

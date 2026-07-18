@@ -72,7 +72,7 @@ sudo dd if=snapdog-os-pi4-0.1.0.img of=/dev/sdX bs=4M status=progress conv=fsync
 ### First boot
 
 1. Insert SD card and power on the Pi
-2. If no Ethernet is connected, the device creates a WiFi access point: **SnapDog-Setup** (password: `snapdog123`)
+2. If no WiFi is configured and no functional wired network is available, the device creates a setup access point named **SnapDog-XXXX**, where `XXXX` is the final four hexadecimal characters of its WiFi MAC address. A unique password is generated on first use, persisted in `/data`, and printed to the device console.
 3. Connect to the AP — your phone/laptop will automatically open the setup UI
 4. Configure WiFi, select your SnapDog server, choose your DAC — done
 
@@ -127,7 +127,8 @@ server = false    # default: off
 
 [auto-update]
 enabled = true
-channel = "stable"
+channel = "release"
+interval = "daily"
 time = "04:00"
 
 [auth]
@@ -140,7 +141,7 @@ time = "04:00"
 2. systemd starts `snapdog-data-init` (creates `/data` defaults)
 3. systemd starts `snapdog-ctrl`
 4. `snapdog-ctrl` reads `ctrl.toml` and starts configured services
-5. `snapdog-ctrl` starts SoftAP if no network interface is connected
+5. `snapdog-ctrl` starts the derived `SnapDog-XXXX` setup AP if WiFi is unconfigured and the wired connectivity check fails
 6. `rauc-mark-good` marks the current slot as bootable
 
 ### OTA Updates (RAUC)
@@ -150,11 +151,11 @@ time = "04:00"
 - **Auto-rollback**: If `snapdog-ctrl` fails to start 3 times → previous slot
 - **Auto-update**: Daily check at configured time, install + reboot
 - **Manual**: Upload `.raucb` via web UI or install from URL
-- **Channels**: `stable` (`snapdog-os-<board>.raucb`) / `beta` (`snapdog-os-<board>-beta.raucb`) for `pi3`, `pi4`, `pi5`, and `zero2w`
+- **Channels**: `release` (`snapdog-os-<board>-release.raucb`) / `beta` (`snapdog-os-<board>-beta.raucb`) for `pi3`, `pi4`, `pi5`, and `zero2w`
 
 ### SoftAP
 
-Started automatically when no network is available (no WiFi configured AND no Ethernet link). Stops automatically when a network connection is established. SSID: `SnapDog-Setup`.
+Started automatically when no WiFi is configured and no functional wired network is available after the startup connectivity check. It stops automatically when a network connection is established. The SSID is derived from the WiFi MAC address as `SnapDog-XXXX` (for example, `SnapDog-2B3C`); `SnapDog-Setup` is used only as a fallback when a valid MAC address cannot be read. A unique WPA2 password is generated on first use, persisted in `/data`, printed to the device console, and configurable in the web UI.
 
 ## snapdog-ctrl
 
@@ -226,7 +227,7 @@ Output: `../buildroot-<board>/images/sdcard.img`
 | SSH | Disabled, key-only when enabled via UI |
 | Root password | `snapdog` (changeable via Web UI) |
 | OTA bundles | X.509 signed RAUC verity bundles, auto-rollback |
-| SoftAP | WPA2, configurable password (default: `snapdog123`) |
+| SoftAP | WPA2; device-specific `SnapDog-XXXX` SSID; generated per-device password, configurable in the web UI |
 | Filesystem | Read-only rootfs; mutable config on `/data` partition |
 | Raw flash | Challenge-response gated (not automatable) |
 

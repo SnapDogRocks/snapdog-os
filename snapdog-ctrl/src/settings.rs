@@ -22,7 +22,6 @@ const EXPORT_PATHS: &[&str] = &[
     "systemd/network",
     "wpa_supplicant",
     "ssh",
-    "snapdog-os.channel",
     "default",
 ];
 

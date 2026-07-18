@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.12.0](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.11.0...snapdog-ctrl-v0.12.0) (2026-07-17)
+
+
+### Features
+
+* **ctrl:** server-side login lockout + password UX overhaul ([3e67b17](https://github.com/SnapDogRocks/snapdog-os/commit/3e67b176671e98c55ed7d7051b367f6a5e27a0e7))
+* **ctrl:** server-side login lockout + password UX overhaul ([24aa763](https://github.com/SnapDogRocks/snapdog-os/commit/24aa763d3899cf34904c028a32c22514fa532140))
+
+
+### Bug Fixes
+
+* **webui:** correct i18n key mix-up from merging with the i18n-conversion branch ([46a92ba](https://github.com/SnapDogRocks/snapdog-os/commit/46a92bad659dd8a13bdfe98fc85f9c6e96c53880))
+
 ## [0.11.0](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.10.1...snapdog-ctrl-v0.11.0) (2026-07-17)
 
 

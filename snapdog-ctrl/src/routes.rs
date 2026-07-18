@@ -4,7 +4,7 @@
 use axum::{
     Extension, Json, Router,
     extract::{DefaultBodyLimit, Query, Request},
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post, put},
 };
@@ -178,16 +178,38 @@ struct LoginResponse {
 async fn post_auth_login(
     Extension(auth): Extension<crate::auth::AuthState>,
     Json(body): Json<LoginRequest>,
-) -> Result<Json<LoginResponse>, StatusCode> {
+) -> Result<Json<LoginResponse>, Response> {
     if !auth.is_enabled().await {
-        return Err(StatusCode::BAD_REQUEST);
+        return Err(StatusCode::BAD_REQUEST.into_response());
+    }
+    // Reject outright while locked out, without even checking the password —
+    // keeps a hammering client from probing during its own timeout.
+    if let Some(retry_after) = auth.lockout_remaining().await {
+        return Err(too_many_login_attempts(retry_after));
     }
     if auth.verify_password(&body.password).await {
+        auth.record_successful_login().await;
         let token = auth.create_token().await;
         Ok(Json(LoginResponse { token }))
     } else {
-        Err(StatusCode::UNAUTHORIZED)
+        auth.record_failed_login().await;
+        Err(StatusCode::UNAUTHORIZED.into_response())
     }
+}
+
+/// 429 with a `Retry-After` header the client can turn into a countdown.
+fn too_many_login_attempts(retry_after_secs: u64) -> Response {
+    let mut res = (
+        StatusCode::TOO_MANY_REQUESTS,
+        Json(serde_json::json!({ "error": "too_many_attempts", "retry_after": retry_after_secs })),
+    )
+        .into_response();
+    res.headers_mut().insert(
+        header::RETRY_AFTER,
+        HeaderValue::from_str(&retry_after_secs.to_string())
+            .unwrap_or_else(|_| HeaderValue::from_static("60")),
+    );
+    res
 }
 
 async fn post_auth_logout(

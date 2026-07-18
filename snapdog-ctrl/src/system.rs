@@ -90,9 +90,7 @@ pub async fn get_system_info() -> SystemInfo {
     let version = read_file("/etc/snapdog-os.version")
         .await
         .unwrap_or_default();
-    let channel = read_file("/etc/snapdog-os.channel")
-        .await
-        .unwrap_or_else(|_| "release".into());
+    let channel = get_auto_update().await.channel;
     let uptime = get_uptime().await;
 
     let kernel = tokio::process::Command::new("uname")
@@ -120,7 +118,7 @@ pub async fn get_system_info() -> SystemInfo {
     SystemInfo {
         hostname: hostname.trim().to_string(),
         version: version.trim().to_string(),
-        channel: channel.trim().to_string(),
+        channel,
         uptime_seconds: uptime,
         board_model: detect_board_model().await,
         components: ComponentVersions {
@@ -148,13 +146,9 @@ pub async fn set_system(hostname: Option<String>, channel: Option<String>) -> Re
         run_cmd("hostnamectl", &["set-hostname", &h]).await?;
     }
     if let Some(c) = channel {
-        anyhow::ensure!(
-            matches!(c.as_str(), "release" | "beta"),
-            "invalid update channel"
-        );
-        tokio::fs::write("/etc/snapdog-os.channel", format!("{c}\n"))
-            .await
-            .context("failed to write snapdog-os.channel")?;
+        let mut config = get_auto_update().await;
+        config.channel = c;
+        set_auto_update(config).await?;
     }
     Ok(())
 }
@@ -254,6 +248,11 @@ pub async fn rauc_progress() -> Result<crate::rauc::InstallProgress> {
 /// Get RAUC operation state (idle/installing).
 pub async fn rauc_operation() -> Result<String> {
     crate::rauc::Rauc::connect().await?.operation().await
+}
+
+/// Get RAUC's most recent installation error.
+pub async fn rauc_last_error() -> Result<String> {
+    crate::rauc::Rauc::connect().await?.last_error().await
 }
 
 /// Get RAUC slot status.
@@ -1098,6 +1097,88 @@ pub async fn record_pending_update(version: &str) {
 /// the interval/dedup gate and catch-up so a device that was off at the configured
 /// time still updates on its next boot. Lives on the writable `/data` partition.
 const LAST_AUTO_UPDATE_FILE: &str = "/data/snapdog-os.last-auto-update";
+const AUTO_UPDATE_STATUS_FILE: &str = "/data/snapdog-os.auto-update-status.json";
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct AutoUpdateRuntimeStatus {
+    pub state: String,
+    pub last_check: Option<String>,
+    pub last_attempt: Option<String>,
+    pub last_success: Option<String>,
+    pub last_error: Option<String>,
+    pub next_check: Option<String>,
+}
+
+pub async fn get_auto_update_status() -> AutoUpdateRuntimeStatus {
+    let mut status: AutoUpdateRuntimeStatus = read_file(AUTO_UPDATE_STATUS_FILE)
+        .await
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_else(|| AutoUpdateRuntimeStatus {
+            state: "never_run".to_string(),
+            ..AutoUpdateRuntimeStatus::default()
+        });
+    status.next_check = next_auto_update_check().await;
+    status
+}
+
+async fn next_auto_update_check() -> Option<String> {
+    use chrono::{TimeZone as _, Timelike as _};
+
+    let config = get_auto_update().await;
+    if !config.enabled {
+        return None;
+    }
+    let now = chrono::Local::now();
+    let (hour, minute) = crate::schedule::parse_time(&config.time);
+    let last = last_auto_update_date().await;
+    if crate::schedule::interval_elapsed(&config.interval, last, now.date_naive())
+        && (now.hour(), now.minute()) >= (hour, minute)
+    {
+        return Some((now + chrono::Duration::minutes(1)).to_rfc3339());
+    }
+    for offset in 0..=366 {
+        let date = now.date_naive() + chrono::Duration::days(offset);
+        if !crate::schedule::interval_elapsed(&config.interval, last, date) {
+            continue;
+        }
+        let naive = date.and_hms_opt(hour, minute, 0)?;
+        if let Some(candidate) = chrono::Local.from_local_datetime(&naive).earliest()
+            && candidate > now
+        {
+            return Some(candidate.to_rfc3339());
+        }
+    }
+    None
+}
+
+pub async fn update_auto_update_status(
+    state: &str,
+    checked: bool,
+    attempted: bool,
+    succeeded: bool,
+    error: Option<&str>,
+) {
+    let mut status = get_auto_update_status().await;
+    let now = chrono::Local::now().to_rfc3339();
+    status.state = state.to_string();
+    if checked {
+        status.last_check = Some(now.clone());
+    }
+    if attempted {
+        status.last_attempt = Some(now.clone());
+    }
+    if succeeded {
+        status.last_success = Some(now);
+    }
+    status.last_error = error.map(str::to_string);
+    if let Ok(json) = serde_json::to_string_pretty(&status)
+        && let Err(e) = atomic_write(AUTO_UPDATE_STATUS_FILE, &(json + "\n")).await
+    {
+        tracing::warn!("failed to persist auto-update status: {e}");
+    }
+}
 
 /// The date of the last completed auto-update run, if recorded.
 pub async fn last_auto_update_date() -> Option<chrono::NaiveDate> {
@@ -1226,6 +1307,7 @@ pub async fn factory_reset() -> Result<()> {
     let _ = tokio::fs::remove_file("/data/hostname").await;
     let _ = tokio::fs::remove_file("/data/snapdog-os.channel").await;
     let _ = tokio::fs::remove_file("/data/snapdog-os.last-auto-update").await;
+    let _ = tokio::fs::remove_file(AUTO_UPDATE_STATUS_FILE).await;
     let _ = tokio::fs::remove_file(PENDING_UPDATE_FILE).await;
     let _ = tokio::fs::remove_file(FAILED_UPDATE_FILE).await;
     let _ = tokio::fs::remove_file("/data/snapdog/snapdog.toml").await;
@@ -1451,11 +1533,12 @@ pub async fn get_auto_update() -> AutoUpdateConfig {
             .and_then(|t| t.get("enabled"))
             .and_then(toml_edit::Item::as_bool)
             .unwrap_or(true),
-        channel: au
-            .and_then(|t| t.get("channel"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("release")
-            .to_string(),
+        channel: normalize_update_channel(
+            au.and_then(|t| t.get("channel"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("release"),
+        )
+        .to_string(),
         interval: au
             .and_then(|t| t.get("interval"))
             .and_then(|v| v.as_str())
@@ -1469,7 +1552,22 @@ pub async fn get_auto_update() -> AutoUpdateConfig {
     }
 }
 
+/// `stable` was used by early ctrl.toml versions, while the release service has
+/// always published `latest-release.json` and `*-release.raucb`. Keep upgraded
+/// devices working without requiring the user to re-save their settings.
+// TODO(v1.0): Remove the `stable` alias after all supported pre-1.0 installations
+// have passed through the one-time channel migration.
+fn normalize_update_channel(channel: &str) -> &str {
+    if channel == "stable" {
+        "release"
+    } else {
+        channel
+    }
+}
+
 pub async fn set_auto_update(config: AutoUpdateConfig) -> Result<()> {
+    validate_auto_update(&config)?;
+
     let content = read_file(CTRL_CONFIG).await.unwrap_or_default();
     let mut doc: toml_edit::DocumentMut = content.parse().unwrap_or_default();
 
@@ -1486,6 +1584,61 @@ pub async fn set_auto_update(config: AutoUpdateConfig) -> Result<()> {
     }
     atomic_write(CTRL_CONFIG, &doc.to_string()).await?;
     Ok(())
+}
+
+pub fn validate_auto_update(config: &AutoUpdateConfig) -> Result<()> {
+    anyhow::ensure!(
+        matches!(config.channel.as_str(), "release" | "beta"),
+        "invalid update channel"
+    );
+    anyhow::ensure!(
+        matches!(config.interval.as_str(), "daily" | "weekly" | "monthly"),
+        "invalid update interval"
+    );
+    let mut time_parts = config.time.split(':');
+    let hour = time_parts.next().and_then(|v| v.parse::<u8>().ok());
+    let minute = time_parts.next().and_then(|v| v.parse::<u8>().ok());
+    anyhow::ensure!(
+        time_parts.next().is_none()
+            && hour.is_some_and(|v| v < 24)
+            && minute.is_some_and(|v| v < 60),
+        "invalid update time; expected HH:MM"
+    );
+
+    Ok(())
+}
+
+/// Import the pre-0.13 channel file once, then remove it. From this point onward
+/// `[auto-update].channel` in ctrl.toml is the only channel store.
+pub async fn migrate_legacy_update_channel() {
+    let content = read_file(CTRL_CONFIG).await.unwrap_or_default();
+    let doc: toml_edit::DocumentMut = content.parse().unwrap_or_default();
+    let has_channel = doc
+        .get("auto-update")
+        .and_then(|t| t.get("channel"))
+        .and_then(|v| v.as_str())
+        .is_some();
+
+    if !has_channel {
+        let mut config = get_auto_update().await;
+        let image_default = if current_os_version().await.contains("beta") {
+            "beta"
+        } else {
+            "release"
+        };
+        config.channel = read_file("/data/snapdog-os.channel")
+            .await
+            .ok()
+            .map_or_else(
+                || image_default.to_string(),
+                |legacy| normalize_update_channel(legacy.trim()).to_string(),
+            );
+        if let Err(e) = set_auto_update(config).await {
+            tracing::warn!("failed to migrate legacy update channel: {e}");
+            return;
+        }
+    }
+    remove_state_file("/data/snapdog-os.channel").await;
 }
 
 // --- SoftAP Settings ---
@@ -1877,6 +2030,38 @@ fn validate_client_arg(field: &str, value: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_stable_update_channel_maps_to_release() {
+        assert_eq!(normalize_update_channel("stable"), "release");
+        assert_eq!(normalize_update_channel("release"), "release");
+        assert_eq!(normalize_update_channel("beta"), "beta");
+    }
+
+    #[test]
+    fn auto_update_settings_validation_rejects_invalid_values() {
+        let valid = AutoUpdateConfig {
+            enabled: true,
+            channel: "release".into(),
+            interval: "daily".into(),
+            time: "04:00".into(),
+        };
+        assert!(validate_auto_update(&valid).is_ok());
+
+        let validate_change = |channel: &str, interval: &str, time: &str| {
+            validate_auto_update(&AutoUpdateConfig {
+                enabled: true,
+                channel: channel.into(),
+                interval: interval.into(),
+                time: time.into(),
+            })
+        };
+        assert!(validate_change("stable", "daily", "04:00").is_err());
+        assert!(validate_change("release", "hourly", "04:00").is_err());
+        assert!(validate_change("release", "daily", "24:00").is_err());
+        assert!(validate_change("release", "daily", "04:60").is_err());
+        assert!(validate_change("release", "daily", "4").is_err());
+    }
 
     #[test]
     fn wifi_state_completed_maps_by_ip() {

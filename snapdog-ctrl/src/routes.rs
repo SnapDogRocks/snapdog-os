@@ -86,6 +86,7 @@ pub fn api() -> Router {
             "/system/update/auto",
             get(get_auto_update).put(put_auto_update),
         )
+        .route("/system/update/auto/status", get(get_auto_update_status))
         .route("/system/factory-reset", post(post_factory_reset))
         .route("/system/logs", get(get_logs))
         .route("/system/timezone", get(get_timezone).put(put_timezone))
@@ -400,6 +401,16 @@ mod mock_handlers {
         tracing::info!("[mock] set auto-update");
         StatusCode::OK
     }
+    pub async fn m_get_auto_update_status() -> Json<crate::system::AutoUpdateRuntimeStatus> {
+        Json(crate::system::AutoUpdateRuntimeStatus {
+            state: "up_to_date".into(),
+            last_check: Some(chrono::Local::now().to_rfc3339()),
+            last_attempt: None,
+            last_success: None,
+            last_error: None,
+            next_check: Some(chrono::Local::now().to_rfc3339()),
+        })
+    }
     pub async fn get_update_status(State(m): State<crate::mock::MockState>) -> Json<UpdateStatus> {
         // Scripted lifecycle so the dev UI exercises the real polling path: after a
         // mock install is triggered, report "installing" with climbing progress for a
@@ -637,6 +648,10 @@ pub fn api_mock(state: crate::mock::MockState) -> Router {
             "/system/update/auto",
             get(h::m_get_auto_update).put(h::m_put_auto_update),
         )
+        .route(
+            "/system/update/auto/status",
+            get(h::m_get_auto_update_status),
+        )
         .route("/system/factory-reset", post(h::factory_reset))
         .route("/system/logs", get(h::get_logs))
         .route(
@@ -871,7 +886,15 @@ async fn get_auto_update() -> Json<AutoUpdateConfig> {
     Json(system::get_auto_update().await)
 }
 
+async fn get_auto_update_status() -> Json<system::AutoUpdateRuntimeStatus> {
+    Json(system::get_auto_update_status().await)
+}
+
 async fn put_auto_update(Json(body): Json<AutoUpdateConfig>) -> StatusCode {
+    if let Err(e) = system::validate_auto_update(&body) {
+        tracing::warn!("put_auto_update: {e}");
+        return StatusCode::BAD_REQUEST;
+    }
     if let Err(e) = system::set_auto_update(body).await {
         tracing::error!("put_auto_update: {e}");
         return StatusCode::INTERNAL_SERVER_ERROR;

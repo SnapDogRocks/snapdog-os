@@ -19,7 +19,6 @@ mkdir -p "$TARGET_DIR/etc/snapdog"
 # rebuilds: `mkdir -p` fails on the already-existing dangling symlink under set -e.
 mkdir -p "$TARGET_DIR/etc/hostapd"
 mkdir -p "$TARGET_DIR/etc/systemd/resolved.conf.d"
-mkdir -p "$TARGET_DIR/etc/systemd/system/updater.timer.d"
 mkdir -p "$TARGET_DIR/root"
 
 # Replace files/dirs with symlinks to /data
@@ -46,12 +45,6 @@ ln -sf /data/systemd/resolved.conf.d/snapdog.conf "$TARGET_DIR/etc/systemd/resol
 # survives OS updates that replace the rootfs slot). snapdog-data-init seeds the dir.
 rm -rf "$TARGET_DIR/etc/systemd/system/snapdog-client.service.d"
 ln -sf /data/systemd/system/snapdog-client.service.d "$TARGET_DIR/etc/systemd/system/snapdog-client.service.d"
-
-rm -f "$TARGET_DIR/etc/snapdog-os.channel"
-ln -sf /data/snapdog-os.channel "$TARGET_DIR/etc/snapdog-os.channel"
-
-rm -f "$TARGET_DIR/etc/snapdog-os.auto-update"
-ln -sf /data/snapdog-os.auto-update "$TARGET_DIR/etc/snapdog-os.auto-update"
 
 rm -f "$TARGET_DIR/etc/localtime"
 ln -sf /data/localtime "$TARGET_DIR/etc/localtime"

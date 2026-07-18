@@ -173,6 +173,15 @@ export interface UpdateStatus {
   rolled_back: boolean;
 }
 
+export interface AutoUpdateRuntimeStatus {
+  state: string;
+  last_check: string | null;
+  last_attempt: string | null;
+  last_success: string | null;
+  last_error: string | null;
+  next_check: string | null;
+}
+
 export interface ZoneKnxGos {
   play?: string | null;
   pause?: string | null;
@@ -364,6 +373,7 @@ export const api = {
 
   // Auto-Update
   getAutoUpdate: () => request<{ enabled: boolean; channel: string; interval: string; time: string }>("/api/system/update/auto"),
+  getAutoUpdateStatus: () => request<AutoUpdateRuntimeStatus>("/api/system/update/auto/status"),
   setAutoUpdate: (config: { enabled: boolean; channel: string; interval: string; time: string }) =>
     request<void>("/api/system/update/auto", { method: "PUT", body: JSON.stringify(config) }),
 

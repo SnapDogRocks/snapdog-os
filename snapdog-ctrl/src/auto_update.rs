@@ -17,15 +17,15 @@
 //!   * transient failures (RAUC busy or unreadable, manifest unreachable) retry on the
 //!     next tick instead of costing a whole interval.
 
-use crate::schedule::{interval_elapsed, parse_time};
+use crate::schedule::{InstallPoll, classify_install_status, interval_elapsed, parse_time};
 use crate::system::{
-    UpdateDecision, current_os_version, decide_update, get_auto_update, last_auto_update_date,
-    last_failed_update, rauc_install, rauc_operation, reboot, record_auto_update_date,
-    record_pending_update, remote_channel_version,
+    UpdateDecision, bundle_url, current_os_version, decide_update, get_auto_update,
+    last_auto_update_date, last_failed_update, rauc_install, rauc_last_error, rauc_operation,
+    reboot, record_auto_update_date, record_pending_update, remote_channel_version,
+    update_auto_update_status,
 };
 use chrono::{Local, Timelike};
 
-const UPDATE_BASE_URL: &str = "https://updates.snapdog.cc/os/bundles";
 const TICK: std::time::Duration = std::time::Duration::from_secs(60);
 /// Epoch of 2025-01-01Z. A Raspberry Pi has no RTC; before the first NTP sync the
 /// clock sits at (or near) the epoch, so anything earlier than this is "not synced".
@@ -101,8 +101,17 @@ async fn tick() -> anyhow::Result<()> {
     // record a run — the next tick retries, so a transient outage at the target time
     // no longer costs a whole interval.
     let current = current_os_version().await;
+    update_auto_update_status("checking", true, false, false, None).await;
     let Some(remote) = remote_channel_version(&config.channel).await else {
         tracing::info!("auto-update: update manifest unreachable, retrying next tick");
+        update_auto_update_status(
+            "error",
+            false,
+            false,
+            false,
+            Some("update manifest unreachable"),
+        )
+        .await;
         return Ok(());
     };
 
@@ -122,11 +131,22 @@ async fn tick() -> anyhow::Result<()> {
                 "auto-update: skipping (running {current}, {} channel offers {remote}): {reason}",
                 config.channel
             );
+            update_auto_update_status("up_to_date", false, false, false, None).await;
             return Ok(());
         }
     };
 
-    install_and_reboot(&version, &config.channel).await
+    update_auto_update_status("installing", false, true, false, None).await;
+    match install_and_reboot(&version, &config.channel).await {
+        Ok(()) => {
+            update_auto_update_status("rebooting", false, false, true, None).await;
+            Ok(())
+        }
+        Err(e) => {
+            update_auto_update_status("error", false, false, false, Some(&e.to_string())).await;
+            Err(e)
+        }
+    }
 }
 
 /// Download, install via RAUC, and tryboot-reboot into `version`. A plain
@@ -134,21 +154,40 @@ async fn tick() -> anyhow::Result<()> {
 /// install just armed (RESTART2), so reconcile would then mark the bundle failed.
 async fn install_and_reboot(version: &str, channel: &str) -> anyhow::Result<()> {
     // Bundle URL: <board>-<channel>.raucb (channel is "release" or "beta").
-    let board = crate::system::detect_board().await;
-    let url = format!("{UPDATE_BASE_URL}/{board}-{channel}.raucb");
+    let url = bundle_url(channel).await;
     tracing::info!("auto-update: installing {version} from {url}");
     rauc_install(&url).await?;
 
-    // Wait for RAUC to finish (max 30 minutes), then reboot.
+    // Wait for RAUC to actually start and then finish (max 30 minutes). InstallBundle
+    // is asynchronous, so the first idle state is pre-start, not completion.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1800);
+    let mut saw_installing = false;
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        if rauc_operation().await.unwrap_or_default() == "idle" {
-            break;
-        }
         if std::time::Instant::now() > deadline {
-            tracing::error!("auto-update: RAUC stuck, aborting");
-            return Ok(());
+            anyhow::bail!("RAUC installation timed out after 30 minutes");
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        let operation = match rauc_operation().await {
+            Ok(operation) => operation,
+            Err(e) => {
+                tracing::warn!("auto-update: RAUC status unavailable during install: {e}");
+                continue;
+            }
+        };
+        let last_error = rauc_last_error().await.unwrap_or_default();
+        match classify_install_status(&operation, &last_error, saw_installing) {
+            InstallPoll::Installing => {
+                if !saw_installing {
+                    tracing::info!("auto-update: RAUC installation started");
+                }
+                saw_installing = true;
+            }
+            InstallPoll::Completed => break,
+            InstallPoll::Failed => anyhow::bail!("RAUC installation failed: {last_error}"),
+            InstallPoll::Waiting => {
+                tracing::debug!("auto-update: waiting for RAUC (operation={operation})");
+            }
         }
     }
 

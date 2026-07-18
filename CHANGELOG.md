@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.1](https://github.com/SnapDogRocks/snapdog-os/compare/v0.12.0...v0.12.1) (2026-07-18)
+
+
+### Bug Fixes
+
+* **ctrl:** make automatic updates reliable ([f61e4ad](https://github.com/SnapDogRocks/snapdog-os/commit/f61e4ad795b5de0bf7edfa603dddbc19c86fb70c))
+* **ctrl:** make automatic updates reliable ([9ca002b](https://github.com/SnapDogRocks/snapdog-os/commit/9ca002bbc2a6e447051af5f24b590e9a286582b0))
+
 ## [0.12.0](https://github.com/SnapDogRocks/snapdog-os/compare/v0.11.0...v0.12.0) (2026-07-17)
 
 

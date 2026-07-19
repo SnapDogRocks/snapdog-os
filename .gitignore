@@ -11,6 +11,10 @@ buildroot/board/raspberrypi/overlay/usr/bin/snapdog-ctrl
 # Rust
 snapdog-ctrl/target/
 
+# Python
+__pycache__/
+*.pyc
+
 # WebUI
 snapdog-ctrl/webui/node_modules/
 snapdog-ctrl/webui/.next/

@@ -301,12 +301,22 @@ jobs:
           BUNDLE="snapdog-os-${{ matrix.board }}-${VERSION}.raucb"
           SBOM="snapdog-os-${{ matrix.board }}-${VERSION}-sbom.csv"
           CHECKSUMS="snapdog-os-${{ matrix.board }}-${VERSION}.sha256"
+          IMAGE_METADATA="snapdog-os-${{ matrix.board }}-${VERSION}.image.json"
 
           test -s "$IMG"
           PARTITIONS=$(sfdisk -J "$IMG" | jq '.partitiontable.partitions | length')
           test "$PARTITIONS" -eq 4
 
           gzip -n -c "$IMG" > "$OUT"
+          # Capture both representations while the raw image still exists. The
+          # helper also decompresses OUT and refuses metadata for a mismatched or
+          # corrupt gzip payload.
+          python3 scripts/release_manifest.py board-metadata \
+            --board "${{ matrix.board }}" \
+            --version "$VERSION" \
+            --raw-image "$IMG" \
+            --compressed-image "$OUT" \
+            --output "$IMAGE_METADATA"
           cp "../buildroot-${{ matrix.board }}/legal-info/manifest.csv" "$SBOM"
 
           # Generate RAUC bundle
@@ -326,6 +336,7 @@ jobs:
             echo "bundle=${BUNDLE}"
             echo "sbom=${SBOM}"
             echo "checksums=${CHECKSUMS}"
+            echo "image_metadata=${IMAGE_METADATA}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Trim Buildroot compiler cache
@@ -359,6 +370,7 @@ jobs:
             ${{ steps.package.outputs.bundle }}
             ${{ steps.package.outputs.sbom }}
             ${{ steps.package.outputs.checksums }}
+            ${{ steps.package.outputs.image_metadata }}
           if-no-files-found: error
           retention-days: 14
 
@@ -416,18 +428,40 @@ jobs:
           VERSION="${{ needs.release-please.outputs.version }}"
           CHANNEL="${{ needs.release-please.outputs.channel }}"
 
-          IMAGES_JSON='{}'
+          IMAGE_METADATA=()
           for board in pi3 pi4 pi5 zero2w; do
             IMAGE="artifacts/image-${board}/snapdog-os-${board}-${VERSION}.img.gz"
             BUNDLE="artifacts/image-${board}/snapdog-os-${board}-${VERSION}.raucb"
             SBOM="artifacts/image-${board}/snapdog-os-${board}-${VERSION}-sbom.csv"
             CHECKSUMS="artifacts/image-${board}/snapdog-os-${board}-${VERSION}.sha256"
+            METADATA="artifacts/image-${board}/snapdog-os-${board}-${VERSION}.image.json"
 
             test -s "$IMAGE"
             test -s "$BUNDLE"
             test -s "$SBOM"
             test -s "$CHECKSUMS"
+            test -s "$METADATA"
             (cd "artifacts/image-${board}" && sha256sum --check "snapdog-os-${board}-${VERSION}.sha256")
+            IMAGE_METADATA+=("$METADATA")
+          done
+
+          # Validate the complete channel manifest before changing any R2
+          # object. A bad or incomplete board artifact must never leave rolling
+          # image aliases ahead of their manifest.
+          python3 scripts/release_manifest.py manifest \
+            --channel "$CHANNEL" \
+            --version "$VERSION" \
+            --commit "${GITHUB_SHA}" \
+            --date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --base-url "https://updates.snapdog.cc/os/images" \
+            --metadata "${IMAGE_METADATA[@]}" \
+            --output latest.json
+          python3 scripts/release_manifest.py validate --manifest latest.json
+
+          for board in pi3 pi4 pi5 zero2w; do
+            IMAGE="artifacts/image-${board}/snapdog-os-${board}-${VERSION}.img.gz"
+            BUNDLE="artifacts/image-${board}/snapdog-os-${board}-${VERSION}.raucb"
+            SBOM="artifacts/image-${board}/snapdog-os-${board}-${VERSION}-sbom.csv"
 
             # Versioned archives (immutable)
             aws s3 cp "$IMAGE" "s3://${R2_BUCKET}/os/images/" \
@@ -447,24 +481,11 @@ jobs:
             aws s3 cp "$IMAGE" "s3://${R2_BUCKET}/os/images/snapdog-os-${board}-${CHANNEL}.img.gz" \
               --cache-control "public, max-age=300" \
               --endpoint-url "$AWS_ENDPOINT_URL"
-
-            SHA=$(sha256sum "$IMAGE" | awk '{print $1}')
-            IMAGES_JSON=$(printf '%s' "$IMAGES_JSON" | jq \
-              --arg b "$board" \
-              --arg f "snapdog-os-${board}-${CHANNEL}.img.gz" \
-              --arg s "$SHA" \
-              '.[$b] = {image: $f, sha256: $s}')
           done
 
-          # Channel manifest the website reads (SSOT for badge + download).
-          jq -n \
-            --arg channel "$CHANNEL" \
-            --arg version "$VERSION" \
-            --arg commit "${GITHUB_SHA}" \
-            --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            --argjson boards "$IMAGES_JSON" \
-            '{channel: $channel, version: $version, commit: $commit, date: $date, boards: $boards}' \
-            > latest.json
+          # Channel manifest v2. Existing `image` and `sha256` fields retain
+          # their v1 semantics; publish it last so every referenced image and
+          # channel alias already exists when consumers observe the pointer.
           cat latest.json
           aws s3 cp latest.json "s3://${R2_BUCKET}/os/images/latest-${CHANNEL}.json" \
             --cache-control "public, max-age=60" \
@@ -538,6 +559,7 @@ jobs:
           jq '.channel = "beta"
               | .boards |= with_entries(.value.image |= sub("-release\\."; "-beta."))' \
             latest.json > latest-beta.json
+          python3 scripts/release_manifest.py validate --manifest latest-beta.json
           cat latest-beta.json
           aws s3 cp latest-beta.json "s3://${R2_BUCKET}/os/images/latest-beta.json" \
             --cache-control "public, max-age=60" \

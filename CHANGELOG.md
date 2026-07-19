@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.0](https://github.com/SnapDogRocks/snapdog-os/compare/v0.12.1...v0.13.0) (2026-07-19)
+
+
+### Features
+
+* publish installer manifest v2 ([928e985](https://github.com/SnapDogRocks/snapdog-os/commit/928e985164be8ae1bca3b0b95e4a011ff287acad))
+* publish SnapDog OS installer manifest v2 ([68f6229](https://github.com/SnapDogRocks/snapdog-os/commit/68f6229be3ea8d2319255b0866013f6bf4479aa6))
+
 ## [0.12.1](https://github.com/SnapDogRocks/snapdog-os/compare/v0.12.0...v0.12.1) (2026-07-18)
 
 

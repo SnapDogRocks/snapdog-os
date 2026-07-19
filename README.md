@@ -152,6 +152,7 @@ time = "04:00"
 - **Auto-update**: Daily check at configured time, install + reboot
 - **Manual**: Upload `.raucb` via web UI or install from URL
 - **Channels**: `release` (`snapdog-os-<board>-release.raucb`) / `beta` (`snapdog-os-<board>-beta.raucb`) for `pi3`, `pi4`, `pi5`, and `zero2w`
+- **Installer metadata**: Backward-compatible [release manifest v2](docs/release-manifest-v2.md) with immutable image URLs, byte sizes, and hashes for compressed and raw images
 
 ### SoftAP
 

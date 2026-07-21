@@ -17,10 +17,12 @@ streaming_port = 1704
 codec = "flac"
 group_volume_mode = "relative"
 unknown_clients = "accept"
-mdns_name = "SnapDog"
 managed = true
+
+[mdns]
+enabled = true
+advertise_snapcast = false
 
 [[zone]]
 name = "Default Zone"
 icon = "🔊"
-

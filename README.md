@@ -169,9 +169,9 @@ The device configuration service is a single Rust binary with an embedded web UI
 | Embedded assets | rust-embed |
 | Network management | wpa_supplicant, hostapd, systemd-networkd |
 | mDNS discovery | mdns-sd crate |
-| Config parsing | Custom config.txt parser with backup |
+| Config parsing | Lossless TOML editing plus guarded, atomic activation |
 | Logging | tracing + journald (Linux) |
-| Accessibility | WCAG AAA, 5 languages (EN/DE/FR/ES/NL) |
+| Accessibility | WCAG AAA, 6 languages (EN/DE/ES/FR/IT/NL) |
 | Linting | clippy pedantic + nursery, zero exceptions |
 
 ### Web UI tabs
@@ -180,9 +180,17 @@ The device configuration service is a single Rust binary with an embedded web UI
 - **Network** — WiFi (scan, connect, static IP), Ethernet (DHCP/static)
 - **Audio** — DAC overlay selection from detected boards
 - **Client** — server discovery (mDNS), soundcard, volume control, latency
+- **Server** — SnapDog zones, clients, sources and integrations, plus a complete advanced TOML editor
 - **SSH** — enable/disable, pubkey management
 - **Update** — OTA check/install, channel (stable/beta), auto-update schedule
 - **System** — timezone, logs, reboot, factory reset
+
+Server configuration changes are revision-guarded, validated by the installed
+SnapDog binary, written atomically, and activated only through a monitored
+service restart. If the new service does not remain healthy, `snapdog-ctrl`
+restores the previous configuration and restarts it automatically. Fields not
+yet represented by the graphical editor remain untouched and can be edited in
+the Advanced TOML view.
 
 ### Local development
 
@@ -276,7 +284,6 @@ The CA certificate is baked into the OS image at `/etc/rauc/ca.cert.pem`. Only b
 - [ ] Per-board configuration structure (`buildroot/boards/{pi3,pi4,pi5,cm4}/`)
 - [ ] WebUI i18n completion (all new strings in de/fr/es/nl)
 - [ ] Zone presence/scheduling UI
-- [ ] Per-zone KNX group address configuration
 - [ ] Custom Docker build image for CI (faster builds)
 - [ ] Hardware test suite (automated boot + API verification)
 

@@ -306,6 +306,9 @@
     "subtabSources": "Bronnen",
     "subtabZones": "Zones & Clients",
     "subtabIntegrations": "Integraties",
+    "subtabAdvanced": "Geavanceerde TOML",
+    "advancedDescription": "Bewerk de volledige serverconfiguratie voor geavanceerde of nieuwe opties. Voor activering valideert de geïnstalleerde SnapDog-server deze TOML; bij een mislukte herstart wordt de vorige configuratie automatisch hersteld.",
+    "advancedPreservation": "De normale tabbladen behouden velden die ze niet tonen. Gebruik deze editor alleen voor directe toegang tot het volledige schema.",
     "name": "Naam",
     "port": "Poort",
     "codec": "Codec",
@@ -370,6 +373,8 @@
     "knxGatewayRequired": "De gateway-URL is verplicht in KNX-clientmodus.",
     "validationFailed": "Corrigeer de gemarkeerde velden.",
     "saveFailed": "Opslaan mislukt. Controleer de configuratie en probeer het opnieuw.",
+    "loadFailed": "De serverconfiguratie kon niet worden geladen. Wijzigingen kunnen pas worden opgeslagen zodra deze weer beschikbaar is.",
+    "reload": "Opnieuw proberen",
     "save": "Opslaan",
     "saved": "Opgeslagen!"
   },

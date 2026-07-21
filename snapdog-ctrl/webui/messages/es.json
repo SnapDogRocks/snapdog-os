@@ -306,6 +306,9 @@
     "subtabSources": "Fuentes",
     "subtabZones": "Zonas y Clientes",
     "subtabIntegrations": "Integraciones",
+    "subtabAdvanced": "TOML avanzado",
+    "advancedDescription": "Edita la configuración completa del servidor para opciones avanzadas o nuevas. Antes de activarla, el servidor SnapDog instalado valida el TOML; si el reinicio falla, se restaura automáticamente la configuración anterior.",
+    "advancedPreservation": "Las pestañas normales conservan los campos que no muestran. Usa este editor solo para acceder directamente al esquema completo.",
     "name": "Nombre",
     "port": "Puerto",
     "codec": "Códec",
@@ -370,6 +373,8 @@
     "knxGatewayRequired": "La URL del gateway es obligatoria en modo cliente KNX.",
     "validationFailed": "Corrige los campos marcados.",
     "saveFailed": "Error al guardar. Revisa la configuración e inténtalo de nuevo.",
+    "loadFailed": "No se pudo cargar la configuración del servidor. No se pueden guardar cambios hasta que vuelva a estar disponible.",
+    "reload": "Reintentar",
     "save": "Guardar",
     "saved": "¡Guardado!"
   },

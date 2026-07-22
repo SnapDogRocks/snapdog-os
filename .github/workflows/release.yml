@@ -483,9 +483,35 @@ jobs:
               --endpoint-url "$AWS_ENDPOINT_URL"
           done
 
+          # Preserve the complete validated manifest under an immutable key and
+          # merge it into the bounded channel catalog. Installer clients can
+          # therefore offer real version selection without scraping GitHub tags
+          # or guessing integrity metadata from filenames.
+          CATALOG="catalog-${CHANNEL}.json"
+          PREVIOUS_ARGS=()
+          if aws s3 cp "s3://${R2_BUCKET}/os/images/${CATALOG}" previous-catalog.json \
+               --endpoint-url "$AWS_ENDPOINT_URL" 2>/dev/null; then
+            PREVIOUS_ARGS=(--previous previous-catalog.json)
+          fi
+          python3 scripts/release_manifest.py catalog \
+            --channel "$CHANNEL" \
+            --manifest latest.json \
+            "${PREVIOUS_ARGS[@]}" \
+            --output "$CATALOG"
+          python3 scripts/release_manifest.py validate-catalog --catalog "$CATALOG"
+          aws s3 cp latest.json \
+            "s3://${R2_BUCKET}/os/images/manifests/${CHANNEL}/${VERSION}.json" \
+            --cache-control "public, max-age=31536000, immutable" \
+            --content-type "application/json" \
+            --endpoint-url "$AWS_ENDPOINT_URL"
+          aws s3 cp "$CATALOG" "s3://${R2_BUCKET}/os/images/${CATALOG}" \
+            --cache-control "public, max-age=60" \
+            --content-type "application/json" \
+            --endpoint-url "$AWS_ENDPOINT_URL"
+
           # Channel manifest v2. Existing `image` and `sha256` fields retain
-          # their v1 semantics; publish it last so every referenced image and
-          # channel alias already exists when consumers observe the pointer.
+          # their v1 semantics; publish it last so every referenced image,
+          # catalog entry, and channel alias exists when consumers observe it.
           cat latest.json
           aws s3 cp latest.json "s3://${R2_BUCKET}/os/images/latest-${CHANNEL}.json" \
             --cache-control "public, max-age=60" \
@@ -560,6 +586,25 @@ jobs:
               | .boards |= with_entries(.value.image |= sub("-release\\."; "-beta."))' \
             latest.json > latest-beta.json
           python3 scripts/release_manifest.py validate --manifest latest-beta.json
+          # Shipping a stable version supersedes every prerelease of that same
+          # version. Reset the beta catalog to the released image so it cannot
+          # retain entries whose images the retention job is about to prune.
+          python3 scripts/release_manifest.py catalog \
+            --channel beta \
+            --manifest latest-beta.json \
+            --output catalog-beta.json
+          python3 scripts/release_manifest.py validate-catalog \
+            --catalog catalog-beta.json
+          aws s3 cp latest-beta.json \
+            "s3://${R2_BUCKET}/os/images/manifests/beta/${REL}.json" \
+            --cache-control "public, max-age=31536000, immutable" \
+            --content-type "application/json" \
+            --endpoint-url "$AWS_ENDPOINT_URL"
+          aws s3 cp catalog-beta.json \
+            "s3://${R2_BUCKET}/os/images/catalog-beta.json" \
+            --cache-control "public, max-age=60" \
+            --content-type "application/json" \
+            --endpoint-url "$AWS_ENDPOINT_URL"
           cat latest-beta.json
           aws s3 cp latest-beta.json "s3://${R2_BUCKET}/os/images/latest-beta.json" \
             --cache-control "public, max-age=60" \

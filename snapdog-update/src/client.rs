@@ -103,17 +103,6 @@ pub struct UpdateStatus {
     pub slots: Vec<SlotStatus>,
 }
 
-#[derive(Deserialize, Clone)]
-pub struct FlashChallenge {
-    pub challenge: String,
-    pub expires_in_seconds: u64,
-}
-
-#[derive(Serialize)]
-struct FlashConfirm {
-    challenge: String,
-}
-
 impl UpdateClient {
     pub fn new(base_url: &str) -> Result<Self> {
         let base_url = base_url.trim_end_matches('/').to_string();
@@ -211,10 +200,9 @@ impl UpdateClient {
         Ok(health)
     }
 
-    pub async fn upload_image<F>(
+    pub async fn upload_bundle<F>(
         &self,
         file_path: &Path,
-        endpoint: &str,
         progress_cb: F,
     ) -> Result<reqwest::Response>
     where
@@ -239,7 +227,7 @@ impl UpdateClient {
         let file_name = file_path
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("image.bin")
+            .unwrap_or("firmware.raucb")
             .to_string();
 
         let part = reqwest::multipart::Part::stream_with_length(body, total_size)
@@ -247,7 +235,7 @@ impl UpdateClient {
             .mime_str("application/octet-stream")?;
 
         let form = reqwest::multipart::Form::new().part("file", part);
-        let url = format!("{}{}", self.base_url, endpoint);
+        let url = format!("{}/api/system/update/upload", self.base_url);
 
         let upload_client = Client::builder()
             .timeout(std::time::Duration::from_secs(900))
@@ -260,7 +248,7 @@ impl UpdateClient {
             .send()
             .await?;
 
-        Self::check_response(res, "upload image").await
+        Self::check_response(res, "upload RAUC bundle").await
     }
 
     pub async fn trigger_install(&self) -> Result<()> {
@@ -293,36 +281,6 @@ impl UpdateClient {
             )
             .await?;
         Ok(status)
-    }
-
-    pub async fn trigger_flash_raw(
-        &self,
-        file_path: &Path,
-        progress_cb: impl Fn(u64) + Send + Sync + 'static,
-    ) -> Result<FlashChallenge> {
-        let res = self
-            .upload_image(file_path, "/api/system/update/flash-raw", progress_cb)
-            .await?;
-        let challenge: FlashChallenge = res.json().await?;
-        Ok(challenge)
-    }
-
-    pub async fn confirm_flash_raw(&self, challenge: &str) -> Result<()> {
-        let url = format!("{}/api/system/update/flash-raw/confirm", self.base_url);
-        let response = self
-            .client
-            .post(&url)
-            .headers(self.headers()?)
-            .json(&FlashConfirm {
-                challenge: challenge.to_string(),
-            })
-            .send()
-            .await?;
-        if response.status() == StatusCode::FORBIDDEN {
-            return Err(UpgradeError::ChallengeRejected);
-        }
-        Self::check_response(response, "confirm raw flash").await?;
-        Ok(())
     }
 
     async fn send_json<T>(&self, request: RequestBuilder, action: &'static str) -> Result<T>

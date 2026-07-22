@@ -1776,8 +1776,8 @@ function UpdateTab() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [showWarningGate, setShowWarningGate] = useState(false);
-  const [acceptedRisks, setAcceptedRisks] = useState(false);
+  const [showLocalUpdateDialog, setShowLocalUpdateDialog] = useState(false);
+  const [fileSelectionError, setFileSelectionError] = useState<string | null>(null);
   // null = not uploading; 0..1 = fraction sent (or -1 when total is unknown).
   const [uploadFraction, setUploadFraction] = useState<number | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -1789,10 +1789,9 @@ function UpdateTab() {
   const cancelInstallPoll = useRef<(() => void) | null>(null);
   const cancelReconnectPoll = useRef<(() => void) | null>(null);
   const uploadTriggerRef = useRef<HTMLButtonElement>(null);
-  const manualDialogRef = useRef<HTMLDivElement>(null);
-  const manualRiskCheckboxRef = useRef<HTMLInputElement>(null);
-  const manualDialogTitleId = useId();
-  const manualDialogDescriptionId = useId();
+  const localUpdateDialogRef = useRef<HTMLDivElement>(null);
+  const localUpdateDialogTitleId = useId();
+  const localUpdateDialogDescriptionId = useId();
 
   const setUiPhase = useCallback((next: UpdateUiPhase) => {
     // Keep the imperative view in sync immediately. Effects run after paint, which
@@ -2202,66 +2201,70 @@ function UpdateTab() {
     fileInputRef.current?.click();
   }, []);
 
-  const handleFileSelected = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setSelectedFile(file);
-      setShowWarningGate(true);
-      setAcceptedRisks(false);
-      setUploadError(null);
+  const selectLocalUpdateFile = useCallback((file?: File) => {
+    if (!file) return false;
+    if (!file.name.toLowerCase().endsWith(".raucb")) {
+      setSelectedFile(null);
+      setShowLocalUpdateDialog(false);
+      setFileSelectionError(t("localInvalidFile"));
+      return false;
     }
-  }, []);
+
+    setSelectedFile(file);
+    setShowLocalUpdateDialog(true);
+    setFileSelectionError(null);
+    setUploadError(null);
+    return true;
+  }, [t]);
+
+  const handleFileSelected = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!selectLocalUpdateFile(e.target.files?.[0])) e.target.value = "";
+  }, [selectLocalUpdateFile]);
 
   const handleFileDrop = useCallback((e: React.DragEvent<HTMLButtonElement>) => {
     e.preventDefault();
-    const file = e.dataTransfer.files?.[0];
-    if (file) {
-      setSelectedFile(file);
-      setShowWarningGate(true);
-      setAcceptedRisks(false);
-      setUploadError(null);
-    }
-  }, []);
+    selectLocalUpdateFile(e.dataTransfer.files?.[0]);
+  }, [selectLocalUpdateFile]);
 
-  const closeManualDialog = useCallback(() => {
+  const closeLocalUpdateDialog = useCallback(() => {
     cancelUpdateOperation();
     setUiPhase("idle");
-    setShowWarningGate(false);
+    setShowLocalUpdateDialog(false);
     setSelectedFile(null);
-    setAcceptedRisks(false);
+    setFileSelectionError(null);
     setUploadFraction(null);
     setUploadError(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, [cancelUpdateOperation, setUiPhase]);
 
   useEffect(() => {
-    if (!showWarningGate) return;
+    if (!showLocalUpdateDialog) return;
     const restoreFocusTo = uploadTriggerRef.current;
-    const frame = window.requestAnimationFrame(() => manualRiskCheckboxRef.current?.focus());
+    const frame = window.requestAnimationFrame(() => localUpdateDialogRef.current?.focus());
     return () => {
       window.cancelAnimationFrame(frame);
       window.requestAnimationFrame(() => {
         if (restoreFocusTo?.isConnected) restoreFocusTo.focus();
       });
     };
-  }, [showWarningGate]);
+  }, [showLocalUpdateDialog]);
 
-  const handleManualDialogKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+  const handleLocalUpdateDialogKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
       if (uploadFraction === null) {
         event.preventDefault();
-        closeManualDialog();
+        closeLocalUpdateDialog();
       }
       return;
     }
     if (event.key !== "Tab") return;
 
-    const focusable = Array.from(manualDialogRef.current?.querySelectorAll<HTMLElement>(
+    const focusable = Array.from(localUpdateDialogRef.current?.querySelectorAll<HTMLElement>(
       'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
     ) ?? []).filter((element) => element.getClientRects().length > 0);
     if (focusable.length === 0) {
       event.preventDefault();
-      manualDialogRef.current?.focus();
+      localUpdateDialogRef.current?.focus();
       return;
     }
 
@@ -2274,9 +2277,9 @@ function UpdateTab() {
       event.preventDefault();
       first.focus();
     }
-  }, [closeManualDialog, uploadFraction]);
+  }, [closeLocalUpdateDialog, uploadFraction]);
 
-  const startManualFlash = useCallback(() => {
+  const startLocalUpdate = useCallback(() => {
     if (!selectedFile) return;
     dismissedTerminalStatus.current = null;
     const generation = beginUpdateOperation();
@@ -2292,9 +2295,8 @@ function UpdateTab() {
       .then(() => {
         if (generation !== operationGeneration.current) return;
         // Upload done — close the modal, move into the install lifecycle.
-        setShowWarningGate(false);
+        setShowLocalUpdateDialog(false);
         setSelectedFile(null);
-        setAcceptedRisks(false);
         setUploadFraction(null);
         setUiPhase("verifying");
         setUiInstallStatus(null);
@@ -2471,8 +2473,8 @@ function UpdateTab() {
             <hr className="border-border/50" />
             <div className="space-y-3">
               <div>
-                <h3 className="text-sm font-semibold">{t("manualTitle")}</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">{t("manualDesc")}</p>
+                <h3 className="text-sm font-semibold">{t("localTitle")}</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">{t("localDesc")}</p>
               </div>
               <button
                 ref={uploadTriggerRef}
@@ -2486,7 +2488,7 @@ function UpdateTab() {
                 <svg aria-hidden="true" className="size-8 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                 </svg>
-                <span className="text-xs font-semibold text-muted-foreground">{t("manualUploadButton")}</span>
+                <span className="text-xs font-semibold text-muted-foreground">{t("localChoose")}</span>
               </button>
               <input
                 type="file"
@@ -2495,51 +2497,42 @@ function UpdateTab() {
                 accept=".raucb"
                 onChange={handleFileSelected}
               />
+              {fileSelectionError && (
+                <p className="text-xs font-medium text-destructive" role="alert">
+                  {fileSelectionError}
+                </p>
+              )}
             </div>
           </>
         )}
       </div>
 
-      {showWarningGate && selectedFile && (
+      {showLocalUpdateDialog && selectedFile && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-4 animate-in fade-in duration-200">
           <div
-            ref={manualDialogRef}
+            ref={localUpdateDialogRef}
             role="dialog"
             aria-modal="true"
-            aria-labelledby={manualDialogTitleId}
-            aria-describedby={manualDialogDescriptionId}
+            aria-labelledby={localUpdateDialogTitleId}
+            aria-describedby={localUpdateDialogDescriptionId}
             aria-busy={uploadFraction !== null}
             tabIndex={-1}
-            onKeyDown={handleManualDialogKeyDown}
-            className="w-full max-w-lg rounded-xl border border-destructive/30 bg-background/95 shadow-2xl p-6 space-y-6 max-h-[90vh] overflow-y-auto transform scale-100 transition duration-200"
+            onKeyDown={handleLocalUpdateDialogKeyDown}
+            className="w-full max-w-lg rounded-xl border border-border bg-background/95 shadow-2xl p-6 space-y-6 max-h-[90vh] overflow-y-auto transform scale-100 transition duration-200"
           >
             <div className="space-y-2">
-              <h2 id={manualDialogTitleId} className="text-base font-bold text-destructive flex items-center gap-2">
-                <span>{t("manualWarningTitle")}</span>
+              <h2 id={localUpdateDialogTitleId} className="text-base font-semibold text-foreground">
+                <span>{t("localDialogTitle")}</span>
               </h2>
-              <p id={manualDialogDescriptionId} className="text-xs text-foreground/90 leading-relaxed font-semibold">
-                {t("manualWarningDesc1")}
+              <p id={localUpdateDialogDescriptionId} className="text-sm text-foreground/90 leading-relaxed">
+                {t("localDialogDesc")}
               </p>
-              <p className="text-xs text-foreground/90 leading-relaxed font-semibold">
-                {t("manualWarningDesc2")}
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                {t("localDialogSecurity")}
               </p>
               <p className="text-xs text-muted-foreground font-mono bg-muted/60 p-2 rounded border border-border/50">
-                {t("manualFileLabel")}: {selectedFile.name} ({(selectedFile.size / 1024 / 1024).toFixed(2)} MB)
+                {t("localFileLabel")}: {selectedFile.name} ({(selectedFile.size / 1024 / 1024).toFixed(2)} MB)
               </p>
-            </div>
-
-            <div className="flex items-start gap-3 rounded-lg border border-border/85 bg-muted/40 p-4">
-              <input
-                ref={manualRiskCheckboxRef}
-                id="accept-risks-checkbox"
-                type="checkbox"
-                checked={acceptedRisks}
-                onChange={(e) => setAcceptedRisks(e.target.checked)}
-                className="mt-1 size-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
-              />
-              <label htmlFor="accept-risks-checkbox" className="text-xs font-bold text-foreground/80 cursor-pointer select-none leading-relaxed">
-                {t("manualConfirmCheckbox")}
-              </label>
             </div>
 
             {uploadError && (
@@ -2551,97 +2544,28 @@ function UpdateTab() {
             <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
               <Button
                 variant="outline"
-                onClick={closeManualDialog}
+                onClick={closeLocalUpdateDialog}
                 disabled={uploadFraction !== null}
                 className="w-full sm:w-auto"
               >
-                {t("manualCancel")}
+                {t("localCancel")}
               </Button>
               <Button
-                variant="destructive"
-                onClick={startManualFlash}
-                disabled={!acceptedRisks || uploadFraction !== null}
-                className="w-full font-bold sm:w-auto"
+                onClick={startLocalUpdate}
+                disabled={uploadFraction !== null}
+                className="w-full sm:w-auto"
               >
                 {uploadFraction !== null
                   ? uploadFraction >= 0
-                    ? `${t("manualUploading")} ${Math.round(uploadFraction * 100)}%`
-                    : t("manualUploading")
-                  : t("manualProceed")}
+                    ? `${t("localUploading")} ${Math.round(uploadFraction * 100)}%`
+                    : t("localUploading")
+                  : t("localInstall")}
               </Button>
             </div>
           </div>
         </div>
       )}
-      {phase === "idle" && <RawFlashSection />}
     </Card>
-  );
-}
-
-function RawFlashSection() {
-  const t = useTranslations("update");
-  const [expanded, setExpanded] = useState(false);
-  const [file, setFile] = useState<File | null>(null);
-  const [challenge, setChallenge] = useState<string | null>(null);
-  const [input, setInput] = useState("");
-  const [status, setStatus] = useState<"idle" | "uploading" | "confirming" | "flashing" | "done" | "error">("idle");
-  const id = useId();
-
-  const handleUpload = async () => {
-    if (!file) return;
-    setStatus("uploading");
-    try {
-      const res = await api.flashRawUpload(file);
-      setChallenge(res.challenge);
-      setStatus("confirming");
-    } catch { setStatus("error"); }
-  };
-
-  const handleConfirm = async () => {
-    if (!challenge || input.toUpperCase() !== challenge) return;
-    setStatus("flashing");
-    try {
-      await api.flashRawConfirm(challenge);
-      setStatus("done");
-    } catch { setStatus("error"); }
-  };
-
-  return (
-    <div className="border-t border-border pt-3 mt-3">
-      <button type="button" onClick={() => setExpanded(!expanded)} className="text-xs text-muted-foreground hover:text-foreground">
-        ▸ {t("rawAdvanced")}
-      </button>
-      {expanded && (
-        <div className="mt-3 space-y-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
-          <p className="text-xs text-destructive font-medium">⚠️ {t("rawWarning")}</p>
-          {status === "idle" && (
-            <>
-              <div>
-                <label htmlFor={id} className="text-xs font-medium">{t("rawImageLabel")}</label>
-                <input id={id} type="file" accept=".img,.img.gz,.gz" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="mt-1 block w-full text-xs" />
-              </div>
-              <Button size="sm" variant="outline" disabled={!file} onClick={handleUpload}>{t("rawPrepare")}</Button>
-            </>
-          )}
-          {status === "uploading" && <p className="text-xs">{t("rawUploading")}</p>}
-          {status === "confirming" && challenge && (
-            <div className="space-y-2">
-              <p className="text-xs">{t("rawConfirmBefore")} <code className="font-bold text-destructive">{challenge}</code> {t("rawConfirmAfter")}</p>
-              <Input value={input} onChange={(e) => setInput(e.target.value.toUpperCase())} placeholder={challenge} className="font-mono text-center" />
-              <Button size="sm" variant="outline" disabled={input !== challenge} onClick={handleConfirm}>{t("rawConfirm")}</Button>
-            </div>
-          )}
-          {status === "flashing" && <p className="text-xs">{t("rawFlashing")}</p>}
-          {status === "done" && (
-            <div className="space-y-2">
-              <p className="text-xs text-green-600">{t("rawComplete")}</p>
-              <Button size="sm" onClick={() => api.reboot()}>{t("rebootNow")}</Button>
-            </div>
-          )}
-          {status === "error" && <p className="text-xs text-destructive">{t("rawError")}</p>}
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -4380,7 +4304,7 @@ function SetupPage() {
     return () => clearInterval(interval);
   }, []);
 
-  // Any reboot (update, tuning, raw-flash, plain) drops the device within seconds.
+  // Any reboot (update, tuning, plain) drops the device within seconds.
   // `api.reboot()` announces itself, so we optimistically show the reconnect overlay from
   // the click instead of waiting for the 5s health poll. The poll above reconciles: it flips
   // back to connected once the device answers again (and self-corrects if the reboot no-oped).

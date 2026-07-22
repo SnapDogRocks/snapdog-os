@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::server_config::{self, ServerConfig};
 use crate::system;
-use rand::distr::SampleString;
 
 // --- Static files ---
 
@@ -66,7 +65,7 @@ pub fn api() -> Router {
         .route("/system/update", post(post_update))
         .route("/system/update/check", get(get_update_check))
         .route("/system/update/status", get(get_update_status))
-        // Firmware/image uploads stream a whole rootfs (tens of MB to ~GB) to
+        // Firmware bundle uploads stream a whole rootfs (tens of MB to ~GB) to
         // disk — lift axum's 2 MB DefaultBodyLimit or the body is silently
         // truncated (rauc then rejects it as "Signature size exceeds bundle size").
         .route(
@@ -74,14 +73,6 @@ pub fn api() -> Router {
             post(post_update_upload).layer(DefaultBodyLimit::disable()),
         )
         .route("/system/update/install", post(post_update_install))
-        .route(
-            "/system/update/flash-raw",
-            post(post_flash_raw_upload).layer(DefaultBodyLimit::disable()),
-        )
-        .route(
-            "/system/update/flash-raw/confirm",
-            post(post_flash_raw_confirm),
-        )
         .route(
             "/system/update/auto",
             get(get_auto_update).put(put_auto_update),
@@ -1098,6 +1089,13 @@ async fn post_update() -> StatusCode {
 /// The uploaded RAUC bundle is staged on the writable data partition, where it has
 /// enough space and remains available to the separate RAUC service for the full
 /// asynchronous installation.
+fn is_rauc_bundle_filename(filename: &str) -> bool {
+    std::path::Path::new(filename)
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("raucb"))
+}
+
 async fn post_update_upload(
     mut multipart: axum::extract::Multipart,
 ) -> Result<StatusCode, StatusCode> {
@@ -1107,11 +1105,28 @@ async fn post_update_upload(
     // for the complete multipart stream. The guard deliberately does not advertise
     // an active install; the browser reports upload progress directly.
     let _upload_guard = crate::update::reserve_upload().map_err(|error| {
-        tracing::warn!(%error, "manual firmware upload refused");
+        tracing::warn!(%error, "local firmware upload refused");
         StatusCode::CONFLICT
     })?;
     if matches!(system::rauc_operation().await.as_deref(), Ok("installing")) {
         return Err(StatusCode::CONFLICT);
+    }
+
+    let Some(mut field) = multipart.next_field().await.map_err(|error| {
+        tracing::error!(%error, "upload: reading multipart failed");
+        StatusCode::BAD_REQUEST
+    })?
+    else {
+        return Err(StatusCode::BAD_REQUEST);
+    };
+    if field.name() != Some("file") {
+        tracing::warn!(field = ?field.name(), "firmware upload has unexpected multipart field");
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let filename = field.file_name().unwrap_or_default();
+    if !is_rauc_bundle_filename(filename) {
+        tracing::warn!(%filename, "firmware upload is not a RAUC bundle");
+        return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
     }
 
     let dest = crate::update::UPDATE_BUNDLE_PATH;
@@ -1124,44 +1139,44 @@ async fn post_update_upload(
 
     let result = async {
         let mut file = tokio::fs::File::create(part).await.map_err(|error| {
-            tracing::error!(%error, "failed to create manual firmware upload");
+            tracing::error!(%error, "failed to create local firmware upload");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
         let mut uploaded = 0_u64;
 
-        while let Some(mut field) = multipart.next_field().await.map_err(|error| {
-            tracing::error!(%error, "upload: reading multipart failed");
-            StatusCode::BAD_REQUEST
-        })? {
-            // Drain every field explicitly so a dropped connection cannot publish
-            // a truncated bundle as a successful upload.
-            loop {
-                match field.chunk().await {
-                    Ok(Some(chunk)) => {
-                        let chunk_len = u64::try_from(chunk.len()).map_err(|error| {
-                            tracing::error!(%error, "upload chunk length overflow");
-                            StatusCode::PAYLOAD_TOO_LARGE
-                        })?;
-                        uploaded = uploaded.checked_add(chunk_len).ok_or_else(|| {
-                            tracing::warn!("manual firmware upload size overflow");
-                            StatusCode::PAYLOAD_TOO_LARGE
-                        })?;
-                        if uploaded > crate::update::MAX_BUNDLE_BYTES {
-                            tracing::warn!(uploaded, "manual firmware upload exceeds 1 GiB");
-                            return Err(StatusCode::PAYLOAD_TOO_LARGE);
-                        }
-                        file.write_all(&chunk).await.map_err(|error| {
-                            tracing::error!(%error, "upload: write chunk failed");
-                            StatusCode::INTERNAL_SERVER_ERROR
-                        })?;
+        // Drain the bundle explicitly so a dropped connection cannot publish a
+        // truncated upload as successful.
+        loop {
+            match field.chunk().await {
+                Ok(Some(chunk)) => {
+                    let chunk_len = u64::try_from(chunk.len()).map_err(|error| {
+                        tracing::error!(%error, "upload chunk length overflow");
+                        StatusCode::PAYLOAD_TOO_LARGE
+                    })?;
+                    uploaded = uploaded.checked_add(chunk_len).ok_or_else(|| {
+                        tracing::warn!("local firmware upload size overflow");
+                        StatusCode::PAYLOAD_TOO_LARGE
+                    })?;
+                    if uploaded > crate::update::MAX_BUNDLE_BYTES {
+                        tracing::warn!(uploaded, "local firmware upload exceeds 1 GiB");
+                        return Err(StatusCode::PAYLOAD_TOO_LARGE);
                     }
-                    Ok(None) => break,
-                    Err(error) => {
-                        tracing::error!(%error, "upload: reading chunk failed");
-                        return Err(StatusCode::BAD_REQUEST);
-                    }
+                    file.write_all(&chunk).await.map_err(|error| {
+                        tracing::error!(%error, "upload: write chunk failed");
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    })?;
+                }
+                Ok(None) => break,
+                Err(error) => {
+                    tracing::error!(%error, "upload: reading chunk failed");
+                    return Err(StatusCode::BAD_REQUEST);
                 }
             }
+        }
+        drop(field);
+        if uploaded == 0 {
+            tracing::warn!("empty firmware bundle upload refused");
+            return Err(StatusCode::BAD_REQUEST);
         }
 
         file.flush().await.map_err(|error| {
@@ -1174,7 +1189,7 @@ async fn post_update_upload(
         })?;
         drop(file);
         tokio::fs::rename(part, dest).await.map_err(|error| {
-            tracing::error!(%error, "failed to publish manual firmware upload");
+            tracing::error!(%error, "failed to publish local firmware upload");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
         Ok(StatusCode::OK)
@@ -1185,6 +1200,20 @@ async fn post_update_upload(
         let _ = tokio::fs::remove_file(part).await;
     }
     result
+}
+
+#[cfg(test)]
+mod update_upload_filename_tests {
+    use super::is_rauc_bundle_filename;
+
+    #[test]
+    fn accepts_only_rauc_bundle_filenames() {
+        assert!(is_rauc_bundle_filename("snapdog-os-pi4.raucb"));
+        assert!(is_rauc_bundle_filename("snapdog-os-pi4.RAUCB"));
+        assert!(!is_rauc_bundle_filename("snapdog-os-pi4.img.gz"));
+        assert!(!is_rauc_bundle_filename("snapdog-os-pi4.raucb.img"));
+        assert!(!is_rauc_bundle_filename(""));
+    }
 }
 
 async fn post_update_install() -> StatusCode {
@@ -1207,189 +1236,6 @@ async fn post_update_install() -> StatusCode {
             StatusCode::CONFLICT
         }
     }
-}
-
-// --- Raw Flash (Escape Hatch) ---
-
-use std::sync::OnceLock;
-use tokio::sync::Mutex;
-
-struct PendingFlash {
-    challenge: String,
-    expires: std::time::Instant,
-}
-
-const RAW_FLASH_CHALLENGE_TTL_SECONDS: u64 = 120;
-const RAW_FLASH_IMAGE_PATH: &str = "/data/pending-flash.img.gz";
-const RAW_FLASH_PART_PATH: &str = "/data/pending-flash.img.gz.part";
-
-static PENDING_FLASH: OnceLock<Mutex<Option<PendingFlash>>> = OnceLock::new();
-
-fn flash_lock() -> &'static Mutex<Option<PendingFlash>> {
-    PENDING_FLASH.get_or_init(|| Mutex::new(None))
-}
-
-#[derive(Serialize)]
-struct FlashChallengeResponse {
-    challenge: String,
-    expires_in_seconds: u64,
-}
-
-async fn post_flash_raw_upload(
-    mut multipart: axum::extract::Multipart,
-) -> Result<Json<FlashChallengeResponse>, StatusCode> {
-    use tokio::io::AsyncWriteExt;
-
-    let _upload_guard = crate::update::reserve_upload().map_err(|error| {
-        tracing::warn!(%error, "raw firmware upload refused");
-        StatusCode::CONFLICT
-    })?;
-    if matches!(system::rauc_operation().await.as_deref(), Ok("installing")) {
-        return Err(StatusCode::CONFLICT);
-    }
-
-    let dest = RAW_FLASH_IMAGE_PATH;
-    let part = RAW_FLASH_PART_PATH;
-    // A valid challenge represents a complete image waiting for deliberate user
-    // confirmation. Do not silently replace it with another upload.
-    {
-        let mut pending = flash_lock().lock().await;
-        if pending
-            .as_ref()
-            .is_some_and(|flash| flash.expires > std::time::Instant::now())
-        {
-            return Err(StatusCode::CONFLICT);
-        }
-        *pending = None;
-    }
-    let _ = tokio::fs::remove_file(part).await;
-
-    let upload_result = async {
-        let mut file = tokio::fs::File::create(part).await.map_err(|error| {
-            tracing::error!(%error, "flash-raw create failed");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-
-        let mut uploaded = 0_u64;
-        while let Some(mut field) = multipart.next_field().await.map_err(|error| {
-            tracing::error!(%error, "flash-raw multipart read failed");
-            StatusCode::BAD_REQUEST
-        })? {
-            loop {
-                match field.chunk().await {
-                    Ok(Some(chunk)) => {
-                        let chunk_len = u64::try_from(chunk.len()).map_err(|error| {
-                            tracing::error!(%error, "raw flash chunk length overflow");
-                            StatusCode::PAYLOAD_TOO_LARGE
-                        })?;
-                        uploaded = uploaded.checked_add(chunk_len).ok_or_else(|| {
-                            tracing::warn!("raw flash upload size overflow");
-                            StatusCode::PAYLOAD_TOO_LARGE
-                        })?;
-                        if uploaded > crate::update::MAX_BUNDLE_BYTES {
-                            tracing::warn!(uploaded, "raw flash upload exceeds 1 GiB");
-                            return Err(StatusCode::PAYLOAD_TOO_LARGE);
-                        }
-                        file.write_all(&chunk).await.map_err(|error| {
-                            tracing::error!(%error, "flash-raw write failed");
-                            StatusCode::INTERNAL_SERVER_ERROR
-                        })?;
-                    }
-                    Ok(None) => break,
-                    Err(error) => {
-                        tracing::error!(%error, "flash-raw field read failed");
-                        return Err(StatusCode::BAD_REQUEST);
-                    }
-                }
-            }
-        }
-        if uploaded == 0 {
-            tracing::warn!("empty raw flash upload refused");
-            return Err(StatusCode::BAD_REQUEST);
-        }
-
-        file.flush().await.map_err(|error| {
-            tracing::error!(%error, "flash-raw flush failed");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-        file.sync_all().await.map_err(|error| {
-            tracing::error!(%error, "flash-raw sync failed");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-        drop(file);
-        tokio::fs::rename(part, dest).await.map_err(|error| {
-            tracing::error!(%error, "flash-raw publish failed");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })
-    }
-    .await;
-    if upload_result.is_err() {
-        let _ = tokio::fs::remove_file(part).await;
-    }
-    upload_result?;
-
-    // Generate challenge
-    let challenge = rand::distr::Alphanumeric
-        .sample_string(&mut rand::rng(), 6)
-        .to_uppercase();
-    let expires =
-        std::time::Instant::now() + std::time::Duration::from_secs(RAW_FLASH_CHALLENGE_TTL_SECONDS);
-
-    *flash_lock().lock().await = Some(PendingFlash {
-        challenge: challenge.clone(),
-        expires,
-    });
-
-    Ok(Json(FlashChallengeResponse {
-        challenge,
-        expires_in_seconds: RAW_FLASH_CHALLENGE_TTL_SECONDS,
-    }))
-}
-
-#[derive(Deserialize)]
-struct FlashConfirmRequest {
-    challenge: String,
-}
-
-async fn post_flash_raw_confirm(Json(body): Json<FlashConfirmRequest>) -> StatusCode {
-    let mut lock = flash_lock().lock().await;
-    let valid = lock
-        .as_ref()
-        .is_some_and(|p| p.challenge == body.challenge && p.expires > std::time::Instant::now());
-
-    if !valid {
-        return StatusCode::FORBIDDEN;
-    }
-
-    // Keep the valid challenge retryable when another firmware operation is busy.
-    // Acquiring while holding the challenge lock prevents two simultaneous confirms
-    // from both passing validation and starting writes.
-    let update_guard = match crate::update::reserve_upload() {
-        Ok(guard) => guard,
-        Err(error) => {
-            tracing::warn!(%error, "raw firmware flash refused");
-            return StatusCode::CONFLICT;
-        }
-    };
-    if let Err(status) = require_rauc_idle("raw flash").await {
-        return status;
-    }
-
-    // Consume the challenge only after exclusive firmware ownership is secured.
-    *lock = None;
-    drop(lock);
-
-    // Keep this asynchronous for the established API contract: the CLI's regular
-    // request client has a 30-second timeout, while a full slot write can take much
-    // longer. The guard remains owned by the task until both gzip and dd exit.
-    tokio::spawn(async move {
-        if let Err(error) = system::flash_raw_image(RAW_FLASH_IMAGE_PATH).await {
-            tracing::error!(%error, "flash-raw failed");
-        }
-        drop(update_guard);
-    });
-
-    StatusCode::ACCEPTED
 }
 
 async fn post_factory_reset() -> StatusCode {

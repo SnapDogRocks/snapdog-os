@@ -238,7 +238,6 @@ Output: `../buildroot-<board>/images/sdcard.img`
 | OTA bundles | X.509 signed RAUC verity bundles, auto-rollback |
 | SoftAP | WPA2; device-specific `SnapDog-XXXX` SSID; generated per-device password, configurable in the web UI |
 | Filesystem | Read-only rootfs; mutable config on `/data` partition |
-| Raw flash | Challenge-response gated (not automatable) |
 
 ## Related
 

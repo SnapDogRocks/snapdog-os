@@ -1,8 +1,8 @@
 # snapdog-update
 
 `snapdog-update` is the operator CLI for updating a SnapDog OS device from a
-workstation or automation runner. It supports normal RAUC bundle updates and a
-guarded raw image flash path for recovery or first-install workflows.
+workstation or automation runner. It accepts signed RAUC firmware bundles and
+installs them through the device's atomic A/B update system.
 
 ## Usage
 
@@ -34,36 +34,22 @@ snapdog-update \
 JSON mode writes newline-delimited events to stdout. Human status, prompts, and
 progress bars use stderr, so stdout remains machine-readable.
 
-## Raw Flash
-
-Raw image flashing is intentionally two-step. Uploading a raw image prints a
-short-lived challenge and exits with code `2` unless the user confirms
-interactively.
-
-```bash
-snapdog-update --url http://snapdog.local --file snapdog-os-pi4-0.3.0.img.gz --raw
-snapdog-update --url http://snapdog.local --raw --confirm-raw-flash CHALLENGE
-```
-
-This prevents unattended destructive flashes while still allowing automation to
-pause, display the challenge to an operator, and resume after explicit approval.
-
 ## Exit Codes
 
 | Code | Meaning |
 | --- | --- |
 | `0` | Update completed successfully |
 | `1` | Update failed |
-| `2` | Raw flash upload is waiting for explicit challenge confirmation |
 
 ## Safety Checks
 
 - Validates the target URL and accepts only HTTP or HTTPS endpoints.
-- Verifies the local image path before opening network connections.
-- Rejects raw image files unless `--raw` is set.
+- Verifies the local bundle path before opening network connections.
+- Accepts only `.raucb` firmware bundles; RAUC verifies the bundle signature and
+  target compatibility before installation.
 - Checks target health warnings before installation.
-- Checks image filename board markers against the target board model when both
+- Checks bundle filename board markers against the target board model when both
   can be identified.
 - Preserves HTTP status and response body snippets in errors.
-- Enforces the configured upgrade timeout across upload, install, confirm, and
-  reboot monitoring.
+- Enforces the configured upgrade timeout across upload, install, and reboot
+  monitoring.

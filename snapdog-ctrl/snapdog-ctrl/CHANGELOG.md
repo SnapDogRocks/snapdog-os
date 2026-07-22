@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.12.2...snapdog-ctrl-v0.13.0) (2026-07-22)
+
+
+### Features
+
+* **ctrl:** apply server config transactionally ([#130](https://github.com/SnapDogRocks/snapdog-os/issues/130)) ([061bb28](https://github.com/SnapDogRocks/snapdog-os/commit/061bb28197db18f0aa0bfc5f30e0fbd4bccc65cf))
+
 ## [0.12.2](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.12.1...snapdog-ctrl-v0.12.2) (2026-07-22)
 
 

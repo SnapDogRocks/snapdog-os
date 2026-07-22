@@ -66,7 +66,7 @@ async fn tick() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // A WebUI/manual update may still be downloading while RAUC itself is idle.
+    // A WebUI/local update may still be uploading while RAUC itself is idle.
     // Treat the coordinator as busy too, otherwise the scheduler could consume the
     // interval with a spurious "already in progress" failure.
     if crate::update::is_busy() {

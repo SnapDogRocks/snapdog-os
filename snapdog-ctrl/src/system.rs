@@ -3,8 +3,6 @@
 
 //! System operations — reads/writes config files, calls systemctl, etc.
 
-use std::process::Stdio;
-
 use anyhow::{Context, Result};
 
 use crate::routes::{
@@ -196,61 +194,6 @@ async fn pending_trial_version() -> Option<String> {
         .into_iter()
         .find(|s| !s.booted && s.class == "rootfs" && !s.version.is_empty())
         .map(|s| s.version)
-}
-
-/// Flash a raw .img.gz to the inactive root partition (escape hatch, bypasses RAUC).
-pub async fn flash_raw_image(image_path: &str) -> Result<()> {
-    let target = inactive_root_partition().await?;
-
-    tracing::warn!("Raw flash: writing {image_path} to {target}");
-
-    // Wire the processes directly instead of relying on a shell pipeline. A plain
-    // `sh -c 'gzip | dd'` reports only dd's status, so corrupt/truncated gzip input
-    // can otherwise look successful after writing a partial root filesystem.
-    let mut gzip = tokio::process::Command::new("gzip")
-        .args(["-dc", image_path])
-        .stdout(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .context("failed to start gzip for raw flash")?;
-    let gzip_stdout = gzip
-        .stdout
-        .take()
-        .context("failed to capture gzip output for raw flash")?;
-    let mut dd = tokio::process::Command::new("dd")
-        .args([
-            &format!("of={target}"),
-            "bs=4M",
-            "conv=fsync",
-            "status=none",
-        ])
-        .stdin(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .context("failed to start dd for raw flash")?;
-    let mut dd_stdin = dd
-        .stdin
-        .take()
-        .context("failed to capture dd input for raw flash")?;
-    let mut gzip_stdout = gzip_stdout;
-    let copy_result = tokio::io::copy(&mut gzip_stdout, &mut dd_stdin).await;
-    drop(dd_stdin);
-    drop(gzip_stdout);
-
-    // Always reap both processes, including after a broken pipe, before reporting
-    // the copy or exit-status error.
-    let (gzip_status, dd_status) = tokio::join!(gzip.wait(), dd.wait());
-    let gzip_status = gzip_status.context("failed to wait for gzip during raw flash")?;
-    let dd_status = dd_status.context("failed to wait for dd during raw flash")?;
-    copy_result.context("failed to stream decompressed raw image into dd")?;
-    anyhow::ensure!(
-        gzip_status.success() && dd_status.success(),
-        "raw flash pipeline failed (gzip: {gzip_status}, dd: {dd_status})"
-    );
-
-    let _ = tokio::fs::remove_file(image_path).await;
-    tracing::info!("Raw flash complete. Reboot required.");
-    Ok(())
 }
 
 /// Determine the inactive root partition from the active one in /proc/cmdline.

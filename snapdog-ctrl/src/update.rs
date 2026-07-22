@@ -174,7 +174,7 @@ impl Drop for BusyGuard {
     }
 }
 
-/// Reserve the firmware pipeline while a manual bundle is uploaded. This blocks
+/// Reserve the firmware pipeline while a local bundle is uploaded. This blocks
 /// online, automatic, and install requests without claiming that RAUC is active.
 pub fn reserve_upload() -> Result<BusyGuard> {
     BusyGuard::acquire(false)
@@ -264,7 +264,7 @@ async fn run_online(url: &str) -> Result<()> {
         let _ = tokio::fs::remove_file(ONLINE_UPDATE_BUNDLE_PART_PATH).await;
         return Err(error);
     }
-    // Keep the online staging file separate from a user-uploaded manual bundle.
+    // Keep the online staging file separate from a user-uploaded local bundle.
     // An automatic check can otherwise finish its download while a large upload is
     // still open and silently replace the file the user intended to install.
     let result = run_local(ONLINE_UPDATE_BUNDLE_PATH).await;

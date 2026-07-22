@@ -428,20 +428,6 @@ export const api = {
   setAutoUpdate: (config: { enabled: boolean; channel: string; interval: string; time: string }) =>
     request<void>("/api/system/update/auto", { method: "PUT", body: JSON.stringify(config) }),
 
-  // Raw Flash
-  flashRawUpload: async (file: File): Promise<{ challenge: string; expires_in_seconds: number }> => {
-    const form = new FormData();
-    form.append("file", file);
-    const headers: Record<string, string> = {};
-    const token = getToken();
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-    const res = await fetch("/api/system/update/flash-raw", { method: "POST", headers, body: form });
-    if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
-    return res.json();
-  },
-  flashRawConfirm: (challenge: string) =>
-    request<void>("/api/system/update/flash-raw/confirm", { method: "POST", body: JSON.stringify({ challenge }) }),
-
   // Now Playing
   getNowPlaying: () => request<import("./api").NowPlaying>("/api/now-playing"),
   nowPlayingCommand: (command: string) =>
@@ -456,8 +442,8 @@ export const api = {
 
   // Reboot — any reboot drops the connection within seconds. Announce it so the app can
   // show the reconnect overlay immediately on click, instead of waiting for the ~5s health
-  // poll to notice the device went away. Covers every reboot path (update, tuning, raw-flash,
-  // plain) since they all funnel through here.
+  // poll to notice the device went away. Covers every reboot path (update, tuning, plain)
+  // since they all funnel through here.
   reboot: () => {
     if (typeof window !== "undefined") window.dispatchEvent(new Event("snapdog:reboot"));
     return request<void>("/api/system/reboot", { method: "POST" });

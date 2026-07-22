@@ -10,22 +10,6 @@ use std::time::{Duration, Instant};
 use tokio::time::sleep;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum ImageType {
-    RaucBundle,
-    RawFlashPrepare,
-    RawFlashConfirm,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub enum RunOutcome {
-    Completed,
-    RawFlashConfirmationRequired {
-        challenge: String,
-        expires_in_seconds: u64,
-    },
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum BoardKind {
     Pi3,
     Pi4,
@@ -45,21 +29,14 @@ struct BootedSlot {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-enum RebootExpectation {
-    Rauc {
-        previous_version: String,
-        previous_booted_slot: Option<BootedSlot>,
-    },
-    RawFlash {
-        previous_version: String,
-    },
+struct RebootExpectation {
+    previous_version: String,
+    previous_booted_slot: Option<BootedSlot>,
 }
 
 pub struct UpgradeManager {
     client: UpdateClient,
-    image_path: Option<std::path::PathBuf>,
-    image_type: ImageType,
-    raw_confirmation: Option<String>,
+    bundle_path: std::path::PathBuf,
     timeout: Duration,
     poll_interval: Duration,
     reporter: Reporter,
@@ -68,9 +45,7 @@ pub struct UpgradeManager {
 impl UpgradeManager {
     pub fn new(
         base_url: &str,
-        image_path: Option<&Path>,
-        force_raw: bool,
-        raw_confirmation: Option<String>,
+        bundle_path: &Path,
         timeout: Duration,
         poll_interval: Duration,
         reporter: Reporter,
@@ -86,20 +61,18 @@ impl UpgradeManager {
             ));
         }
 
-        let image_type = resolve_image_type(image_path, force_raw, raw_confirmation.as_deref())?;
+        validate_bundle_path(bundle_path)?;
 
         Ok(Self {
             client: UpdateClient::new(base_url)?,
-            image_path: image_path.map(Path::to_path_buf),
-            image_type,
-            raw_confirmation,
+            bundle_path: bundle_path.to_path_buf(),
             timeout,
             poll_interval,
             reporter,
         })
     }
 
-    pub async fn run(&mut self, password: Option<&str>) -> Result<RunOutcome> {
+    pub async fn run(&mut self, password: Option<&str>) -> Result<()> {
         self.reporter
             .status("preflight", "Starting preflight checks...");
         self.client
@@ -121,32 +94,20 @@ impl UpgradeManager {
             ),
         );
 
-        if let Some(path) = &self.image_path {
-            validate_board_compatibility(path, &info.board_model)?;
-        }
+        validate_board_compatibility(&self.bundle_path, &info.board_model)?;
 
         self.check_health(deadline).await?;
 
-        match self.image_type {
-            ImageType::RaucBundle => {
-                let previous_booted_slot = self.booted_slot(deadline).await?;
-                self.run_rauc_flow(deadline).await?;
-                self.wait_for_reboot(
-                    &RebootExpectation::Rauc {
-                        previous_version: info.version,
-                        previous_booted_slot,
-                    },
-                    deadline,
-                )
-                .await?;
-                Ok(RunOutcome::Completed)
-            }
-            ImageType::RawFlashPrepare => self.run_raw_prepare_flow(&info.version, deadline).await,
-            ImageType::RawFlashConfirm => {
-                self.run_raw_confirm_flow(&info.version, deadline).await?;
-                Ok(RunOutcome::Completed)
-            }
-        }
+        let previous_booted_slot = self.booted_slot(deadline).await?;
+        self.run_rauc_flow(deadline).await?;
+        self.wait_for_reboot(
+            &RebootExpectation {
+                previous_version: info.version,
+                previous_booted_slot,
+            },
+            deadline,
+        )
+        .await
     }
 
     async fn check_health(&self, deadline: Instant) -> Result<()> {
@@ -167,11 +128,9 @@ impl UpgradeManager {
     }
 
     async fn run_rauc_flow(&self, deadline: Instant) -> Result<()> {
-        let image_path = self.image_path.as_ref().ok_or_else(|| {
-            UpgradeError::InvalidArgument("RAUC update requires --file".to_string())
-        })?;
+        let bundle_path = &self.bundle_path;
 
-        let metadata = tokio::fs::metadata(image_path).await?;
+        let metadata = tokio::fs::metadata(bundle_path).await?;
         let ui = std::sync::Arc::new(
             self.reporter
                 .upload_progress(metadata.len(), "Uploading RAUC bundle..."),
@@ -180,10 +139,9 @@ impl UpgradeManager {
         run_with_deadline(
             deadline,
             "upload RAUC bundle",
-            self.client
-                .upload_image(image_path, "/api/system/update/upload", move |sent| {
-                    ui_clone.set_position(sent);
-                }),
+            self.client.upload_bundle(bundle_path, move |sent| {
+                ui_clone.set_position(sent);
+            }),
         )
         .await?;
         ui.finish_success("Upload completed successfully!");
@@ -272,90 +230,6 @@ impl UpgradeManager {
         Ok(())
     }
 
-    async fn run_raw_prepare_flow(
-        &self,
-        old_version: &str,
-        deadline: Instant,
-    ) -> Result<RunOutcome> {
-        let image_path = self.image_path.as_ref().ok_or_else(|| {
-            UpgradeError::InvalidArgument("raw flash upload requires --file".to_string())
-        })?;
-
-        let metadata = tokio::fs::metadata(image_path).await?;
-        let ui = std::sync::Arc::new(
-            self.reporter
-                .upload_progress(metadata.len(), "Uploading raw system image..."),
-        );
-        let ui_clone = ui.clone();
-        let challenge = run_with_deadline(
-            deadline,
-            "upload raw system image",
-            self.client.trigger_flash_raw(image_path, move |sent| {
-                ui_clone.set_position(sent);
-            }),
-        )
-        .await?;
-        ui.finish_success("Upload completed successfully!");
-
-        self.reporter
-            .raw_flash_challenge(&challenge.challenge, challenge.expires_in_seconds);
-
-        if let Some(typed) = self
-            .reporter
-            .prompt_raw_flash_confirmation(&challenge.challenge)
-            .await?
-        {
-            if typed != challenge.challenge {
-                return Err(UpgradeError::RawFlashChallengeMismatch);
-            }
-            self.confirm_raw_flash(&challenge.challenge, old_version, deadline)
-                .await?;
-            return Ok(RunOutcome::Completed);
-        }
-
-        Ok(RunOutcome::RawFlashConfirmationRequired {
-            challenge: challenge.challenge,
-            expires_in_seconds: challenge.expires_in_seconds,
-        })
-    }
-
-    async fn run_raw_confirm_flow(&self, old_version: &str, deadline: Instant) -> Result<()> {
-        let challenge = self.raw_confirmation.as_deref().ok_or_else(|| {
-            UpgradeError::InvalidArgument(
-                "raw flash confirmation requires --confirm-raw-flash".to_string(),
-            )
-        })?;
-        self.confirm_raw_flash(challenge, old_version, deadline)
-            .await
-    }
-
-    async fn confirm_raw_flash(
-        &self,
-        challenge: &str,
-        old_version: &str,
-        deadline: Instant,
-    ) -> Result<()> {
-        self.reporter
-            .status("raw_flash", "Confirming pending raw flash challenge...");
-        run_with_deadline(
-            deadline,
-            "confirm raw flash",
-            self.client.confirm_flash_raw(challenge),
-        )
-        .await?;
-        self.reporter.status(
-            "raw_flash",
-            "Confirmation accepted. Waiting for device reboot...",
-        );
-        self.wait_for_reboot(
-            &RebootExpectation::RawFlash {
-                previous_version: old_version.to_string(),
-            },
-            deadline,
-        )
-        .await
-    }
-
     async fn booted_slot(&self, deadline: Instant) -> Result<Option<BootedSlot>> {
         let status = run_with_deadline(
             deadline,
@@ -385,10 +259,6 @@ impl UpgradeManager {
         // on the new slot; (2) detection no longer depends on the ctrl's
         // `git describe` version differing, which two local builds share.
         //
-        // `observed_offline` is still tracked because the RawFlash path (a same-
-        // version reflash) has no slot/version signal and must confirm a real reboot
-        // via a low uptime — which is only trustworthy once we've seen it drop.
-        let mut observed_offline = false;
         let mut backoff = Duration::from_secs(2);
         while remaining_duration(deadline).is_some() {
             if sleep_until_deadline(deadline, backoff, "device reboot")
@@ -399,34 +269,25 @@ impl UpgradeManager {
             }
             match self.client.system_info().await {
                 Err(_) => {
-                    if !observed_offline {
-                        observed_offline = true;
-                        ui.update_message(
-                            "Device went offline. Waiting for it to come back...".to_string(),
-                        );
-                    }
+                    ui.update_message(
+                        "Device went offline. Waiting for it to come back...".to_string(),
+                    );
                     // Poll faster while it is down so we catch the recovery promptly.
                     backoff = Duration::from_secs(2);
                 }
                 Ok(info) => {
-                    let current_booted_slot = if expectation.needs_booted_slot() {
-                        run_with_deadline(
-                            deadline,
-                            "fetch RAUC slot status",
-                            self.client.update_status(),
-                        )
-                        .await
-                        .ok()
-                        .and_then(|status| booted_slot(&status.slots))
-                    } else {
-                        None
-                    };
+                    let current_booted_slot = run_with_deadline(
+                        deadline,
+                        "fetch RAUC slot status",
+                        self.client.update_status(),
+                    )
+                    .await
+                    .ok()
+                    .and_then(|status| booted_slot(&status.slots));
 
-                    if let Some(reason) = expectation.success_reason(
-                        &info,
-                        current_booted_slot.as_ref(),
-                        observed_offline,
-                    ) {
+                    if let Some(reason) =
+                        expectation.success_reason(&info, current_booted_slot.as_ref())
+                    {
                         ui.finish_success(&format!(
                             "Success! Device is back online ({reason}; uptime: {}s, version: v{})",
                             info.uptime_seconds, info.version
@@ -449,68 +310,41 @@ impl UpgradeManager {
 }
 
 impl RebootExpectation {
-    const fn needs_booted_slot(&self) -> bool {
-        matches!(self, Self::Rauc { .. })
-    }
-
     fn success_reason(
         &self,
         info: &SystemInfo,
         current_booted_slot: Option<&BootedSlot>,
-        observed_offline: bool,
     ) -> Option<String> {
-        match self {
-            Self::Rauc {
-                previous_version,
-                previous_booted_slot,
-            } => {
-                if info.version != *previous_version {
-                    return Some(format!(
-                        "version changed from v{previous_version} to v{}",
-                        info.version
-                    ));
-                }
+        if info.version != self.previous_version {
+            return Some(format!(
+                "version changed from v{} to v{}",
+                self.previous_version, info.version
+            ));
+        }
 
-                if let (Some(previous), Some(current)) =
-                    (previous_booted_slot.as_ref(), current_booted_slot)
-                {
-                    // Authoritative signal: the booted slot now runs a different
-                    // bundle than before the install. Robust to identical
-                    // git-describe `info.version` strings, and correctly false on a
-                    // reverted trial (which lands back on the old slot + bundle).
-                    if previous.version != current.version {
-                        return Some(format!(
-                            "installed bundle version changed from {} to {}",
-                            previous.version, current.version
-                        ));
-                    }
-                    // Fallback for a same-version reinstall to the other slot.
-                    if previous.name != current.name {
-                        return Some(format!(
-                            "booted slot changed from {} to {}",
-                            previous.name, current.name
-                        ));
-                    }
-                }
-
-                None
+        if let (Some(previous), Some(current)) =
+            (self.previous_booted_slot.as_ref(), current_booted_slot)
+        {
+            // Authoritative signal: the booted slot now runs a different
+            // bundle than before the install. Robust to identical
+            // git-describe `info.version` strings, and correctly false on a
+            // reverted trial (which lands back on the old slot + bundle).
+            if previous.version != current.version {
+                return Some(format!(
+                    "installed bundle version changed from {} to {}",
+                    previous.version, current.version
+                ));
             }
-            Self::RawFlash { previous_version } => {
-                if info.version != *previous_version {
-                    Some(format!(
-                        "version changed from v{previous_version} to v{}",
-                        info.version
-                    ))
-                } else if observed_offline && info.uptime_seconds < 180 {
-                    // A raw reflash of the same version has no slot/version signal;
-                    // trust a low uptime only after we actually saw it go offline, so
-                    // an already-recently-booted device can't be a false positive.
-                    Some("device rebooted".to_string())
-                } else {
-                    None
-                }
+            // Fallback for a same-version reinstall to the other slot.
+            if previous.name != current.name {
+                return Some(format!(
+                    "booted slot changed from {} to {}",
+                    previous.name, current.name
+                ));
             }
         }
+
+        None
     }
 
     fn pending_message(
@@ -518,24 +352,15 @@ impl RebootExpectation {
         info: &SystemInfo,
         current_booted_slot: Option<&BootedSlot>,
     ) -> String {
-        match self {
-            Self::Rauc {
-                previous_version,
-                previous_booted_slot,
-            } => format!(
-                "Device is online, but update is not verified yet (version: v{}, previous: v{}, booted bundle: {}, previous bundle: {}). Waiting...",
-                info.version,
-                previous_version,
-                current_booted_slot.map_or("unknown", |s| s.version.as_str()),
-                previous_booted_slot
-                    .as_ref()
-                    .map_or("unknown", |s| s.version.as_str())
-            ),
-            Self::RawFlash { previous_version } => format!(
-                "Device is online, but reboot is not verified yet (version: v{}, previous: v{}, uptime: {}s). Waiting...",
-                info.version, previous_version, info.uptime_seconds
-            ),
-        }
+        format!(
+            "Device is online, but update is not verified yet (version: v{}, previous: v{}, booted bundle: {}, previous bundle: {}). Waiting...",
+            info.version,
+            self.previous_version,
+            current_booted_slot.map_or("unknown", |s| s.version.as_str()),
+            self.previous_booted_slot
+                .as_ref()
+                .map_or("unknown", |s| s.version.as_str())
+        )
     }
 }
 
@@ -613,43 +438,25 @@ fn timeout_error(operation: &str) -> UpgradeError {
     UpgradeError::Timeout(format!("{operation} timed out"))
 }
 
-fn resolve_image_type(
-    image_path: Option<&Path>,
-    force_raw: bool,
-    raw_confirmation: Option<&str>,
-) -> Result<ImageType> {
-    if raw_confirmation.is_some() {
-        return Ok(ImageType::RawFlashConfirm);
-    }
-
-    let image_path = image_path.ok_or_else(|| {
-        UpgradeError::InvalidArgument(
-            "--file is required unless --confirm-raw-flash is used".into(),
-        )
-    })?;
-
-    if force_raw {
-        return Ok(ImageType::RawFlashPrepare);
-    }
-
-    let ext = image_path
+fn validate_bundle_path(bundle_path: &Path) -> Result<()> {
+    let ext = bundle_path
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("");
     if ext.eq_ignore_ascii_case("raucb") {
-        return Ok(ImageType::RaucBundle);
+        return Ok(());
     }
 
-    Err(UpgradeError::UnsupportedImage {
-        path: image_path.display().to_string(),
+    Err(UpgradeError::UnsupportedFirmwareFile {
+        path: bundle_path.display().to_string(),
     })
 }
 
-fn validate_board_compatibility(image_path: &Path, board_model: &str) -> Result<()> {
-    let Some(image_board) = image_path
+fn validate_board_compatibility(bundle_path: &Path, board_model: &str) -> Result<()> {
+    let Some(bundle_board) = bundle_path
         .file_name()
         .and_then(|name| name.to_str())
-        .and_then(board_from_image_name)
+        .and_then(board_from_bundle_name)
     else {
         return Ok(());
     };
@@ -658,17 +465,17 @@ fn validate_board_compatibility(image_path: &Path, board_model: &str) -> Result<
         return Ok(());
     };
 
-    if image_board == target_board {
+    if bundle_board == target_board {
         return Ok(());
     }
 
     Err(UpgradeError::IncompatibleBoard {
         target: target_board.as_str().to_string(),
-        image: image_board.as_str().to_string(),
+        bundle: bundle_board.as_str().to_string(),
     })
 }
 
-fn board_from_image_name(file_name: &str) -> Option<BoardKind> {
+fn board_from_bundle_name(file_name: &str) -> Option<BoardKind> {
     let file_name = file_name.to_lowercase();
     if file_name.contains("zero2w") || file_name.contains("zero-2-w") {
         Some(BoardKind::Zero2w)
@@ -749,65 +556,44 @@ mod tests {
     }
 
     #[test]
-    fn resolves_rauc_bundle_without_raw_flag() {
+    fn accepts_rauc_bundle() {
         let manager = UpgradeManager::new(
             "http://127.0.0.1",
-            Some(Path::new("snapdog-os-pi4.raucb")),
-            false,
-            None,
+            Path::new("snapdog-os-pi4.raucb"),
             Duration::from_secs(60),
             Duration::from_secs(1),
             reporter(),
         )
         .unwrap();
-        assert_eq!(manager.image_type, ImageType::RaucBundle);
+        assert_eq!(manager.bundle_path, Path::new("snapdog-os-pi4.raucb"));
     }
 
     #[test]
     fn resolves_rauc_bundle_case_insensitively() {
         let manager = UpgradeManager::new(
             "http://127.0.0.1",
-            Some(Path::new("snapdog-os-pi4.RAUCB")),
-            false,
-            None,
+            Path::new("snapdog-os-pi4.RAUCB"),
             Duration::from_secs(60),
             Duration::from_secs(1),
             reporter(),
         )
         .unwrap();
-        assert_eq!(manager.image_type, ImageType::RaucBundle);
+        assert_eq!(manager.bundle_path, Path::new("snapdog-os-pi4.RAUCB"));
     }
 
     #[test]
-    fn rejects_raw_image_without_raw_flag() {
+    fn rejects_non_rauc_file() {
         let result = UpgradeManager::new(
             "http://127.0.0.1",
-            Some(Path::new("snapdog-os-pi4.img.gz")),
-            false,
-            None,
+            Path::new("snapdog-os-pi4.img.gz"),
             Duration::from_secs(60),
             Duration::from_secs(1),
             reporter(),
         );
         let Err(err) = result else {
-            panic!("raw image without --raw should be rejected");
+            panic!("non-RAUC file should be rejected");
         };
-        assert!(matches!(err, UpgradeError::UnsupportedImage { .. }));
-    }
-
-    #[test]
-    fn resolves_raw_confirmation_without_file() {
-        let manager = UpgradeManager::new(
-            "http://127.0.0.1",
-            None,
-            true,
-            Some("ABC123".to_string()),
-            Duration::from_secs(60),
-            Duration::from_secs(1),
-            reporter(),
-        )
-        .unwrap();
-        assert_eq!(manager.image_type, ImageType::RawFlashConfirm);
+        assert!(matches!(err, UpgradeError::UnsupportedFirmwareFile { .. }));
     }
 
     #[test]
@@ -821,8 +607,8 @@ mod tests {
             err,
             UpgradeError::IncompatibleBoard {
                 target,
-                image
-            } if target == "pi4" && image == "pi5"
+                bundle
+            } if target == "pi4" && bundle == "pi5"
         ));
     }
 
@@ -846,8 +632,8 @@ mod tests {
             err,
             UpgradeError::IncompatibleBoard {
                 target,
-                image
-            } if target == "pi5" && image == "pi3"
+                bundle
+            } if target == "pi5" && bundle == "pi3"
         ));
     }
 
@@ -861,7 +647,7 @@ mod tests {
 
     #[test]
     fn rauc_reboot_success_accepts_version_change() {
-        let expectation = RebootExpectation::Rauc {
+        let expectation = RebootExpectation {
             previous_version: "1.0.0".to_string(),
             previous_booted_slot: Some(booted("rootfs.0", "0.2.3-wifi")),
         };
@@ -869,7 +655,6 @@ mod tests {
         let reason = expectation.success_reason(
             &system_info("1.1.0", 42),
             Some(&booted("rootfs.0", "0.2.3-wifi")),
-            true,
         );
         assert!(reason.is_some_and(|r| r.contains("version changed")));
     }
@@ -878,7 +663,7 @@ mod tests {
     fn rauc_reboot_success_accepts_slot_change_with_same_version() {
         // Identical ctrl version AND bundle version, different slot: a same-version
         // reinstall to the other slot still counts as a booted update.
-        let expectation = RebootExpectation::Rauc {
+        let expectation = RebootExpectation {
             previous_version: "1.0.0".to_string(),
             previous_booted_slot: Some(booted("rootfs.0", "0.3.0")),
         };
@@ -886,7 +671,6 @@ mod tests {
         let reason = expectation.success_reason(
             &system_info("1.0.0", 42),
             Some(&booted("rootfs.1", "0.3.0")),
-            true,
         );
         assert!(reason.is_some_and(|r| r.contains("booted slot changed")));
     }
@@ -896,7 +680,7 @@ mod tests {
         // The exact false-timeout this fixes: two local builds off the same commit
         // share a `git describe` `system_info.version`, so ONLY the per-slot bundle
         // version distinguishes old from new.
-        let expectation = RebootExpectation::Rauc {
+        let expectation = RebootExpectation {
             previous_version: "v0.6.1-32-g980bd32-dirty".to_string(),
             previous_booted_slot: Some(booted("rootfs.1", "0.2.3-wifi")),
         };
@@ -904,7 +688,6 @@ mod tests {
         let reason = expectation.success_reason(
             &system_info("v0.6.1-32-g980bd32-dirty", 30),
             Some(&booted("rootfs.0", "0.2.4-wifi")),
-            true,
         );
         assert!(reason.is_some_and(|r| {
             r.contains("installed bundle version changed from 0.2.3-wifi to 0.2.4-wifi")
@@ -916,7 +699,7 @@ mod tests {
         // Trial booted the new slot, failed health, and auto-reverted: back on the
         // OLD slot + bundle with an identical ctrl version. Must NOT be reported as
         // success even though we saw the device go offline during the trial.
-        let expectation = RebootExpectation::Rauc {
+        let expectation = RebootExpectation {
             previous_version: "v0.6.1-32-g980bd32-dirty".to_string(),
             previous_booted_slot: Some(booted("rootfs.1", "0.2.3-wifi")),
         };
@@ -925,7 +708,6 @@ mod tests {
             expectation.success_reason(
                 &system_info("v0.6.1-32-g980bd32-dirty", 30),
                 Some(&booted("rootfs.1", "0.2.3-wifi")),
-                true,
             ),
             None
         );
@@ -933,7 +715,7 @@ mod tests {
 
     #[test]
     fn rauc_reboot_does_not_accept_recent_uptime_alone() {
-        let expectation = RebootExpectation::Rauc {
+        let expectation = RebootExpectation {
             previous_version: "1.0.0".to_string(),
             previous_booted_slot: Some(booted("rootfs.0", "0.3.0")),
         };
@@ -942,7 +724,6 @@ mod tests {
             expectation.success_reason(
                 &system_info("1.0.0", 42),
                 Some(&booted("rootfs.0", "0.3.0")),
-                true,
             ),
             None
         );
@@ -990,30 +771,6 @@ mod tests {
         assert_eq!(
             classify_install_status("starting", "", false),
             InstallPoll::Waiting
-        );
-    }
-
-    #[test]
-    fn raw_flash_reboot_accepts_recent_uptime() {
-        let expectation = RebootExpectation::RawFlash {
-            previous_version: "1.0.0".to_string(),
-        };
-
-        let reason = expectation.success_reason(&system_info("1.0.0", 42), None, true);
-        assert!(reason.is_some_and(|r| r == "device rebooted"));
-    }
-
-    #[test]
-    fn raw_flash_reboot_requires_observed_offline_for_uptime_signal() {
-        // A device with a coincidentally-low uptime that we never saw drop must not
-        // be mistaken for a completed reflash.
-        let expectation = RebootExpectation::RawFlash {
-            previous_version: "1.0.0".to_string(),
-        };
-
-        assert_eq!(
-            expectation.success_reason(&system_info("1.0.0", 42), None, false),
-            None
         );
     }
 

@@ -1,7 +1,7 @@
 use clap::{Parser, ValueEnum};
 use snapdog_update::error::UpgradeError;
 use snapdog_update::output::{OutputFormat, Reporter};
-use snapdog_update::update::{RunOutcome, UpgradeManager};
+use snapdog_update::update::UpgradeManager;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
@@ -34,26 +34,13 @@ struct Args {
     #[arg(short, long, env = "SNAPDOG_URL")]
     url: String,
 
-    /// Path to firmware bundle (.raucb) or raw system image (.img/.img.gz)
-    #[arg(
-        short,
-        long,
-        required_unless_present = "confirm_raw_flash",
-        conflicts_with = "confirm_raw_flash"
-    )]
-    file: Option<PathBuf>,
+    /// Path to a signed RAUC firmware bundle (.raucb)
+    #[arg(short, long)]
+    file: PathBuf,
 
     /// Password for target control interface (optional if auth disabled)
     #[arg(short, long, env = "SNAPDOG_PASSWORD")]
     password: Option<String>,
-
-    /// Flash a raw disk image through the guarded challenge-confirmation flow
-    #[arg(long)]
-    raw: bool,
-
-    /// Confirm a pending raw flash challenge without uploading another image
-    #[arg(long, requires = "raw", value_name = "CHALLENGE")]
-    confirm_raw_flash: Option<String>,
 
     /// Disable interactive prompts; missing required input becomes an error
     #[arg(long)]
@@ -91,11 +78,11 @@ async fn main() -> ExitCode {
         args.non_interactive || matches!(args.output, OutputArg::Json),
     );
 
-    if let Some(file) = &args.file
-        && !file.exists()
-    {
-        let err =
-            UpgradeError::InvalidArgument(format!("local file does not exist: {}", file.display()));
+    if !args.file.exists() {
+        let err = UpgradeError::InvalidArgument(format!(
+            "local file does not exist: {}",
+            args.file.display()
+        ));
         reporter.error(&err);
         return ExitCode::from(1);
     }
@@ -108,9 +95,7 @@ async fn main() -> ExitCode {
 
     let mut manager = match UpgradeManager::new(
         &args.url,
-        args.file.as_deref(),
-        args.raw,
-        args.confirm_raw_flash,
+        &args.file,
         Duration::from_secs(timeout_secs),
         Duration::from_secs(args.poll_secs),
         reporter.clone(),
@@ -123,11 +108,10 @@ async fn main() -> ExitCode {
     };
 
     match manager.run(args.password.as_deref()).await {
-        Ok(RunOutcome::Completed) => {
+        Ok(()) => {
             reporter.success("complete", "Upgrade sequence completed successfully.");
             ExitCode::SUCCESS
         }
-        Ok(RunOutcome::RawFlashConfirmationRequired { .. }) => ExitCode::from(2),
         Err(error) => {
             reporter.error(&error);
             ExitCode::from(1)

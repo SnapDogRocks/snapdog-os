@@ -23,9 +23,6 @@ pub enum UpgradeError {
         hint: &'static str,
     },
 
-    #[error("input error: {0}")]
-    Input(String),
-
     #[error("authentication token returned by target cannot be sent as an HTTP header")]
     InvalidAuthToken,
 
@@ -33,9 +30,9 @@ pub enum UpgradeError {
     Unauthorized,
 
     #[error(
-        "Target board compatibility mismatch: target is '{target}' but image compatible with '{image}'"
+        "Target board compatibility mismatch: target is '{target}' but bundle is built for '{bundle}'"
     )]
-    IncompatibleBoard { target: String, image: String },
+    IncompatibleBoard { target: String, bundle: String },
 
     #[error("Preflight health warning: target system reports critical warnings: {0:?}")]
     SystemUnhealthy(Vec<String>),
@@ -47,17 +44,11 @@ pub enum UpgradeError {
         body: String,
     },
 
-    #[error("unsupported image type for '{path}'")]
-    UnsupportedImage { path: String },
-
-    #[error("raw flash confirmation did not match the device challenge")]
-    RawFlashChallengeMismatch,
+    #[error("unsupported firmware file '{path}'")]
+    UnsupportedFirmwareFile { path: String },
 
     #[error("Upgrade failed: {0}")]
     Failed(String),
-
-    #[error("Flashing request expired or challenge rejected")]
-    ChallengeRejected,
 
     #[error("Operation timed out: {0}")]
     Timeout(String),
@@ -94,15 +85,12 @@ impl UpgradeError {
             Self::InvalidBaseUrl(_) => "invalid_base_url",
             Self::InvalidArgument(_) => "invalid_argument",
             Self::NonInteractiveInputRequired { .. } => "input_required",
-            Self::Input(_) => "input_error",
             Self::InvalidAuthToken => "invalid_auth_token",
             Self::Unauthorized => "unauthorized",
             Self::IncompatibleBoard { .. } => "incompatible_board",
             Self::SystemUnhealthy(_) => "system_unhealthy",
-            Self::UnsupportedImage { .. } => "unsupported_image",
-            Self::RawFlashChallengeMismatch => "raw_flash_challenge_mismatch",
+            Self::UnsupportedFirmwareFile { .. } => "unsupported_firmware_file",
             Self::Failed(_) => "upgrade_failed",
-            Self::ChallengeRejected => "challenge_rejected",
             Self::Timeout(_) => "timeout",
         }
     }
@@ -126,20 +114,12 @@ impl UpgradeError {
                 Some("Retry authentication; if this repeats, update the target control service.")
             }
             Self::IncompatibleBoard { .. } => {
-                Some("Download an image built for the target board model.")
+                Some("Download a signed RAUC bundle built for the target board model.")
             }
             Self::SystemUnhealthy(_) => {
                 Some("Resolve critical health warnings on the target before updating.")
             }
-            Self::UnsupportedImage { .. } => {
-                Some("Use a .raucb bundle, or pass --raw for .img/.img.gz files.")
-            }
-            Self::RawFlashChallengeMismatch => {
-                Some("Copy the challenge exactly as printed by the device.")
-            }
-            Self::ChallengeRejected => {
-                Some("Request a new raw flash challenge; the previous one may have expired.")
-            }
+            Self::UnsupportedFirmwareFile { .. } => Some("Use a signed .raucb firmware bundle."),
             Self::Timeout(_) => Some(
                 "Check device power, network connectivity, and whether the update is still running.",
             ),

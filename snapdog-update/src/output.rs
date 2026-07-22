@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 Fabian Schmieder
 
-use crate::error::{Result, UpgradeError};
+use crate::error::UpgradeError;
 use crate::progress::ProgressUi;
 use serde::Serialize;
 use std::io::{self, IsTerminal, Write};
@@ -38,10 +38,6 @@ struct Event<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     percent_basis_points: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    challenge: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    expires_in_seconds: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     exit_code: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error_code: Option<&'a str>,
@@ -58,8 +54,6 @@ impl<'a> Event<'a> {
             bytes_sent: None,
             total_bytes: None,
             percent_basis_points: None,
-            challenge: None,
-            expires_in_seconds: None,
             exit_code: None,
             error_code: None,
             hint: None,
@@ -127,32 +121,6 @@ impl Reporter {
         }
     }
 
-    pub fn raw_flash_challenge(&self, challenge: &str, expires_in_seconds: u64) {
-        if self.inner.format == OutputFormat::Json {
-            let mut event = Event::new(
-                "confirmation_required",
-                "raw_flash",
-                "Raw flash upload is pending explicit confirmation",
-            );
-            event.challenge = Some(challenge);
-            event.expires_in_seconds = Some(expires_in_seconds);
-            event.exit_code = Some(2);
-            event.hint =
-                Some("Rerun with --raw --confirm-raw-flash <challenge> before it expires.");
-            self.emit_json(&event);
-        } else {
-            eprintln!();
-            eprintln!("Raw flash upload is pending confirmation.");
-            eprintln!("This will overwrite the inactive root partition.");
-            eprintln!("Challenge: {challenge}");
-            eprintln!("Expires in: {expires_in_seconds}s");
-            eprintln!();
-            eprintln!("To confirm from another shell:");
-            eprintln!("  snapdog-update --url <device-url> --raw --confirm-raw-flash {challenge}");
-            eprintln!();
-        }
-    }
-
     pub fn upload_progress(&self, total_bytes: u64, message: &'static str) -> UploadProgress {
         self.status("upload", message);
         UploadProgress {
@@ -170,28 +138,6 @@ impl Reporter {
             reporter: self.clone(),
             phase,
         }
-    }
-
-    pub async fn prompt_raw_flash_confirmation(&self, challenge: &str) -> Result<Option<String>> {
-        if !self.interactive() {
-            return Ok(None);
-        }
-
-        let challenge = challenge.to_string();
-        tokio::task::spawn_blocking(move || {
-            eprint!("Type challenge {challenge} to confirm raw flash, or press Enter to stop: ");
-            io::stderr().flush()?;
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-            let trimmed = input.trim().to_string();
-            if trimmed.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(trimmed))
-            }
-        })
-        .await
-        .map_err(|_| UpgradeError::Input("failed to read raw flash confirmation".to_string()))?
     }
 
     fn progress(&self, phase: &'static str, bytes_sent: u64, total_bytes: u64) {

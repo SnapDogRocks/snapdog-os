@@ -7,6 +7,10 @@ set -eu
 
 DATA=/data
 
+# Retired update staging files can survive an OS upgrade because /data is
+# persistent. They are no longer consumable and may occupy up to 1 GiB.
+rm -f "$DATA/pending-flash.img.gz" "$DATA/pending-flash.img.gz.part"
+
 # Create directory structure
 mkdir -p "$DATA/default"
 mkdir -p "$DATA/snapdog"

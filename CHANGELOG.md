@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.1](https://github.com/SnapDogRocks/snapdog-os/compare/v0.15.0...v0.15.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* **ctrl:** make firmware update progress truthful ([#132](https://github.com/SnapDogRocks/snapdog-os/issues/132)) ([3426d24](https://github.com/SnapDogRocks/snapdog-os/commit/3426d24b069ef3e0e8f68b7d4a3a30b16a817122))
+
 ## [0.15.0](https://github.com/SnapDogRocks/snapdog-os/compare/v0.14.2...v0.15.0) (2026-07-22)
 
 

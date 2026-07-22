@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.14.0](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.13.1...snapdog-ctrl-v0.14.0) (2026-07-22)
+
+
+### ⚠ BREAKING CHANGES
+
+* In-device updates now accept only signed RAUC bundles; the raw flash API, WebUI, and CLI contract have been removed.
+
+### Features
+
+* remove raw image recovery hatch ([#134](https://github.com/SnapDogRocks/snapdog-os/issues/134)) ([a18f020](https://github.com/SnapDogRocks/snapdog-os/commit/a18f020638006867cd15bc9df66e4c436fa0807a))
+
 ## [0.13.1](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.13.0...snapdog-ctrl-v0.13.1) (2026-07-22)
 
 

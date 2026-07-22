@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1](https://github.com/SnapDogRocks/snapdog-os/compare/v0.13.0...v0.13.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* **webui:** resolve production security audit ([#121](https://github.com/SnapDogRocks/snapdog-os/issues/121)) ([acc12c0](https://github.com/SnapDogRocks/snapdog-os/commit/acc12c04e628efd009db80a30f87c32ecd84a3c1))
+
 ## [0.13.0](https://github.com/SnapDogRocks/snapdog-os/compare/v0.12.1...v0.13.0) (2026-07-19)
 
 

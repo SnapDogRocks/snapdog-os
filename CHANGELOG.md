@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.1](https://github.com/SnapDogRocks/snapdog-os/compare/v0.14.0...v0.14.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* **release:** validate catalog metadata file ([#127](https://github.com/SnapDogRocks/snapdog-os/issues/127)) ([448585d](https://github.com/SnapDogRocks/snapdog-os/commit/448585db36d1256907c1e4e51fbc679c6a5a88a2))
+
 ## [0.14.0](https://github.com/SnapDogRocks/snapdog-os/compare/v0.13.1...v0.14.0) (2026-07-22)
 
 

@@ -3,6 +3,8 @@
 
 //! System operations — reads/writes config files, calls systemctl, etc.
 
+use std::process::Stdio;
+
 use anyhow::{Context, Result};
 
 use crate::routes::{
@@ -153,7 +155,7 @@ pub async fn set_system(hostname: Option<String>, channel: Option<String>) -> Re
     Ok(())
 }
 
-pub async fn reboot() {
+pub async fn reboot() -> Result<()> {
     // If a RAUC tryboot trial is armed (a bundle was just installed to the
     // inactive slot), boot it via the RPi one-shot tryboot flag so a failed trial
     // auto-reverts to the committed slot on the next normal boot. systemd on this
@@ -168,13 +170,17 @@ pub async fn reboot() {
         // exactly like the auto-updater — recorded here (only when a trial is
         // actually armed) so it covers both the online and manual-upload paths.
         if let Some(v) = pending_trial_version().await {
-            record_pending_update(&v).await;
+            record_pending_update(&v).await?;
         }
-        // Reboots immediately via RESTART2 (ctrl carries CAP_SYS_BOOT). If it
-        // returns (e.g. missing capability), we fall through to a normal reboot.
-        let _ = run_cmd("/usr/lib/rauc/tryboot-reboot", &[]).await;
+        // A normal reboot would deliberately select the committed slot, so never
+        // fall back after an armed tryboot request fails.
+        return run_cmd("/usr/lib/rauc/tryboot-reboot", &[])
+            .await
+            .context("failed to request tryboot reboot");
     }
-    let _ = run_cmd("systemctl", &["reboot"]).await;
+    run_cmd("systemctl", &["reboot"])
+        .await
+        .context("failed to request system reboot")
 }
 
 /// Bundle version of the inactive rootfs slot — the one a tryboot trial boots
@@ -192,28 +198,55 @@ async fn pending_trial_version() -> Option<String> {
         .map(|s| s.version)
 }
 
-/// Install a RAUC bundle from a local path or URL.
-pub async fn rauc_install(source: &str) -> Result<()> {
-    let rauc = crate::rauc::Rauc::connect().await?;
-    rauc.install(source).await?;
-    Ok(())
-}
-
 /// Flash a raw .img.gz to the inactive root partition (escape hatch, bypasses RAUC).
 pub async fn flash_raw_image(image_path: &str) -> Result<()> {
     let target = inactive_root_partition().await?;
 
     tracing::warn!("Raw flash: writing {image_path} to {target}");
 
-    let status = tokio::process::Command::new("sh")
+    // Wire the processes directly instead of relying on a shell pipeline. A plain
+    // `sh -c 'gzip | dd'` reports only dd's status, so corrupt/truncated gzip input
+    // can otherwise look successful after writing a partial root filesystem.
+    let mut gzip = tokio::process::Command::new("gzip")
+        .args(["-dc", image_path])
+        .stdout(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .context("failed to start gzip for raw flash")?;
+    let gzip_stdout = gzip
+        .stdout
+        .take()
+        .context("failed to capture gzip output for raw flash")?;
+    let mut dd = tokio::process::Command::new("dd")
         .args([
-            "-c",
-            &format!("gzip -dc '{image_path}' | dd of={target} bs=4M conv=fsync status=none"),
+            &format!("of={target}"),
+            "bs=4M",
+            "conv=fsync",
+            "status=none",
         ])
-        .status()
-        .await?;
+        .stdin(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .context("failed to start dd for raw flash")?;
+    let mut dd_stdin = dd
+        .stdin
+        .take()
+        .context("failed to capture dd input for raw flash")?;
+    let mut gzip_stdout = gzip_stdout;
+    let copy_result = tokio::io::copy(&mut gzip_stdout, &mut dd_stdin).await;
+    drop(dd_stdin);
+    drop(gzip_stdout);
 
-    anyhow::ensure!(status.success(), "dd failed with exit code {status}");
+    // Always reap both processes, including after a broken pipe, before reporting
+    // the copy or exit-status error.
+    let (gzip_status, dd_status) = tokio::join!(gzip.wait(), dd.wait());
+    let gzip_status = gzip_status.context("failed to wait for gzip during raw flash")?;
+    let dd_status = dd_status.context("failed to wait for dd during raw flash")?;
+    copy_result.context("failed to stream decompressed raw image into dd")?;
+    anyhow::ensure!(
+        gzip_status.success() && dd_status.success(),
+        "raw flash pipeline failed (gzip: {gzip_status}, dd: {dd_status})"
+    );
 
     let _ = tokio::fs::remove_file(image_path).await;
     tracing::info!("Raw flash complete. Reboot required.");
@@ -240,24 +273,9 @@ async fn inactive_root_partition() -> Result<String> {
     }
 }
 
-/// Get RAUC installation progress.
-pub async fn rauc_progress() -> Result<crate::rauc::InstallProgress> {
-    crate::rauc::Rauc::connect().await?.progress().await
-}
-
 /// Get RAUC operation state (idle/installing).
 pub async fn rauc_operation() -> Result<String> {
     crate::rauc::Rauc::connect().await?.operation().await
-}
-
-/// Get RAUC's most recent installation error.
-pub async fn rauc_last_error() -> Result<String> {
-    crate::rauc::Rauc::connect().await?.last_error().await
-}
-
-/// Get RAUC slot status.
-pub async fn rauc_slot_status() -> Result<Vec<crate::rauc::SlotStatus>> {
-    crate::rauc::Rauc::connect().await?.slot_status().await
 }
 
 // --- Network ---
@@ -970,11 +988,10 @@ pub async fn check_update() -> UpdateCheckResponse {
     let config = get_auto_update().await;
     let url = bundle_url(&config.channel).await;
 
-    // RAUC verifies the bundle signature against the device keyring at install
-    // time (`rauc install` refuses an unsigned or untrusted bundle), so when the
-    // keyring is present the update is guaranteed to be cryptographically
-    // verified before it is applied.
-    let signature_verified = tokio::fs::metadata("/etc/rauc/ca.cert.pem").await.is_ok();
+    // This only reports whether RAUC has a trust anchor available. The concrete
+    // bundle is not "signature verified" until RAUC has actually accepted it;
+    // installation status exposes that later, per update operation.
+    let trusted_keyring_available = tokio::fs::metadata("/etc/rauc/ca.cert.pem").await.is_ok();
 
     // Compare the running version to the channel MANIFEST version (the SSOT for
     // what the channel points at) rather than treating mere URL reachability as
@@ -1008,8 +1025,9 @@ pub async fn check_update() -> UpdateCheckResponse {
         // A downgrade is manually installable too (e.g. switching the beta channel
         // back to stable): RAUC installs any signature-verified bundle regardless of
         // version, and only AUTO-update refuses to go backwards. Gate on the same
-        // signature check as a forward update.
-        installable: (available || is_downgrade) && signature_verified,
+        // trusted-keyring precondition as a forward update. The bundle itself is
+        // verified by RAUC during the install lifecycle.
+        installable: (available || is_downgrade) && trusted_keyring_available,
         current_version: if current.is_empty() {
             "unknown".into()
         } else {
@@ -1018,7 +1036,8 @@ pub async fn check_update() -> UpdateCheckResponse {
         latest_version,
         channel: config.channel,
         is_downgrade,
-        signature_verified,
+        trusted_keyring_available,
+        signature_verified: trusted_keyring_available,
         bundle_url: url,
         staged_version,
     }
@@ -1087,10 +1106,10 @@ pub async fn last_failed_update() -> Option<String> {
 }
 
 /// Record the version we are about to reboot into (pending boot confirmation).
-pub async fn record_pending_update(version: &str) {
-    if let Err(e) = tokio::fs::write(PENDING_UPDATE_FILE, format!("{version}\n")).await {
-        tracing::warn!("auto-update: failed to record pending update {version}: {e}");
-    }
+pub async fn record_pending_update(version: &str) -> Result<()> {
+    tokio::fs::write(PENDING_UPDATE_FILE, format!("{version}\n"))
+        .await
+        .with_context(|| format!("failed to record pending update {version}"))
 }
 
 /// Device-local date (`YYYY-MM-DD`) of the last completed auto-update check. Drives

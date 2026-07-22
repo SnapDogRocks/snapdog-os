@@ -11,6 +11,7 @@ import { AboutButton } from "@/components/AboutButton";
 import { MiniPlayer } from "@/components/MiniPlayer";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
+  ApiError,
   api,
   type SystemInfo,
   type WifiNetwork,
@@ -21,6 +22,9 @@ import {
   type ServerConfig,
   type ServerStatus,
   type TuningConfig,
+  type UpdateCheck,
+  type UpdatePhase,
+  type UpdateStatus,
 } from "@/lib/api";
 import { useI18n } from "@/i18n/provider";
 import { locales, type Locale } from "@/i18n/config";
@@ -1678,14 +1682,95 @@ function LogsCard() {
   );
 }
 
+const UPDATE_STEPS = ["downloading", "verifying", "writing", "finalizing"] as const satisfies readonly UpdatePhase[];
+type ActiveUpdatePhase = (typeof UPDATE_STEPS)[number];
+
+const KNOWN_UPDATE_PHASES: UpdatePhase[] = [...UPDATE_STEPS, "idle", "ready_to_reboot", "failed"];
+
+type UpdateUiPhase = UpdatePhase | "uploading" | "rebooting" | "reconnecting";
+
+function isActiveUpdatePhase(phase: UpdateUiPhase): phase is ActiveUpdatePhase {
+  return UPDATE_STEPS.includes(phase as ActiveUpdatePhase);
+}
+
+/**
+ * A rolling controller/web UI upgrade can briefly pair the new UI with the old
+ * status payload. Keep that transition safe without using RAUC's English message
+ * as the normal phase contract.
+ */
+function normalizeUpdateStatus(status: UpdateStatus): UpdateStatus {
+  const reportedPhase = status.phase as UpdatePhase | undefined;
+  const legacyMessage = status.progress?.message ?? "";
+  const legacyProgress = status.progress?.percentage;
+  let phase: UpdatePhase;
+
+  if (reportedPhase && KNOWN_UPDATE_PHASES.includes(reportedPhase)) {
+    phase = reportedPhase;
+  } else if (status.last_error) {
+    phase = "failed";
+  } else if (status.operation === "installing") {
+    const message = legacyMessage.toLowerCase();
+    if (message.includes("download")) phase = "downloading";
+    else if (message.includes("verif") || message.includes("check") || message.includes("signature")) phase = "verifying";
+    else if ((legacyProgress ?? 0) >= 99) phase = "finalizing";
+    else phase = "writing";
+  } else {
+    phase = "idle";
+  }
+
+  return {
+    ...status,
+    operation: status.operation ?? "idle",
+    phase,
+    phase_progress: typeof status.phase_progress === "number" && Number.isFinite(status.phase_progress)
+      ? status.phase_progress
+      : null,
+    overall_progress: typeof status.overall_progress === "number" && Number.isFinite(status.overall_progress)
+      ? status.overall_progress
+      : (typeof legacyProgress === "number" && Number.isFinite(legacyProgress) ? legacyProgress : null),
+    bytes_done: typeof status.bytes_done === "number" && Number.isFinite(status.bytes_done) ? status.bytes_done : null,
+    bytes_total: typeof status.bytes_total === "number" && Number.isFinite(status.bytes_total) ? status.bytes_total : null,
+    detail: status.detail || legacyMessage,
+    last_error: status.last_error ?? "",
+    rolled_back: status.rolled_back ?? false,
+    signature_verified: status.signature_verified ?? false,
+  };
+}
+
+function updateStatusFromEvent(payload: unknown): UpdateStatus | null {
+  if (!payload || typeof payload !== "object") return null;
+  const data = payload as Record<string, unknown>;
+  if (typeof data.phase !== "string" || !KNOWN_UPDATE_PHASES.includes(data.phase as UpdatePhase)) return null;
+
+  return normalizeUpdateStatus({
+    operation: "installing",
+    phase: data.phase as UpdatePhase,
+    phase_progress: typeof data.phase_progress === "number" ? data.phase_progress : null,
+    overall_progress: typeof data.overall_progress === "number" ? data.overall_progress : null,
+    bytes_done: typeof data.bytes_done === "number" ? data.bytes_done : null,
+    bytes_total: typeof data.bytes_total === "number" ? data.bytes_total : null,
+    detail: typeof data.detail === "string" ? data.detail : "",
+    last_error: typeof data.last_error === "string" ? data.last_error : "",
+    rolled_back: false,
+    signature_verified: data.signature_verified === true,
+  });
+}
+
+function hasTrustedUpdateKeyring(update: UpdateCheck): boolean {
+  // The legacy field meant "a keyring exists", despite its over-confident name.
+  // Accept it only as a rolling-upgrade/cache fallback; new controllers expose the
+  // precise preflight capability separately from per-bundle verification.
+  return update.trusted_keyring_available ?? update.signature_verified ?? false;
+}
+
 function UpdateTab() {
   const t = useTranslations("update");
-  const [update, setUpdate] = useState<import("@/lib/api").UpdateCheck | null>(null);
+  const [update, setUpdate] = useState<UpdateCheck | null>(null);
   const [checking, setChecking] = useState(false);
-  const [phase, setPhase] = useState<"idle" | "uploading" | "downloading" | "verifying" | "installing" | "rebooting" | "reconnecting" | "done" | "failed">("idle");
+  const [phase, setPhase] = useState<UpdateUiPhase>("idle");
+  const [installStatus, setInstallStatus] = useState<UpdateStatus | null>(null);
   const [rolledBack, setRolledBack] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [progress, setProgress] = useState<number | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const cardId = useId();
 
@@ -1696,12 +1781,96 @@ function UpdateTab() {
   // null = not uploading; 0..1 = fraction sent (or -1 when total is unknown).
   const [uploadFraction, setUploadFraction] = useState<number | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const externalInstallTracked = useRef(false);
+  const installStatusRef = useRef<UpdateStatus | null>(null);
+  const installTracked = useRef(false);
+  const dismissedTerminalStatus = useRef<string | null>(null);
   const phaseRef = useRef(phase);
+  const operationGeneration = useRef(0);
+  const cancelInstallPoll = useRef<(() => void) | null>(null);
+  const cancelReconnectPoll = useRef<(() => void) | null>(null);
+  const uploadTriggerRef = useRef<HTMLButtonElement>(null);
+  const manualDialogRef = useRef<HTMLDivElement>(null);
+  const manualRiskCheckboxRef = useRef<HTMLInputElement>(null);
+  const manualDialogTitleId = useId();
+  const manualDialogDescriptionId = useId();
+
+  const setUiPhase = useCallback((next: UpdateUiPhase) => {
+    // Keep the imperative view in sync immediately. Effects run after paint, which
+    // is too late to arbitrate an HTTP response racing a WebSocket event.
+    phaseRef.current = next;
+    setPhase(next);
+  }, []);
+
+  const setUiInstallStatus = useCallback((next: UpdateStatus | null) => {
+    installStatusRef.current = next;
+    setInstallStatus(next);
+  }, []);
+
+  const beginUpdateOperation = useCallback(() => {
+    operationGeneration.current += 1;
+    const cancelPrevious = cancelInstallPoll.current;
+    cancelInstallPoll.current = null;
+    cancelPrevious?.();
+    installTracked.current = true;
+    setRolledBack(false);
+    return operationGeneration.current;
+  }, []);
+
+  const cancelUpdateOperation = useCallback(() => {
+    operationGeneration.current += 1;
+    const cancel = cancelInstallPoll.current;
+    cancelInstallPoll.current = null;
+    cancel?.();
+    installTracked.current = false;
+  }, []);
+
+  const acceptActiveStatus = useCallback((status: UpdateStatus, generation: number) => {
+    if (generation !== operationGeneration.current || !isActiveUpdatePhase(status.phase)) return false;
+
+    const current = phaseRef.current;
+    // Upload and reboot have their own lifecycles. A delayed install sample must
+    // never replace either of them, nor a terminal state the user can act on.
+    if (current === "uploading" || current === "rebooting" || current === "reconnecting"
+      || current === "ready_to_reboot" || current === "failed") {
+      return false;
+    }
+    if (isActiveUpdatePhase(current)
+      && UPDATE_STEPS.indexOf(status.phase) < UPDATE_STEPS.indexOf(current)) {
+      return false;
+    }
+
+    const previous = installStatusRef.current;
+    const monotonic = (before: number | null, after: number | null) => {
+      if (before == null) return after;
+      if (after == null) return before;
+      return Math.max(before, after);
+    };
+    const accepted = previous?.phase === status.phase
+      ? {
+          ...status,
+          phase_progress: monotonic(previous.phase_progress, status.phase_progress),
+          overall_progress: monotonic(previous.overall_progress, status.overall_progress),
+          bytes_done: monotonic(previous.bytes_done, status.bytes_done),
+          bytes_total: monotonic(previous.bytes_total, status.bytes_total),
+          signature_verified: previous.signature_verified || status.signature_verified,
+        }
+      : status;
+
+    setUiInstallStatus(accepted);
+    setErrorMsg(null);
+    setUiPhase(status.phase);
+    return true;
+  }, [setUiInstallStatus, setUiPhase]);
 
   useEffect(() => {
     phaseRef.current = phase;
   }, [phase]);
+
+  useEffect(() => () => {
+    cancelUpdateOperation();
+    cancelReconnectPoll.current?.();
+    cancelReconnectPoll.current = null;
+  }, [cancelUpdateOperation]);
 
   useEffect(() => {
     api.checkUpdate().then(setUpdate).catch(() => {});
@@ -1712,133 +1881,322 @@ function UpdateTab() {
     api.checkUpdate().then(setUpdate).catch(() => {}).finally(() => setChecking(false));
   }, []);
 
-  // Poll GET /update/status until the async RAUC install truly completes. RAUC's
-  // InstallBundle returns on TRIGGER, not completion, so both install paths must
-  // watch the operation transition installing→idle (and surface last_error) rather
-  // than treating the 202 as "done". Resolves on success, rejects with the reason.
+  // Poll until the backend reports a terminal phase. The phase is authoritative;
+  // operation is intentionally opaque and may become an operation ID later.
   const pollInstallToCompletion = useCallback(
-    (alreadySawInstalling = false) =>
+    (generation: number, alreadySawActivity = false) =>
       new Promise<void>((resolve, reject) => {
+        if (generation !== operationGeneration.current) {
+          resolve();
+          return;
+        }
+
         const started = Date.now();
-        let sawInstalling = alreadySawInstalling;
-        const poll = setInterval(async () => {
-          if (Date.now() - started > 20 * 60 * 1000) {
-            clearInterval(poll);
-            reject(new Error(t("updateTimeout")));
+        let sawActivity = alreadySawActivity;
+        let polling = false;
+        let settled = false;
+        let poll: ReturnType<typeof setInterval> | null = null;
+
+        const finish = (error?: Error) => {
+          if (settled) return;
+          settled = true;
+          if (poll) clearInterval(poll);
+          if (cancelInstallPoll.current === cancel) cancelInstallPoll.current = null;
+          if (error) reject(error);
+          else resolve();
+        };
+        const cancel = () => finish();
+        cancelInstallPoll.current?.();
+        cancelInstallPoll.current = cancel;
+
+        const inspect = async () => {
+          if (settled || polling) return;
+          if (generation !== operationGeneration.current) {
+            finish();
             return;
           }
+          polling = true;
           try {
-            const s = await api.getUpdateStatus();
-            if (s.last_error) {
-              clearInterval(poll);
-              reject(new Error(s.last_error));
-            } else if (s.operation === "installing") {
-              sawInstalling = true;
-              setProgress(s.progress?.percentage ?? null);
-              // Reflect RAUC's sub-step so the indicator isn't stuck on "installing".
-              const m = (s.progress?.message ?? "").toLowerCase();
-              if (m.includes("download")) setPhase("downloading");
-              else if (m.includes("verif") || m.includes("check") || m.includes("signature")) setPhase("verifying");
-              else setPhase("installing");
-            } else if (s.operation === "idle" && sawInstalling) {
-              // Written + verified to the inactive slot; activated via "Reboot now".
-              clearInterval(poll);
-              resolve();
-            } else if (s.operation === "idle" && !sawInstalling && Date.now() - started > 20000) {
-              // 20s after trigger and RAUC never entered "installing" → it never
-              // started (unreachable bundle / refused); fail instead of hang or lie.
-              clearInterval(poll);
-              reject(new Error(t("updateFailed")));
+            const s = normalizeUpdateStatus(await api.getUpdateStatus());
+            if (settled || generation !== operationGeneration.current) return;
+            if (s.phase === "failed" || s.last_error) {
+              setUiInstallStatus(s);
+              finish(new Error(s.last_error || t("updateFailed")));
+            } else if (isActiveUpdatePhase(s.phase)) {
+              sawActivity = true;
+              acceptActiveStatus(s, generation);
+            } else if (s.phase === "ready_to_reboot") {
+              setUiInstallStatus(s);
+              setUiPhase("ready_to_reboot");
+              finish();
+            } else if (s.phase === "idle" && sawActivity) {
+              // Compatibility with a pre-phased controller: the old contract
+              // returned to idle after successfully writing the inactive slot.
+              setUiInstallStatus(s);
+              setUiPhase("ready_to_reboot");
+              finish();
+            } else if (s.phase === "idle" && !sawActivity && Date.now() - started > 20000) {
+              finish(new Error(t("updateFailed")));
             }
           } catch {
             /* device busy mid-install — keep polling */
+          } finally {
+            polling = false;
           }
-        }, 1500);
+        };
+
+        void inspect();
+        poll = setInterval(inspect, 750);
       }),
-    [t],
+    [acceptActiveStatus, setUiInstallStatus, setUiPhase, t],
   );
+
+  const trackInstallToCompletion = useCallback((generation: number, alreadySawActivity = false) => {
+    void pollInstallToCompletion(generation, alreadySawActivity)
+      .catch((error: unknown) => {
+        if (generation !== operationGeneration.current) return;
+        setErrorMsg(error instanceof Error ? error.message : String(error));
+        setUiPhase("failed");
+      })
+      .finally(() => {
+        if (generation === operationGeneration.current) installTracked.current = false;
+      });
+  }, [pollInstallToCompletion, setUiPhase]);
+
+  // A 409 means another firmware owner won the backend's atomic start race. The
+  // HTTP request is not authoritative about whether that operation is active,
+  // complete, or failed, so adopt the status endpoint instead of inventing a local
+  // failure. Generation checks keep the recovery fetch from reviving stale work.
+  const recoverConflictingUpdate = useCallback(async (error: unknown, generation: number) => {
+    if (!(error instanceof ApiError) || error.status !== 409) return false;
+
+    let status: UpdateStatus;
+    try {
+      status = normalizeUpdateStatus(await api.getUpdateStatus());
+    } catch {
+      return false;
+    }
+    if (generation !== operationGeneration.current) return true;
+
+    if (isActiveUpdatePhase(status.phase)) {
+      // A terminal WebSocket/poll result may have won while this status request was
+      // in flight. Never replace it with an older active sample.
+      if (phaseRef.current === "ready_to_reboot" || phaseRef.current === "failed") return true;
+      dismissedTerminalStatus.current = null;
+      // The conflicting owner is a different operation, so phase monotonicity from
+      // our rejected local attempt does not apply (for example, a manual install
+      // can lose to an online update that is still downloading).
+      setUiInstallStatus(null);
+      setUiPhase("idle");
+      acceptActiveStatus(status, generation);
+      if (generation === operationGeneration.current) {
+        installTracked.current = true;
+        trackInstallToCompletion(generation, true);
+      }
+      return true;
+    }
+
+    if (status.phase === "ready_to_reboot") {
+      cancelUpdateOperation();
+      setUiInstallStatus(status);
+      setErrorMsg(null);
+      setUiPhase("ready_to_reboot");
+      return true;
+    }
+
+    if (status.phase === "failed" || status.last_error) {
+      cancelUpdateOperation();
+      setUiInstallStatus(status);
+      setErrorMsg(status.last_error || t("updateFailed"));
+      setUiPhase("failed");
+      return true;
+    }
+
+    return false;
+  }, [acceptActiveStatus, cancelUpdateOperation, setUiInstallStatus, setUiPhase, t, trackInstallToCompletion]);
+
+  // WebSocket updates preserve short phases that polling could miss (especially
+  // verification), while the poller remains the recovery path after reconnects.
+  useWebSocket("update_progress", useCallback((payload: unknown) => {
+    const s = updateStatusFromEvent(payload);
+    if (!s) return;
+
+    if (isActiveUpdatePhase(s.phase)) {
+      const current = phaseRef.current;
+      if (current === "uploading" || current === "rebooting" || current === "reconnecting"
+        || current === "ready_to_reboot" || current === "failed") {
+        return;
+      }
+      dismissedTerminalStatus.current = null;
+      const wasTracked = installTracked.current;
+      const generation = wasTracked ? operationGeneration.current : beginUpdateOperation();
+      if (!acceptActiveStatus(s, generation)) {
+        if (!wasTracked && generation === operationGeneration.current) installTracked.current = false;
+        return;
+      }
+      if (!installTracked.current) {
+        // acceptActiveStatus cannot clear tracking, but retain this guard if the
+        // operation lifecycle changes later.
+        installTracked.current = true;
+      }
+      if (!wasTracked) trackInstallToCompletion(generation, true);
+    } else if (s.phase === "ready_to_reboot" && dismissedTerminalStatus.current !== "ready_to_reboot") {
+      if (phaseRef.current === "rebooting" || phaseRef.current === "reconnecting") return;
+      cancelUpdateOperation();
+      setUiInstallStatus(s);
+      setUiPhase("ready_to_reboot");
+    } else if (s.phase === "failed" && dismissedTerminalStatus.current !== `failed:${s.last_error}`) {
+      if (phaseRef.current === "rebooting" || phaseRef.current === "reconnecting") return;
+      cancelUpdateOperation();
+      setUiInstallStatus(s);
+      setErrorMsg(s.last_error || t("updateFailed"));
+      setUiPhase("failed");
+    }
+  }, [acceptActiveStatus, beginUpdateOperation, cancelUpdateOperation, setUiInstallStatus, setUiPhase, t, trackInstallToCompletion]));
 
   // Detect installs started outside this page (including the auto-updater), not only
   // on mount. This makes automatic-update progress appear while the tab is open and
   // also resumes correctly after a reload during a manual install.
   useEffect(() => {
     let cancelled = false;
-    const inspect = () => api.getUpdateStatus()
-      .then((s) => {
-        if (cancelled) return;
-        if (s.rolled_back) setRolledBack(true);
-        if (s.operation === "installing" && phaseRef.current === "idle" && !externalInstallTracked.current) {
-          externalInstallTracked.current = true;
-          setPhase("installing");
-          setProgress(s.progress?.percentage ?? null);
-          pollInstallToCompletion(true)
-            .then(() => setPhase("done"))
-            .catch((e: unknown) => {
-              setErrorMsg(e instanceof Error ? e.message : String(e));
-              setPhase("failed");
-            })
-            .finally(() => { externalInstallTracked.current = false; });
+    const inspect = () => {
+      const generation = operationGeneration.current;
+      return api.getUpdateStatus().then((rawStatus) => {
+        if (cancelled || generation !== operationGeneration.current) return;
+        const s = normalizeUpdateStatus(rawStatus);
+        // Locally initiated operations have a dedicated 750 ms poller plus WebSocket
+        // events. The broad 5 s discovery poll must not overwrite an upload/trigger
+        // with a retained terminal snapshot from the preceding operation.
+        const locallyTracked = installTracked.current || phaseRef.current === "uploading";
+        if (phaseRef.current === "idle" && !isActiveUpdatePhase(s.phase)) {
+          setRolledBack(s.rolled_back);
+        }
+        if (isActiveUpdatePhase(s.phase) && phaseRef.current === "idle" && !installTracked.current) {
+          dismissedTerminalStatus.current = null;
+          const generation = beginUpdateOperation();
+          if (acceptActiveStatus(s, generation)) trackInstallToCompletion(generation, true);
+          else if (generation === operationGeneration.current) installTracked.current = false;
+        } else if (s.phase === "ready_to_reboot"
+          && !locallyTracked
+          && phaseRef.current !== "ready_to_reboot"
+          && phaseRef.current !== "rebooting"
+          && phaseRef.current !== "reconnecting"
+          && dismissedTerminalStatus.current !== "ready_to_reboot") {
+          cancelUpdateOperation();
+          setUiInstallStatus(s);
+          setUiPhase("ready_to_reboot");
+        } else if (s.phase === "failed"
+          && !locallyTracked
+          && phaseRef.current !== "failed"
+          && phaseRef.current !== "rebooting"
+          && phaseRef.current !== "reconnecting"
+          && dismissedTerminalStatus.current !== `failed:${s.last_error}`) {
+          cancelUpdateOperation();
+          setUiInstallStatus(s);
+          setErrorMsg(s.last_error || t("updateFailed"));
+          setUiPhase("failed");
         }
       })
-      .catch(() => {});
+        .catch(() => {});
+    };
     void inspect();
     const timer = setInterval(inspect, 5000);
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [pollInstallToCompletion]);
+  }, [acceptActiveStatus, beginUpdateOperation, cancelUpdateOperation, setUiInstallStatus, setUiPhase, t, trackInstallToCompletion]);
 
   const performUpdate = useCallback(() => {
-    setPhase("installing");
-    setProgress(null);
+    dismissedTerminalStatus.current = null;
+    const generation = beginUpdateOperation();
+    setRolledBack(false);
+    setUiPhase("downloading");
+    setUiInstallStatus(null);
     setErrorMsg(null);
-    // triggerUpdate returns once the install is TRIGGERED; poll for real completion.
+    // triggerUpdate returns once the operation is accepted; phases report reality.
     api.triggerUpdate()
-      .then(() => pollInstallToCompletion())
-      .then(() => setPhase("done"))
-      .catch((e: unknown) => {
+      .then(() => {
+        if (generation === operationGeneration.current) {
+          trackInstallToCompletion(generation);
+        }
+      })
+      .catch(async (e: unknown) => {
+        if (generation !== operationGeneration.current) return;
+        if (await recoverConflictingUpdate(e, generation)) return;
+        if (generation !== operationGeneration.current) return;
         setErrorMsg(e instanceof Error ? e.message : String(e));
-        setPhase("failed");
+        setUiPhase("failed");
+        installTracked.current = false;
       });
-  }, [pollInstallToCompletion]);
+  }, [beginUpdateOperation, recoverConflictingUpdate, setUiInstallStatus, setUiPhase, trackInstallToCompletion]);
 
   // Activate the freshly-installed slot and confirm the device returns. Drives
   // rebooting → reconnecting, waits for the device to actually drop then come back,
   // and reports a rollback (bootloader reverted) instead of silently going idle.
   const rebootAndVerify = useCallback(() => {
-    setPhase("rebooting");
+    dismissedTerminalStatus.current = null;
+    cancelUpdateOperation();
+    cancelReconnectPoll.current?.();
+    cancelReconnectPoll.current = null;
+    setRolledBack(false);
+    setUiPhase("rebooting");
     setErrorMsg(null);
-    api.reboot().catch(() => {}); // the reboot kills the connection — expected.
-    setPhase("reconnecting");
+    const rebootRequest = api.reboot();
+    setUiPhase("reconnecting");
     const started = Date.now();
     let sawOffline = false;
-    const poll = setInterval(async () => {
+    let rebootRequestFailedAt: number | null = null;
+    let cancelled = false;
+    let poll: ReturnType<typeof setInterval> | null = null;
+    const stop = () => {
+      cancelled = true;
+      if (poll) clearInterval(poll);
+      if (cancelReconnectPoll.current === stop) cancelReconnectPoll.current = null;
+    };
+    cancelReconnectPoll.current = stop;
+    void rebootRequest.catch(() => {
+      if (!cancelled) rebootRequestFailedAt = Date.now();
+    });
+    poll = setInterval(async () => {
       if (Date.now() - started > 3 * 60 * 1000) {
-        clearInterval(poll);
+        stop();
         setErrorMsg(t("reconnectTimeout"));
-        setPhase("failed");
+        setUiPhase("failed");
         return;
       }
       try {
-        const s = await api.getUpdateStatus();
+        const s = normalizeUpdateStatus(await api.getUpdateStatus());
+        if (cancelled) return;
         // Only trust an "online" reading after we've seen it go offline, else we'd
         // match the still-running pre-reboot instance and finish too early.
-        if (!sawOffline) return;
-        clearInterval(poll);
+        if (!sawOffline) {
+          // A successful reboot can tear down the HTTP connection before the 202
+          // response reaches the browser. Give the device a short window to go
+          // offline before treating a rejected request as a real request failure.
+          if (rebootRequestFailedAt && Date.now() - rebootRequestFailedAt >= 8_000) {
+            stop();
+            window.dispatchEvent(new Event("snapdog:reboot-cancelled"));
+            setErrorMsg(t("rebootRequestFailed"));
+            setUiPhase("ready_to_reboot");
+          }
+          return;
+        }
+        stop();
+        setRolledBack(s.rolled_back);
         if (s.rolled_back) {
-          setRolledBack(true);
           setErrorMsg(t("rollbackDetail"));
-          setPhase("failed");
+          setUiPhase("failed");
         } else {
           api.checkUpdate().then(setUpdate).catch(() => {});
-          setPhase("idle");
+          setUiPhase("idle");
         }
       } catch {
+        if (cancelled) return;
         sawOffline = true; // device went down — reboot in progress
       }
     }, 2000);
-  }, [t]);
+  }, [cancelUpdateOperation, setUiPhase, t]);
 
   const triggerFileSelect = useCallback(() => {
     fileInputRef.current?.click();
@@ -1854,7 +2212,7 @@ function UpdateTab() {
     }
   }, []);
 
-  const handleFileDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+  const handleFileDrop = useCallback((e: React.DragEvent<HTMLButtonElement>) => {
     e.preventDefault();
     const file = e.dataTransfer.files?.[0];
     if (file) {
@@ -1865,79 +2223,166 @@ function UpdateTab() {
     }
   }, []);
 
+  const closeManualDialog = useCallback(() => {
+    cancelUpdateOperation();
+    setUiPhase("idle");
+    setShowWarningGate(false);
+    setSelectedFile(null);
+    setAcceptedRisks(false);
+    setUploadFraction(null);
+    setUploadError(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }, [cancelUpdateOperation, setUiPhase]);
+
+  useEffect(() => {
+    if (!showWarningGate) return;
+    const restoreFocusTo = uploadTriggerRef.current;
+    const frame = window.requestAnimationFrame(() => manualRiskCheckboxRef.current?.focus());
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.requestAnimationFrame(() => {
+        if (restoreFocusTo?.isConnected) restoreFocusTo.focus();
+      });
+    };
+  }, [showWarningGate]);
+
+  const handleManualDialogKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape") {
+      if (uploadFraction === null) {
+        event.preventDefault();
+        closeManualDialog();
+      }
+      return;
+    }
+    if (event.key !== "Tab") return;
+
+    const focusable = Array.from(manualDialogRef.current?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+    ) ?? []).filter((element) => element.getClientRects().length > 0);
+    if (focusable.length === 0) {
+      event.preventDefault();
+      manualDialogRef.current?.focus();
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }, [closeManualDialog, uploadFraction]);
+
   const startManualFlash = useCallback(() => {
     if (!selectedFile) return;
+    dismissedTerminalStatus.current = null;
+    const generation = beginUpdateOperation();
+    setRolledBack(false);
     let stage: "upload" | "install" = "upload";
     setUploadFraction(-1);
     setUploadError(null);
-    setPhase("uploading");
+    setUiPhase("uploading");
     // Stage 1: upload (with progress). A failure here keeps the modal open + inline.
-    api.uploadUpdate(selectedFile, (f) => setUploadFraction(f ?? -1))
+    api.uploadUpdate(selectedFile, (f) => {
+      if (generation === operationGeneration.current) setUploadFraction(f ?? -1);
+    })
       .then(() => {
+        if (generation !== operationGeneration.current) return;
         // Upload done — close the modal, move into the install lifecycle.
         setShowWarningGate(false);
         setSelectedFile(null);
         setAcceptedRisks(false);
         setUploadFraction(null);
-        setPhase("installing");
-        setProgress(null);
+        setUiPhase("verifying");
+        setUiInstallStatus(null);
         setErrorMsg(null);
         stage = "install";
-        // Stage 2: trigger the async install, then poll to REAL completion instead
-        // of declaring "done" on the 202 while rauc is still writing the slot.
-        return api.installUpdate().then(() => pollInstallToCompletion());
+        // Stage 2: RAUC verifies the uploaded bundle before writing the slot.
+        return api.installUpdate().then(() => {
+          if (generation === operationGeneration.current) {
+            trackInstallToCompletion(generation);
+          }
+        });
       })
-      .then(() => setPhase("done"))
-      .catch((err: unknown) => {
+      .catch(async (err: unknown) => {
+        if (generation !== operationGeneration.current) return;
+        if (stage === "install" && await recoverConflictingUpdate(err, generation)) return;
+        if (generation !== operationGeneration.current) return;
         const msg = err instanceof Error ? err.message : String(err);
         if (stage === "upload") {
           setUploadError(t("uploadError"));
           setUploadFraction(null);
+          cancelUpdateOperation();
+          setUiPhase("idle");
         } else {
           // Install-stage failure — modal already closed, surface in the panel.
           setErrorMsg(msg);
-          setPhase("failed");
+          setUiPhase("failed");
+          installTracked.current = false;
         }
       });
-  }, [selectedFile, pollInstallToCompletion, t]);
+  }, [beginUpdateOperation, cancelUpdateOperation, recoverConflictingUpdate, selectedFile, setUiInstallStatus, setUiPhase, t, trackInstallToCompletion]);
 
   return (
     <Card title={t("title")} id={cardId}>
       <div className="space-y-4">
-        {rolledBack && phase !== "done" && (
+        {rolledBack && phase === "idle" && (
           <div className="rounded-lg bg-destructive/10 p-4 text-sm" role="alert">
             <p className="font-medium text-destructive">{t("rollbackWarning")}</p>
             <p className="mt-1 text-xs text-muted-foreground">{t("rollbackDetail")}</p>
           </div>
         )}
 
-        {phase !== "idle" && phase !== "done" && phase !== "failed" && (
-          <UpdatePhaseIndicator label={`${t(`phase_${phase}`)}${
-            phase === "uploading" && uploadFraction != null && uploadFraction >= 0
-              ? ` — ${Math.round(uploadFraction * 100)}%`
-              // A percentage only means something while bytes are moving. "rebooting" and
-              // "reconnecting" are indeterminate, so don't append the last install value —
-              // RAUC typically ends the write at 99%, which would otherwise linger as a
-              // misleading "Reconnecting — 99%" as the device comes back after the update.
-              : (phase === "downloading" || phase === "verifying" || phase === "installing") && progress != null
-                ? ` — ${progress}%`
-                : ""
-          }`} />
+        {isActiveUpdatePhase(phase) && (
+          <UpdatePhaseStepper phase={phase} status={installStatus} />
         )}
-        {phase === "done" && (
+        {(phase === "uploading" || phase === "rebooting" || phase === "reconnecting") && (
+          <UpdatePhaseIndicator
+            label={`${t(`phase_${phase}`)}${
+              phase === "uploading" && uploadFraction != null && uploadFraction >= 0
+                ? ` — ${Math.round(uploadFraction * 100)}%`
+                : ""
+            }`}
+          />
+        )}
+        {phase === "ready_to_reboot" && (
           <div className="rounded-lg bg-green-500/10 p-4 text-sm space-y-3" role="status">
-            <p className="font-medium text-green-700 dark:text-green-400">{t("updateSuccess")}</p>
+            <p className="font-medium text-foreground">{t("updateSuccess")}</p>
+            {installStatus?.signature_verified && (
+              <p className="text-xs font-medium text-foreground">{t("signatureVerified")}</p>
+            )}
             <p className="text-xs text-muted-foreground">{t("rebootToActivate")}</p>
-            <div className="flex gap-2">
-              <Button size="sm" onClick={rebootAndVerify}>{t("rebootNow")}</Button>
-              <Button variant="outline" size="sm" onClick={() => { setPhase("idle"); checkForUpdate(); }}>{t("later")}</Button>
+            {errorMsg && <p className="text-xs font-medium text-destructive" role="alert">{errorMsg}</p>}
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button size="sm" className="w-full sm:w-auto" onClick={rebootAndVerify}>{t("rebootNow")}</Button>
+              <Button variant="outline" size="sm" className="w-full sm:w-auto" onClick={() => {
+                dismissedTerminalStatus.current = "ready_to_reboot";
+                cancelUpdateOperation();
+                setUiPhase("idle");
+                setUiInstallStatus(null);
+                checkForUpdate();
+              }}>{t("later")}</Button>
             </div>
           </div>
         )}
-        {phase === "failed" && !rolledBack && (
-          <div className="rounded-lg bg-destructive/10 p-4 text-sm space-y-1" role="alert">
-            <p className="font-medium text-destructive">{t("updateFailed")}</p>
-            {errorMsg && <p className="text-xs text-muted-foreground break-words">{errorMsg}</p>}
+        {phase === "failed" && (
+          <div className="rounded-lg bg-destructive/10 p-4 text-sm space-y-3" role="alert">
+            <div className="space-y-1">
+              <p className="font-medium text-destructive">{rolledBack ? t("rollbackWarning") : t("updateFailed")}</p>
+              {rolledBack && <p className="text-xs text-muted-foreground">{t("rollbackDetail")}</p>}
+              {errorMsg && <p className="text-xs text-muted-foreground break-words">{errorMsg}</p>}
+            </div>
+            <Button variant="outline" size="sm" onClick={() => {
+              dismissedTerminalStatus.current = `failed:${installStatus?.last_error ?? errorMsg ?? ""}`;
+              cancelUpdateOperation();
+              setUiPhase("idle");
+              setUiInstallStatus(null);
+              setErrorMsg(null);
+              checkForUpdate();
+            }}>{t("backToUpdates")}</Button>
           </div>
         )}
 
@@ -1949,24 +2394,24 @@ function UpdateTab() {
                 {update?.latest_version && (
                   <p className="text-xs font-mono text-muted-foreground">{update.current_version} → {update.latest_version}</p>
                 )}
-                {update && !update.signature_verified && (
-                  <p className="text-xs font-medium text-destructive">{t("signatureUnverified")}</p>
+                {update && !hasTrustedUpdateKeyring(update) && (
+                  <p className="text-xs font-medium text-destructive">{t("trustedKeyringUnavailable")}</p>
                 )}
-                <div className="flex gap-2">
-                  <Button size="sm" onClick={() => { setConfirming(false); performUpdate(); }}>{update?.is_downgrade ? t("confirmDowngrade") : t("confirmInstall")}</Button>
-                  <Button variant="outline" size="sm" onClick={() => setConfirming(false)}>{t("cancel")}</Button>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button size="sm" className="w-full sm:w-auto" onClick={() => { setConfirming(false); performUpdate(); }}>{update?.is_downgrade ? t("confirmDowngrade") : t("confirmInstall")}</Button>
+                  <Button variant="outline" size="sm" className="w-full sm:w-auto" onClick={() => setConfirming(false)}>{t("cancel")}</Button>
                 </div>
               </div>
             ) : update?.staged_version && !update.available && !update.is_downgrade ? (
               // An update is installed and waiting for a reboot to activate. Offer the
               // reboot (not another install of the same version) until a newer one appears.
               <div className="flex flex-col gap-3 rounded-lg bg-primary/10 p-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p className="text-sm font-medium">{t("stagedTitle")}</p>
                     <p className="text-xs font-mono text-muted-foreground">{update.current_version} → {update.staged_version}</p>
                   </div>
-                  <Button size="sm" onClick={rebootAndVerify}>{t("rebootNow")}</Button>
+                  <Button size="sm" className="w-full sm:w-auto" onClick={rebootAndVerify}>{t("rebootNow")}</Button>
                 </div>
                 <p className="text-xs text-muted-foreground border-t border-primary/20 pt-2">{t("rebootToActivate")}</p>
               </div>
@@ -1979,8 +2424,8 @@ function UpdateTab() {
                   </div>
                   <Button size="sm" disabled={!update.installable} onClick={() => setConfirming(true)}>{t("installUpdate")}</Button>
                 </div>
-                <div className={`text-xs font-semibold flex items-center gap-1 border-t pt-2 ${update.signature_verified ? "border-primary/20 text-green-600 dark:text-green-400" : "border-destructive/30 text-destructive"}`}>
-                  {update.signature_verified ? t("signatureVerified") : t("signatureUnverified")}
+                <div className={`text-xs font-semibold flex items-center gap-1 border-t pt-2 ${hasTrustedUpdateKeyring(update) ? "border-primary/20 text-foreground" : "border-destructive/30 text-destructive"}`}>
+                  {hasTrustedUpdateKeyring(update) ? t("trustedKeyringAvailable") : t("trustedKeyringUnavailable")}
                 </div>
               </div>
             ) : update?.is_downgrade ? (
@@ -1992,8 +2437,8 @@ function UpdateTab() {
                   </div>
                   <Button variant="outline" size="sm" disabled={!update.installable} onClick={() => setConfirming(true)}>{t("downgrade")}</Button>
                 </div>
-                <div className={`text-xs font-semibold flex items-center gap-1 border-t pt-2 ${update.signature_verified ? "border-border text-green-600 dark:text-green-400" : "border-destructive/30 text-destructive"}`}>
-                  {update.signature_verified ? t("signatureVerified") : t("signatureUnverified")}
+                <div className={`text-xs font-semibold flex items-center gap-1 border-t pt-2 ${hasTrustedUpdateKeyring(update) ? "border-border text-foreground" : "border-destructive/30 text-destructive"}`}>
+                  {hasTrustedUpdateKeyring(update) ? t("trustedKeyringAvailable") : t("trustedKeyringUnavailable")}
                 </div>
               </div>
             ) : update && update.latest_version ? (
@@ -2002,8 +2447,8 @@ function UpdateTab() {
                   <StatusDot connected label={t("upToDate")} />
                   <span>{t("upToDate")}</span>
                 </div>
-                <div className={`text-xs font-semibold flex items-center gap-1 border-t pt-2 ${update.signature_verified ? "border-border/50 text-green-600 dark:text-green-400" : "border-destructive/30 text-destructive"}`}>
-                  {update.signature_verified ? t("signatureVerified") : t("signatureUnverified")}
+                <div className={`text-xs font-semibold flex items-center gap-1 border-t pt-2 ${hasTrustedUpdateKeyring(update) ? "border-border/50 text-foreground" : "border-destructive/30 text-destructive"}`}>
+                  {hasTrustedUpdateKeyring(update) ? t("trustedKeyringAvailable") : t("trustedKeyringUnavailable")}
                 </div>
               </div>
             ) : update ? (
@@ -2017,11 +2462,9 @@ function UpdateTab() {
           </>
         )}
 
-        {/* Channel lives in AutoUpdateSettings (always visible) — it is the single
-            source of truth the backend uses for both manual check/install and
-            auto-update, so there is no separate decoupled selector here. Changing it
-            re-checks the available version so the panel reflects the new channel. */}
-        <AutoUpdateSettings onChannelChange={checkForUpdate} />
+        {/* Keep the active/terminal update surface focused and immutable. Channel and
+            scheduling controls return after the user leaves that state. */}
+        {phase === "idle" && <AutoUpdateSettings onChannelChange={checkForUpdate} />}
 
         {phase === "idle" && (
           <>
@@ -2031,24 +2474,27 @@ function UpdateTab() {
                 <h3 className="text-sm font-semibold">{t("manualTitle")}</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">{t("manualDesc")}</p>
               </div>
-              <div
-                className="border-2 border-dashed border-border/80 hover:border-primary/50 transition rounded-lg p-6 flex flex-col items-center justify-center cursor-pointer space-y-2 bg-muted/20"
+              <button
+                ref={uploadTriggerRef}
+                type="button"
+                className="flex w-full cursor-pointer flex-col items-center justify-center space-y-2 rounded-lg border-2 border-dashed border-border/80 bg-muted/20 p-6 transition hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={triggerFileSelect}
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={handleFileDrop}
+                aria-haspopup="dialog"
               >
-                <svg className="size-8 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg aria-hidden="true" className="size-8 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                 </svg>
                 <span className="text-xs font-semibold text-muted-foreground">{t("manualUploadButton")}</span>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  className="hidden"
-                  accept=".raucb"
-                  onChange={handleFileSelected}
-                />
-              </div>
+              </button>
+              <input
+                type="file"
+                ref={fileInputRef}
+                className="hidden"
+                accept=".raucb"
+                onChange={handleFileSelected}
+              />
             </div>
           </>
         )}
@@ -2056,24 +2502,35 @@ function UpdateTab() {
 
       {showWarningGate && selectedFile && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-4 animate-in fade-in duration-200">
-          <div className="w-full max-w-lg rounded-xl border border-destructive/30 bg-background/95 shadow-2xl p-6 space-y-6 max-h-[90vh] overflow-y-auto transform scale-100 transition duration-200">
+          <div
+            ref={manualDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={manualDialogTitleId}
+            aria-describedby={manualDialogDescriptionId}
+            aria-busy={uploadFraction !== null}
+            tabIndex={-1}
+            onKeyDown={handleManualDialogKeyDown}
+            className="w-full max-w-lg rounded-xl border border-destructive/30 bg-background/95 shadow-2xl p-6 space-y-6 max-h-[90vh] overflow-y-auto transform scale-100 transition duration-200"
+          >
             <div className="space-y-2">
-              <h2 className="text-base font-bold text-destructive flex items-center gap-2">
+              <h2 id={manualDialogTitleId} className="text-base font-bold text-destructive flex items-center gap-2">
                 <span>{t("manualWarningTitle")}</span>
               </h2>
-              <p className="text-xs text-foreground/90 leading-relaxed font-semibold">
+              <p id={manualDialogDescriptionId} className="text-xs text-foreground/90 leading-relaxed font-semibold">
                 {t("manualWarningDesc1")}
               </p>
               <p className="text-xs text-foreground/90 leading-relaxed font-semibold">
                 {t("manualWarningDesc2")}
               </p>
               <p className="text-xs text-muted-foreground font-mono bg-muted/60 p-2 rounded border border-border/50">
-                File: {selectedFile.name} ({(selectedFile.size / 1024 / 1024).toFixed(2)} MB)
+                {t("manualFileLabel")}: {selectedFile.name} ({(selectedFile.size / 1024 / 1024).toFixed(2)} MB)
               </p>
             </div>
 
             <div className="flex items-start gap-3 rounded-lg border border-border/85 bg-muted/40 p-4">
               <input
+                ref={manualRiskCheckboxRef}
                 id="accept-risks-checkbox"
                 type="checkbox"
                 checked={acceptedRisks}
@@ -2086,22 +2543,17 @@ function UpdateTab() {
             </div>
 
             {uploadError && (
-              <div className="rounded-lg bg-destructive/10 p-3 text-xs text-destructive font-semibold">
+              <div className="rounded-lg bg-destructive/10 p-3 text-xs text-destructive font-semibold" role="alert" aria-live="assertive">
                 {uploadError}
               </div>
             )}
 
-            <div className="flex justify-end gap-3 pt-2">
+            <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
               <Button
                 variant="outline"
-                onClick={() => {
-                  setShowWarningGate(false);
-                  setSelectedFile(null);
-                  setAcceptedRisks(false);
-                  setUploadError(null);
-                  if (fileInputRef.current) fileInputRef.current.value = "";
-                }}
+                onClick={closeManualDialog}
                 disabled={uploadFraction !== null}
+                className="w-full sm:w-auto"
               >
                 {t("manualCancel")}
               </Button>
@@ -2109,7 +2561,7 @@ function UpdateTab() {
                 variant="destructive"
                 onClick={startManualFlash}
                 disabled={!acceptedRisks || uploadFraction !== null}
-                className="font-bold"
+                className="w-full font-bold sm:w-auto"
               >
                 {uploadFraction !== null
                   ? uploadFraction >= 0
@@ -2121,7 +2573,7 @@ function UpdateTab() {
           </div>
         </div>
       )}
-      <RawFlashSection />
+      {phase === "idle" && <RawFlashSection />}
     </Card>
   );
 }
@@ -2324,6 +2776,143 @@ function AutoUpdateSettings({ onChannelChange }: { onChannelChange?: () => void 
           {runtime.last_error && <p className="mt-1 text-destructive">{runtime.last_error}</p>}
         </div>
       )}
+    </div>
+  );
+}
+
+function formatUpdateBytes(bytes: number, locale: string): string {
+  const units = ["B", "KB", "MB", "GB"];
+  let value = Math.max(0, bytes);
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  const maximumFractionDigits = unitIndex === 0 ? 0 : value >= 10 ? 1 : 2;
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits }).format(value)} ${units[unitIndex]}`;
+}
+
+function UpdatePhaseStepper({ phase, status }: { phase: ActiveUpdatePhase; status: UpdateStatus | null }) {
+  const t = useTranslations("update");
+  const locale = useLocale();
+  const currentIndex = UPDATE_STEPS.indexOf(phase);
+  const phaseProgress = phase === "downloading" && status?.phase === phase && typeof status.phase_progress === "number"
+    ? Math.min(100, Math.max(0, status.phase_progress))
+    : null;
+  const overallProgress = phase === "writing" && status?.phase === phase && typeof status.overall_progress === "number"
+    ? Math.min(100, Math.max(0, status.overall_progress))
+    : null;
+  const byteProgress = phase === "downloading" && status?.bytes_total && status.bytes_total > 0 && status.bytes_done != null
+    ? Math.min(100, Math.max(0, (status.bytes_done / status.bytes_total) * 100))
+    : null;
+  const progress = phaseProgress ?? overallProgress ?? byteProgress;
+  const hasByteProgress = phase === "downloading"
+    && status?.bytes_done != null
+    && status.bytes_total != null
+    && status.bytes_total > 0;
+  const hasDownloadedBytes = phase === "downloading" && status?.bytes_done != null;
+
+  return (
+    <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+      <p className="sr-only" role="status" aria-live="polite">{t("currentStep", { step: t(`step_${phase}`) })}</p>
+      <div className="mb-3">
+        <p className="text-sm font-semibold">{t("installingTitle")}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">{t("installingSubtitle")}</p>
+      </div>
+      <ol className="space-y-0" aria-label={t("updateProgress")}>
+        {UPDATE_STEPS.map((step, index) => {
+          const complete = index < currentIndex;
+          const current = index === currentIndex;
+          return (
+            <li key={step} className="relative flex gap-3 pb-3 last:pb-0">
+              {index < UPDATE_STEPS.length - 1 && (
+                <span
+                  aria-hidden="true"
+                  className={`absolute left-[9px] top-5 h-[calc(100%-0.25rem)] w-px ${complete ? "bg-green-500/60" : "bg-border"}`}
+                />
+              )}
+              <span
+                aria-hidden="true"
+                className={`relative z-10 mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border ${
+                  complete
+                    ? "border-green-500 bg-green-500 text-white"
+                    : current
+                      ? "border-primary bg-background"
+                      : "border-border bg-background"
+                }`}
+              >
+                {complete ? (
+                  <svg viewBox="0 0 20 20" fill="none" className="size-3.5" stroke="currentColor" strokeWidth="2.4">
+                    <path d="m5 10 3 3 7-7" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                ) : current ? (
+                  <span className="size-2 animate-pulse rounded-full bg-primary" />
+                ) : (
+                  <span className="size-1.5 rounded-full bg-muted-foreground/35" />
+                )}
+              </span>
+              <div className={`min-w-0 flex-1 ${current ? "pb-1" : ""}`}>
+                <div className="flex items-baseline justify-between gap-3">
+                  <p className={`text-sm ${current ? "font-semibold text-foreground" : complete ? "font-medium text-foreground/80" : "text-muted-foreground"}`}>
+                    {t(`step_${step}`)}
+                  </p>
+                  {current && progress != null && (
+                    <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+                      {phase === "writing"
+                        ? t("overallProgress", { progress: Math.round(progress) })
+                        : `${Math.round(progress)}%`}
+                    </span>
+                  )}
+                </div>
+                {current && (
+                  <>
+                    <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{t(`phase_${step}_detail`)}</p>
+                    {progress != null && (
+                      <div
+                        className="mt-2 h-1.5 overflow-hidden rounded-full bg-primary/15"
+                        role="progressbar"
+                        aria-label={t(`step_${step}`)}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={Math.round(progress)}
+                        aria-valuetext={phase === "writing"
+                          ? t("overallProgress", { progress: Math.round(progress) })
+                          : `${Math.round(progress)}%`}
+                      >
+                        <div className="h-full rounded-full bg-primary transition-[width] duration-300" style={{ width: `${progress}%` }} />
+                      </div>
+                    )}
+                    {hasDownloadedBytes && (
+                      <p className="mt-1.5 font-mono text-[11px] tabular-nums text-muted-foreground">
+                        {hasByteProgress
+                          ? t("downloadBytes", {
+                              done: formatUpdateBytes(status.bytes_done!, locale),
+                              total: formatUpdateBytes(status.bytes_total!, locale),
+                            })
+                          : t("downloadedBytes", { done: formatUpdateBytes(status.bytes_done!, locale) })}
+                      </p>
+                    )}
+                    {status?.signature_verified && (phase === "writing" || phase === "finalizing") && (
+                      <p className="mt-1.5 text-xs font-medium text-foreground">{t("signatureVerified")}</p>
+                    )}
+                    {phase === "finalizing" && (
+                      <p className="mt-2 rounded-md border border-primary/20 bg-primary/10 px-2.5 py-2 text-xs font-medium text-foreground">
+                        {t("keepPowered")}
+                      </p>
+                    )}
+                    {status?.detail && (
+                      <details className="mt-2 text-[11px] text-muted-foreground">
+                        <summary className="cursor-pointer select-none">{t("technicalDetails")}</summary>
+                        <p className="mt-1 break-words font-mono">{status.detail}</p>
+                      </details>
+                    )}
+                  </>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
     </div>
   );
 }
@@ -3797,8 +4386,13 @@ function SetupPage() {
   // back to connected once the device answers again (and self-corrects if the reboot no-oped).
   useEffect(() => {
     const onReboot = () => setIsConnected(false);
+    const onRebootCancelled = () => setIsConnected(true);
     window.addEventListener("snapdog:reboot", onReboot);
-    return () => window.removeEventListener("snapdog:reboot", onReboot);
+    window.addEventListener("snapdog:reboot-cancelled", onRebootCancelled);
+    return () => {
+      window.removeEventListener("snapdog:reboot", onReboot);
+      window.removeEventListener("snapdog:reboot-cancelled", onRebootCancelled);
+    };
   }, []);
 
   return (

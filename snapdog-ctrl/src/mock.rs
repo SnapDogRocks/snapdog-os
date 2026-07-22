@@ -144,38 +144,14 @@ impl MockState {
         tracing::info!("[mock] OTA manual install triggered (scripted)");
     }
 
-    /// Scripted RAUC status: "installing" with climbing progress for ~6s after an
-    /// install is triggered, then "idle" — so the dev UI exercises the real
-    /// installing→idle polling path instead of instantly "completing".
-    pub async fn update_status(&self) -> crate::routes::UpdateStatus {
-        const INSTALL_SECS: f64 = 6.0;
+    /// Scripted phased status so the dev UI exercises the same truthful lifecycle
+    /// as a device: byte-based download, indeterminate verification, image write,
+    /// indeterminate finalization, then a retained ready-to-reboot state.
+    pub async fn update_status(&self) -> crate::update::UpdateProgress {
         let s = self.inner.lock().await;
-        let elapsed = s.install_started.map(|t| t.elapsed().as_secs_f64());
+        let elapsed = s.install_started.map(|started| started.elapsed());
         drop(s);
-        match elapsed {
-            Some(e) if e < INSTALL_SECS => {
-                // Clamped to [0, 99] so the truncating cast is exact and intended.
-                #[allow(clippy::cast_possible_truncation)]
-                let pct = ((e / INSTALL_SECS) * 100.0).min(99.0) as i32;
-                crate::routes::UpdateStatus {
-                    operation: "installing".into(),
-                    progress: Some(crate::rauc::InstallProgress {
-                        percentage: pct,
-                        message: "Copying image to rootfs.0".into(),
-                    }),
-                    last_error: String::new(),
-                    rolled_back: false,
-                    slots: vec![],
-                }
-            }
-            _ => crate::routes::UpdateStatus {
-                operation: "idle".into(),
-                progress: None,
-                last_error: String::new(),
-                rolled_back: false,
-                slots: vec![],
-            },
-        }
+        mock_update_progress(elapsed)
     }
 
     pub async fn get_network_overview(&self) -> NetworkOverview {
@@ -323,5 +299,165 @@ impl MockState {
         s.ssh = config;
         drop(s);
         Ok(())
+    }
+}
+
+const MOCK_DOWNLOAD_END: std::time::Duration = std::time::Duration::from_secs(4);
+const MOCK_VERIFY_END: std::time::Duration = std::time::Duration::from_secs(6);
+const MOCK_WRITE_END: std::time::Duration = std::time::Duration::from_secs(10);
+const MOCK_FINALIZE_END: std::time::Duration = std::time::Duration::from_secs(13);
+const MOCK_BUNDLE_BYTES: u64 = 80 * 1024 * 1024;
+
+fn scaled_value(elapsed: std::time::Duration, start_ms: u128, end_ms: u128, max: u64) -> u64 {
+    let elapsed_ms = elapsed.as_millis().clamp(start_ms, end_ms) - start_ms;
+    let duration_ms = end_ms - start_ms;
+    let scaled = elapsed_ms * u128::from(max) / duration_ms;
+    u64::try_from(scaled).unwrap_or(max)
+}
+
+fn mock_update_progress(elapsed: Option<std::time::Duration>) -> crate::update::UpdateProgress {
+    use crate::update::{UpdatePhase, UpdateProgress};
+
+    let Some(elapsed) = elapsed else {
+        return UpdateProgress::default();
+    };
+
+    if elapsed <= MOCK_DOWNLOAD_END {
+        let bytes_done = scaled_value(elapsed, 0, MOCK_DOWNLOAD_END.as_millis(), MOCK_BUNDLE_BYTES);
+        return UpdateProgress {
+            phase: UpdatePhase::Downloading,
+            phase_progress: Some(
+                u8::try_from(scaled_value(elapsed, 0, MOCK_DOWNLOAD_END.as_millis(), 100))
+                    .unwrap_or(100),
+            ),
+            bytes_done: Some(bytes_done),
+            bytes_total: Some(MOCK_BUNDLE_BYTES),
+            detail: "Downloading firmware bundle".into(),
+            ..UpdateProgress::default()
+        };
+    }
+
+    if elapsed < MOCK_VERIFY_END {
+        return UpdateProgress {
+            phase: UpdatePhase::Verifying,
+            detail: "Checking firmware bundle".into(),
+            ..UpdateProgress::default()
+        };
+    }
+
+    if elapsed <= MOCK_WRITE_END {
+        return UpdateProgress {
+            phase: UpdatePhase::Writing,
+            overall_progress: Some(
+                40 + u8::try_from(scaled_value(
+                    elapsed,
+                    MOCK_VERIFY_END.as_millis(),
+                    MOCK_WRITE_END.as_millis(),
+                    58,
+                ))
+                .unwrap_or(58),
+            ),
+            detail: "Copying image to rootfs.1".into(),
+            signature_verified: true,
+            ..UpdateProgress::default()
+        };
+    }
+
+    if elapsed < MOCK_FINALIZE_END {
+        return UpdateProgress {
+            phase: UpdatePhase::Finalizing,
+            detail: "Synchronizing installed system".into(),
+            signature_verified: true,
+            ..UpdateProgress::default()
+        };
+    }
+
+    UpdateProgress {
+        phase: UpdatePhase::ReadyToReboot,
+        detail: "Firmware installed and verified".into(),
+        signature_verified: true,
+        ..UpdateProgress::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::update::UpdatePhase;
+
+    #[test]
+    fn update_mock_is_idle_before_an_install_starts() {
+        let status = mock_update_progress(None);
+
+        assert_eq!(status.phase, UpdatePhase::Idle);
+        assert_eq!(status.phase_progress, None);
+        assert_eq!(status.overall_progress, None);
+        assert_eq!(status.bytes_done, None);
+        assert_eq!(status.bytes_total, None);
+        assert!(!status.signature_verified);
+    }
+
+    #[test]
+    fn update_mock_download_reports_monotonic_real_bytes() {
+        let start = mock_update_progress(Some(std::time::Duration::ZERO));
+        let middle = mock_update_progress(Some(std::time::Duration::from_secs(2)));
+        let complete = mock_update_progress(Some(MOCK_DOWNLOAD_END));
+
+        assert_eq!(start.phase, UpdatePhase::Downloading);
+        assert_eq!(start.phase_progress, Some(0));
+        assert_eq!(start.bytes_done, Some(0));
+        assert_eq!(middle.phase_progress, Some(50));
+        assert_eq!(middle.bytes_done, Some(MOCK_BUNDLE_BYTES / 2));
+        assert_eq!(complete.phase_progress, Some(100));
+        assert_eq!(complete.bytes_done, complete.bytes_total);
+        assert!(!complete.signature_verified);
+    }
+
+    #[test]
+    fn update_mock_preserves_truthful_phase_boundaries() {
+        let verifying = mock_update_progress(Some(std::time::Duration::from_millis(4_001)));
+        assert_eq!(verifying.phase, UpdatePhase::Verifying);
+        assert_eq!(verifying.phase_progress, None);
+        assert_eq!(verifying.bytes_done, None);
+        assert_eq!(verifying.bytes_total, None);
+        assert!(!verifying.signature_verified);
+
+        let write_start = mock_update_progress(Some(MOCK_VERIFY_END));
+        let write_middle = mock_update_progress(Some(std::time::Duration::from_secs(8)));
+        let write_complete = mock_update_progress(Some(MOCK_WRITE_END));
+        assert_eq!(write_start.phase, UpdatePhase::Writing);
+        assert_eq!(write_start.phase_progress, None);
+        assert_eq!(write_middle.phase_progress, None);
+        assert_eq!(write_complete.phase_progress, None);
+        assert_eq!(write_start.overall_progress, Some(40));
+        assert_eq!(write_middle.overall_progress, Some(69));
+        assert_eq!(write_complete.overall_progress, Some(98));
+        assert!(write_start.signature_verified);
+
+        let finalizing = mock_update_progress(Some(std::time::Duration::from_millis(10_001)));
+        assert_eq!(finalizing.phase, UpdatePhase::Finalizing);
+        assert_eq!(finalizing.phase_progress, None);
+        assert!(finalizing.signature_verified);
+
+        let ready = mock_update_progress(Some(MOCK_FINALIZE_END));
+        assert_eq!(ready.phase, UpdatePhase::ReadyToReboot);
+        assert_eq!(ready.phase_progress, None);
+        assert_eq!(ready.bytes_done, None);
+        assert_eq!(ready.bytes_total, None);
+        assert!(ready.last_error.is_empty());
+        assert!(ready.signature_verified);
+        assert_eq!(
+            serde_json::to_value(ready).expect("mock terminal status should serialize"),
+            serde_json::json!({
+                "phase": "ready_to_reboot",
+                "phase_progress": null,
+                "overall_progress": null,
+                "bytes_done": null,
+                "bytes_total": null,
+                "detail": "Firmware installed and verified",
+                "last_error": "",
+                "signature_verified": true,
+            })
+        );
     }
 }

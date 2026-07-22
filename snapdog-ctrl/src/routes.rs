@@ -323,6 +323,7 @@ mod mock_handlers {
         AudioConfig, AudioInfo, AutoUpdateConfig, ClientConfig, EthernetConfig, EthernetInfo,
         LogsResponse, NetworkOverview, SshConfig, SystemInfo, SystemUpdate, TimezoneInfo,
         TimezoneUpdate, UpdateCheckResponse, UpdateStatus, WifiConfig, WifiInfo, WifiScanResult,
+        legacy_update_progress,
     };
 
     pub async fn get_system(State(m): State<crate::mock::MockState>) -> Json<SystemInfo> {
@@ -367,6 +368,7 @@ mod mock_handlers {
             latest_version: "9.9.9".into(),
             channel: "release".into(),
             is_downgrade: false,
+            trusted_keyring_available: true,
             signature_verified: true,
             bundle_url: "https://update.snapdog.cc/os/bundles/pi4.raucb".into(),
             staged_version: None,
@@ -412,11 +414,35 @@ mod mock_handlers {
         })
     }
     pub async fn get_update_status(State(m): State<crate::mock::MockState>) -> Json<UpdateStatus> {
-        // Scripted lifecycle so the dev UI exercises the real polling path: after a
-        // mock install is triggered, report "installing" with climbing progress for a
-        // few seconds, then "idle". Without this the frontend (which now polls until
-        // installing→idle) would never observe an install and hang until timeout.
-        Json(m.update_status().await)
+        // Scripted lifecycle so local development exercises the exact phased API
+        // contract without requiring RAUC or waiting for a real image write.
+        let progress = m.update_status().await;
+        let operation = if matches!(
+            progress.phase,
+            crate::update::UpdatePhase::Downloading
+                | crate::update::UpdatePhase::Verifying
+                | crate::update::UpdatePhase::Writing
+                | crate::update::UpdatePhase::Finalizing
+        ) {
+            "installing"
+        } else {
+            "idle"
+        };
+        let legacy_progress = legacy_update_progress(&progress);
+        Json(UpdateStatus {
+            operation: operation.into(),
+            progress: legacy_progress,
+            phase: progress.phase,
+            phase_progress: progress.phase_progress,
+            overall_progress: progress.overall_progress,
+            bytes_done: progress.bytes_done,
+            bytes_total: progress.bytes_total,
+            detail: progress.detail,
+            last_error: progress.last_error,
+            signature_verified: progress.signature_verified,
+            rolled_back: false,
+            slots: vec![],
+        })
     }
     pub async fn factory_reset(State(_m): State<crate::mock::MockState>) -> StatusCode {
         tracing::info!("[mock] factory reset");
@@ -818,8 +844,47 @@ async fn put_tuning(
 }
 
 async fn post_reboot() -> StatusCode {
-    system::reboot().await;
-    StatusCode::ACCEPTED
+    // Close the check/start race as well as refusing a reboot that would interrupt
+    // an active download, verification, or slot write.
+    let reboot_guard = match crate::update::reserve_upload() {
+        Ok(guard) => guard,
+        Err(error) => {
+            tracing::warn!(%error, "reboot refused during firmware operation");
+            return StatusCode::CONFLICT;
+        }
+    };
+    if let Err(status) = require_rauc_idle("reboot").await {
+        return status;
+    }
+    match system::reboot().await {
+        Ok(()) => {
+            // `systemctl reboot` may return once the request is accepted but before
+            // snapdog-ctrl is stopped. Keep firmware entry points locked meanwhile.
+            std::mem::forget(reboot_guard);
+            StatusCode::ACCEPTED
+        }
+        Err(error) => {
+            tracing::error!(%error, "reboot request failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
+}
+
+/// A controller restart drops the in-process firmware guard while RAUC continues
+/// writing in its own service. Destructive/rebooting endpoints therefore also
+/// require an authoritative idle state from RAUC before they proceed.
+async fn require_rauc_idle(action: &str) -> Result<(), StatusCode> {
+    match system::rauc_operation().await {
+        Ok(operation) if operation == "idle" => Ok(()),
+        Ok(operation) => {
+            tracing::warn!(%operation, %action, "request refused while RAUC is active");
+            Err(StatusCode::CONFLICT)
+        }
+        Err(error) => {
+            tracing::warn!(%error, %action, "request refused because RAUC state is unavailable");
+            Err(StatusCode::SERVICE_UNAVAILABLE)
+        }
+    }
 }
 
 // Serialized API DTO consumed by the web UI — the boolean fields mirror the
@@ -833,6 +898,11 @@ pub struct UpdateCheckResponse {
     pub latest_version: String,
     pub channel: String,
     pub is_downgrade: bool,
+    /// A trusted RAUC keyring is installed, so bundle verification can be performed.
+    /// This does not claim that a not-yet-downloaded bundle was already verified.
+    pub trusted_keyring_available: bool,
+    /// Deprecated compatibility alias. Older cached `WebUIs` used this misleading
+    /// name for keyring availability before per-operation verification existed.
     pub signature_verified: bool,
     pub bundle_url: String,
     /// Version already installed to the boot slot and awaiting a reboot to activate
@@ -844,8 +914,16 @@ pub struct UpdateCheckResponse {
 #[derive(Serialize)]
 pub struct UpdateStatus {
     pub operation: String,
+    /// Deprecated compatibility view for cached `WebUIs` using the pre-phased API.
     pub progress: Option<crate::rauc::InstallProgress>,
+    pub phase: crate::update::UpdatePhase,
+    pub phase_progress: Option<u8>,
+    pub overall_progress: Option<u8>,
+    pub bytes_done: Option<u64>,
+    pub bytes_total: Option<u64>,
+    pub detail: String,
     pub last_error: String,
+    pub signature_verified: bool,
     /// True when the most recently installed bundle failed to boot and the
     /// bootloader auto-reverted to the previous slot (a persisted failed-update
     /// marker). Lets the UI surface a rollback that happened while it was offline.
@@ -853,31 +931,115 @@ pub struct UpdateStatus {
     pub slots: Vec<crate::rauc::SlotStatus>,
 }
 
+fn legacy_update_progress(
+    progress: &crate::update::UpdateProgress,
+) -> Option<crate::rauc::InstallProgress> {
+    let percentage = progress.phase_progress.or(progress.overall_progress)?;
+    Some(crate::rauc::InstallProgress {
+        percentage: i32::from(percentage),
+        message: progress.detail.clone(),
+        depth: 0,
+    })
+}
+
 async fn get_update_check() -> Json<UpdateCheckResponse> {
     Json(system::check_update().await)
 }
 
 async fn get_update_status() -> Result<Json<UpdateStatus>, StatusCode> {
-    let operation = system::rauc_operation()
-        .await
-        .unwrap_or_else(|_| "unknown".into());
-    let progress = if operation == "installing" {
-        system::rauc_progress().await.ok()
-    } else {
+    let mut snapshot = crate::update::snapshot().await;
+    let coordinator_active = crate::update::is_active();
+    // During a coordinated update our in-process state is authoritative. Avoid a
+    // new system-bus connection on every UI poll (and keep download telemetry
+    // available even if RAUC has not started yet or D-Bus is temporarily busy).
+    let rauc = if coordinator_active {
         None
+    } else {
+        crate::rauc::Rauc::connect().await.ok()
     };
-    // Await the property read: `now_or_never` polled the pending D-Bus Get once and
-    // almost always got `""`, so a genuine async install failure was never surfaced.
-    let last_error = match crate::rauc::Rauc::connect().await {
-        Ok(r) => r.last_error().await.unwrap_or_default(),
-        Err(_) => String::new(),
+    let raw_operation = if coordinator_active {
+        "installing".into()
+    } else {
+        match &rauc {
+            Some(rauc) => rauc.operation().await.unwrap_or_else(|_| "unknown".into()),
+            None => "unknown".into(),
+        }
+    };
+    let rauc_installing = raw_operation == "installing";
+    let rauc_idle = raw_operation == "idle";
+
+    // If ctrl restarted while RAUC kept installing, reconstruct a truthful phase
+    // from the live D-Bus properties until the next terminal state is observed.
+    if !coordinator_active
+        && rauc_installing
+        && let Some(rauc) = &rauc
+    {
+        let progress = rauc.progress().await.ok();
+        snapshot = crate::update::observe_rauc_install(rauc, progress.as_ref()).await;
+    }
+
+    let operation = if coordinator_active || rauc_installing {
+        "installing".into()
+    } else {
+        raw_operation
     };
     let rolled_back = system::last_failed_update().await.is_some();
-    let slots = system::rauc_slot_status().await.unwrap_or_default();
+    // Slot inspection is comparatively expensive and unrelated to byte progress;
+    // keep the active polling endpoint lightweight.
+    let (slots, slot_status_reliable) = if operation == "installing" {
+        (Vec::new(), false)
+    } else {
+        match &rauc {
+            Some(rauc) => match rauc.slot_status().await {
+                Ok(slots) => (slots, true),
+                Err(error) => {
+                    tracing::warn!(%error, "RAUC slot status unavailable during update recovery");
+                    (Vec::new(), false)
+                }
+            },
+            None => (Vec::new(), false),
+        }
+    };
+    if !coordinator_active
+        && rauc_idle
+        && let Some(rauc) = &rauc
+    {
+        let current_last_error = rauc.last_error().await.unwrap_or_default();
+        let pending_boot_slot = if slot_status_reliable {
+            rauc.primary().await.ok().map(|primary| {
+                slots
+                    .iter()
+                    .any(|slot| slot.name == primary && !slot.booted)
+            })
+        } else {
+            None
+        };
+        if let Some(recovered) =
+            crate::update::recover_rauc_terminal(&current_last_error, pending_boot_slot).await
+        {
+            snapshot = recovered;
+        }
+    } else if !coordinator_active
+        && !rauc_installing
+        && let Some(recovered) = crate::update::recover_rauc_terminal("", None).await
+    {
+        // D-Bus may be temporarily unavailable while RAUC or the controller is
+        // restarting. Retain the marker-derived active/terminal state rather than
+        // collapsing to idle and letting the UI infer a false success.
+        snapshot = recovered;
+    }
+    let legacy_progress = legacy_update_progress(&snapshot);
     Ok(Json(UpdateStatus {
         operation,
-        progress,
-        last_error,
+        progress: legacy_progress,
+        phase: snapshot.phase,
+        phase_progress: snapshot.phase_progress,
+        overall_progress: snapshot.overall_progress,
+        bytes_done: snapshot.bytes_done,
+        bytes_total: snapshot.bytes_total,
+        detail: snapshot.detail,
+        last_error: snapshot.last_error,
+        signature_verified: snapshot.signature_verified,
         rolled_back,
         slots,
     }))
@@ -915,76 +1077,121 @@ async fn post_update() -> StatusCode {
     // A concurrent install (e.g. a reload + a second "Install") would make RAUC
     // error out — surface a clean 409 instead of a 500 so the UI can say "already
     // installing" rather than "update failed".
-    if matches!(system::rauc_operation().await.as_deref(), Ok("installing")) {
+    if crate::update::is_busy()
+        || matches!(system::rauc_operation().await.as_deref(), Ok("installing"))
+    {
         return StatusCode::CONFLICT;
     }
-    // Install from the channel's bundle URL
+    // Stage the channel bundle ourselves so download bytes are observable, then
+    // hand the verified local file to RAUC for installation.
     let config = system::get_auto_update().await;
     let url = system::bundle_url(&config.channel).await;
-    if let Err(e) = system::rauc_install(&url).await {
-        tracing::error!("post_update: {e}");
-        return StatusCode::INTERNAL_SERVER_ERROR;
+    match crate::update::start_online(url).await {
+        Ok(()) => StatusCode::ACCEPTED,
+        Err(error) => {
+            tracing::error!(%error, "post_update failed");
+            StatusCode::CONFLICT
+        }
     }
-    StatusCode::ACCEPTED
 }
 
-/// Where the uploaded RAUC bundle is staged. Must live on a mount shared with the
-/// rauc D-Bus service — NOT /tmp: snapdog-ctrl runs with `PrivateTmp=yes`, so a
-/// bundle written to its private /tmp is invisible to rauc (install fails with
-/// "No such file or directory"). The writable /data partition is shared by all
-/// services and has ample space.
-const UPDATE_BUNDLE_PATH: &str = "/data/update.raucb";
-
+/// The uploaded RAUC bundle is staged on the writable data partition, where it has
+/// enough space and remains available to the separate RAUC service for the full
+/// asynchronous installation.
 async fn post_update_upload(
     mut multipart: axum::extract::Multipart,
 ) -> Result<StatusCode, StatusCode> {
     use tokio::io::AsyncWriteExt;
 
-    let dest = UPDATE_BUNDLE_PATH;
+    // Acquire before checking RAUC so every controller-owned start path is blocked
+    // for the complete multipart stream. The guard deliberately does not advertise
+    // an active install; the browser reports upload progress directly.
+    let _upload_guard = crate::update::reserve_upload().map_err(|error| {
+        tracing::warn!(%error, "manual firmware upload refused");
+        StatusCode::CONFLICT
+    })?;
+    if matches!(system::rauc_operation().await.as_deref(), Ok("installing")) {
+        return Err(StatusCode::CONFLICT);
+    }
+
+    let dest = crate::update::UPDATE_BUNDLE_PATH;
+    let part = crate::update::UPDATE_BUNDLE_PART_PATH;
+    let _ = tokio::fs::remove_file(part).await;
+    // A previous completed/failed attempt is never needed once a replacement
+    // upload begins. Removing it first avoids requiring space for two full bundles
+    // on devices whose data partition could not be expanded on first boot.
     let _ = tokio::fs::remove_file(dest).await;
 
-    let mut file = match tokio::fs::File::create(dest).await {
-        Ok(f) => f,
-        Err(e) => {
-            tracing::error!("Failed to create {dest}: {e}");
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    };
+    let result = async {
+        let mut file = tokio::fs::File::create(part).await.map_err(|error| {
+            tracing::error!(%error, "failed to create manual firmware upload");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        let mut uploaded = 0_u64;
 
-    while let Some(mut field) = multipart.next_field().await.map_err(|e| {
-        tracing::error!("upload: reading multipart failed: {e}");
-        StatusCode::BAD_REQUEST
-    })? {
-        // Drain the field explicitly so a stream error (e.g. a dropped
-        // connection) fails the request instead of silently truncating the file
-        // and returning success — a partial bundle makes rauc reject the install.
-        loop {
-            match field.chunk().await {
-                Ok(Some(chunk)) => {
-                    if let Err(e) = file.write_all(&chunk).await {
-                        tracing::error!("upload: write chunk failed: {e}");
-                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        while let Some(mut field) = multipart.next_field().await.map_err(|error| {
+            tracing::error!(%error, "upload: reading multipart failed");
+            StatusCode::BAD_REQUEST
+        })? {
+            // Drain every field explicitly so a dropped connection cannot publish
+            // a truncated bundle as a successful upload.
+            loop {
+                match field.chunk().await {
+                    Ok(Some(chunk)) => {
+                        let chunk_len = u64::try_from(chunk.len()).map_err(|error| {
+                            tracing::error!(%error, "upload chunk length overflow");
+                            StatusCode::PAYLOAD_TOO_LARGE
+                        })?;
+                        uploaded = uploaded.checked_add(chunk_len).ok_or_else(|| {
+                            tracing::warn!("manual firmware upload size overflow");
+                            StatusCode::PAYLOAD_TOO_LARGE
+                        })?;
+                        if uploaded > crate::update::MAX_BUNDLE_BYTES {
+                            tracing::warn!(uploaded, "manual firmware upload exceeds 1 GiB");
+                            return Err(StatusCode::PAYLOAD_TOO_LARGE);
+                        }
+                        file.write_all(&chunk).await.map_err(|error| {
+                            tracing::error!(%error, "upload: write chunk failed");
+                            StatusCode::INTERNAL_SERVER_ERROR
+                        })?;
                     }
-                }
-                Ok(None) => break,
-                Err(e) => {
-                    tracing::error!("upload: reading chunk failed: {e}");
-                    return Err(StatusCode::BAD_REQUEST);
+                    Ok(None) => break,
+                    Err(error) => {
+                        tracing::error!(%error, "upload: reading chunk failed");
+                        return Err(StatusCode::BAD_REQUEST);
+                    }
                 }
             }
         }
-    }
 
-    if let Err(e) = file.flush().await {
-        tracing::error!("upload: flush failed: {e}");
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        file.flush().await.map_err(|error| {
+            tracing::error!(%error, "upload: flush failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        file.sync_all().await.map_err(|error| {
+            tracing::error!(%error, "upload: sync failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        drop(file);
+        tokio::fs::rename(part, dest).await.map_err(|error| {
+            tracing::error!(%error, "failed to publish manual firmware upload");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        Ok(StatusCode::OK)
     }
-    Ok(StatusCode::OK)
+    .await;
+
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(part).await;
+    }
+    result
 }
 
 async fn post_update_install() -> StatusCode {
     // Refuse a concurrent install with 409 rather than a RAUC 500 (see post_update).
-    if matches!(system::rauc_operation().await.as_deref(), Ok("installing")) {
+    if crate::update::is_busy()
+        || matches!(system::rauc_operation().await.as_deref(), Ok("installing"))
+    {
         return StatusCode::CONFLICT;
     }
     // Install the uploaded bundle (staged on shared /data, see UPDATE_BUNDLE_PATH).
@@ -993,11 +1200,13 @@ async fn post_update_install() -> StatusCode {
     // staged bundle here — rauc reads it in the background and removing it mid-install
     // fails with "No such file". The next upload clears the stale bundle before
     // writing a new one.
-    if let Err(e) = system::rauc_install(UPDATE_BUNDLE_PATH).await {
-        tracing::error!("post_update_install: {e}");
-        return StatusCode::INTERNAL_SERVER_ERROR;
+    match crate::update::start_local(crate::update::UPDATE_BUNDLE_PATH).await {
+        Ok(()) => StatusCode::ACCEPTED,
+        Err(error) => {
+            tracing::error!(%error, "post_update_install failed");
+            StatusCode::CONFLICT
+        }
     }
-    StatusCode::ACCEPTED
 }
 
 // --- Raw Flash (Escape Hatch) ---
@@ -1011,6 +1220,8 @@ struct PendingFlash {
 }
 
 const RAW_FLASH_CHALLENGE_TTL_SECONDS: u64 = 120;
+const RAW_FLASH_IMAGE_PATH: &str = "/data/pending-flash.img.gz";
+const RAW_FLASH_PART_PATH: &str = "/data/pending-flash.img.gz.part";
 
 static PENDING_FLASH: OnceLock<Mutex<Option<PendingFlash>>> = OnceLock::new();
 
@@ -1027,23 +1238,95 @@ struct FlashChallengeResponse {
 async fn post_flash_raw_upload(
     mut multipart: axum::extract::Multipart,
 ) -> Result<Json<FlashChallengeResponse>, StatusCode> {
-    let dest = "/tmp/pending-flash.img.gz";
-    let _ = tokio::fs::remove_file(dest).await;
+    use tokio::io::AsyncWriteExt;
 
-    let mut file = tokio::fs::File::create(dest).await.map_err(|e| {
-        tracing::error!("flash-raw create: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
+    let _upload_guard = crate::update::reserve_upload().map_err(|error| {
+        tracing::warn!(%error, "raw firmware upload refused");
+        StatusCode::CONFLICT
     })?;
-
-    while let Ok(Some(mut field)) = multipart.next_field().await {
-        while let Ok(Some(chunk)) = field.chunk().await {
-            use tokio::io::AsyncWriteExt;
-            file.write_all(&chunk).await.map_err(|e| {
-                tracing::error!("flash-raw write: {e}");
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
-        }
+    if matches!(system::rauc_operation().await.as_deref(), Ok("installing")) {
+        return Err(StatusCode::CONFLICT);
     }
+
+    let dest = RAW_FLASH_IMAGE_PATH;
+    let part = RAW_FLASH_PART_PATH;
+    // A valid challenge represents a complete image waiting for deliberate user
+    // confirmation. Do not silently replace it with another upload.
+    {
+        let mut pending = flash_lock().lock().await;
+        if pending
+            .as_ref()
+            .is_some_and(|flash| flash.expires > std::time::Instant::now())
+        {
+            return Err(StatusCode::CONFLICT);
+        }
+        *pending = None;
+    }
+    let _ = tokio::fs::remove_file(part).await;
+
+    let upload_result = async {
+        let mut file = tokio::fs::File::create(part).await.map_err(|error| {
+            tracing::error!(%error, "flash-raw create failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+        let mut uploaded = 0_u64;
+        while let Some(mut field) = multipart.next_field().await.map_err(|error| {
+            tracing::error!(%error, "flash-raw multipart read failed");
+            StatusCode::BAD_REQUEST
+        })? {
+            loop {
+                match field.chunk().await {
+                    Ok(Some(chunk)) => {
+                        let chunk_len = u64::try_from(chunk.len()).map_err(|error| {
+                            tracing::error!(%error, "raw flash chunk length overflow");
+                            StatusCode::PAYLOAD_TOO_LARGE
+                        })?;
+                        uploaded = uploaded.checked_add(chunk_len).ok_or_else(|| {
+                            tracing::warn!("raw flash upload size overflow");
+                            StatusCode::PAYLOAD_TOO_LARGE
+                        })?;
+                        if uploaded > crate::update::MAX_BUNDLE_BYTES {
+                            tracing::warn!(uploaded, "raw flash upload exceeds 1 GiB");
+                            return Err(StatusCode::PAYLOAD_TOO_LARGE);
+                        }
+                        file.write_all(&chunk).await.map_err(|error| {
+                            tracing::error!(%error, "flash-raw write failed");
+                            StatusCode::INTERNAL_SERVER_ERROR
+                        })?;
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        tracing::error!(%error, "flash-raw field read failed");
+                        return Err(StatusCode::BAD_REQUEST);
+                    }
+                }
+            }
+        }
+        if uploaded == 0 {
+            tracing::warn!("empty raw flash upload refused");
+            return Err(StatusCode::BAD_REQUEST);
+        }
+
+        file.flush().await.map_err(|error| {
+            tracing::error!(%error, "flash-raw flush failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        file.sync_all().await.map_err(|error| {
+            tracing::error!(%error, "flash-raw sync failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        drop(file);
+        tokio::fs::rename(part, dest).await.map_err(|error| {
+            tracing::error!(%error, "flash-raw publish failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })
+    }
+    .await;
+    if upload_result.is_err() {
+        let _ = tokio::fs::remove_file(part).await;
+    }
+    upload_result?;
 
     // Generate challenge
     let challenge = rand::distr::Alphanumeric
@@ -1078,26 +1361,60 @@ async fn post_flash_raw_confirm(Json(body): Json<FlashConfirmRequest>) -> Status
         return StatusCode::FORBIDDEN;
     }
 
-    // Consume the challenge
+    // Keep the valid challenge retryable when another firmware operation is busy.
+    // Acquiring while holding the challenge lock prevents two simultaneous confirms
+    // from both passing validation and starting writes.
+    let update_guard = match crate::update::reserve_upload() {
+        Ok(guard) => guard,
+        Err(error) => {
+            tracing::warn!(%error, "raw firmware flash refused");
+            return StatusCode::CONFLICT;
+        }
+    };
+    if let Err(status) = require_rauc_idle("raw flash").await {
+        return status;
+    }
+
+    // Consume the challenge only after exclusive firmware ownership is secured.
     *lock = None;
     drop(lock);
 
-    // Flash to inactive partition
-    tokio::spawn(async {
-        if let Err(e) = system::flash_raw_image("/tmp/pending-flash.img.gz").await {
-            tracing::error!("flash-raw failed: {e}");
+    // Keep this asynchronous for the established API contract: the CLI's regular
+    // request client has a 30-second timeout, while a full slot write can take much
+    // longer. The guard remains owned by the task until both gzip and dd exit.
+    tokio::spawn(async move {
+        if let Err(error) = system::flash_raw_image(RAW_FLASH_IMAGE_PATH).await {
+            tracing::error!(%error, "flash-raw failed");
         }
+        drop(update_guard);
     });
 
     StatusCode::ACCEPTED
 }
 
 async fn post_factory_reset() -> StatusCode {
-    if let Err(e) = system::factory_reset().await {
-        tracing::error!("post_factory_reset: {e}");
-        return StatusCode::INTERNAL_SERVER_ERROR;
+    let reset_guard = match crate::update::reserve_upload() {
+        Ok(guard) => guard,
+        Err(error) => {
+            tracing::warn!(%error, "factory reset refused during firmware operation");
+            return StatusCode::CONFLICT;
+        }
+    };
+    if let Err(status) = require_rauc_idle("factory reset").await {
+        return status;
     }
-    StatusCode::ACCEPTED
+    match system::factory_reset().await {
+        Ok(()) => {
+            // The reset already requested a reboot; keep firmware locked until the
+            // process exits, just as for the dedicated reboot endpoint.
+            std::mem::forget(reset_guard);
+            StatusCode::ACCEPTED
+        }
+        Err(error) => {
+            tracing::error!(%error, "factory reset failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
 }
 
 async fn get_logs(Query(query): Query<LogsQuery>) -> Json<LogsResponse> {
@@ -1550,6 +1867,24 @@ async fn post_settings_preview(body: axum::body::Bytes) -> impl IntoResponse {
 }
 
 async fn post_settings_import(body: axum::body::Bytes) -> impl IntoResponse {
+    let reboot_guard = match crate::update::reserve_upload() {
+        Ok(guard) => guard,
+        Err(error) => {
+            tracing::warn!(%error, "settings import refused during firmware operation");
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({"error": "firmware update in progress"})),
+            )
+                .into_response();
+        }
+    };
+    if let Err(status) = require_rauc_idle("settings import").await {
+        return (
+            status,
+            Json(serde_json::json!({"error": "RAUC state is not idle"})),
+        )
+            .into_response();
+    }
     if let Err(e) = crate::settings::import_settings(&body) {
         tracing::error!("settings import failed: {e}");
         return (
@@ -1560,9 +1895,12 @@ async fn post_settings_import(body: axum::body::Bytes) -> impl IntoResponse {
     }
 
     tracing::info!("Settings imported, rebooting in 1s");
-    tokio::spawn(async {
+    tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        let _ = tokio::process::Command::new("reboot").output().await;
+        match system::reboot().await {
+            Ok(()) => std::mem::forget(reboot_guard),
+            Err(error) => tracing::error!(%error, "settings-import reboot failed"),
+        }
     });
 
     Json(serde_json::json!({"status": "ok", "rebooting": true})).into_response()

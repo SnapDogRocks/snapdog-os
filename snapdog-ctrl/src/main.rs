@@ -24,6 +24,7 @@ mod settings;
 #[cfg_attr(debug_assertions, allow(dead_code))]
 mod system;
 mod tuning;
+mod update;
 mod ws;
 
 use axum::Router;
@@ -103,6 +104,7 @@ async fn build_app() -> Router {
     let health_state = routes::HealthState(std::sync::Arc::new(vec![]));
 
     let (tx, _rx) = tokio::sync::broadcast::channel::<String>(100);
+    update::set_broadcaster(tx.clone());
     let ws_sender = ws::WsSender(tx);
 
     Router::new()
@@ -212,8 +214,9 @@ async fn build_app() -> Router {
                 tracing::info!(
                     "config.txt: removed EEPROM-disabling lines — rebooting so the firmware reads the HAT EEPROM"
                 );
-                system::reboot().await;
-                return Router::new();
+                if request_safe_startup_reboot("EEPROM settings").await {
+                    return Router::new();
+                }
             }
             Ok(false) => {}
             Err(e) => tracing::warn!("config.txt EEPROM reconcile failed: {e}"),
@@ -224,8 +227,9 @@ async fn build_app() -> Router {
             tracing::info!("DAC detected and configured — rebooting to activate");
             // Use the tryboot-aware reboot so a DAC-detect reboot during an OTA
             // trial re-enters the trial (rather than reverting a good update).
-            system::reboot().await;
-            return Router::new(); // unreachable, but satisfies return type
+            if request_safe_startup_reboot("DAC detection").await {
+                return Router::new(); // process stops after the accepted reboot
+            }
         }
 
         // Apply service config (start/stop ssh, client, server based on ctrl.toml)
@@ -244,6 +248,7 @@ async fn build_app() -> Router {
     let auth_state = auth::AuthState::load().await;
 
     let (tx, _rx) = tokio::sync::broadcast::channel::<String>(100);
+    update::set_broadcaster(tx.clone());
     let ws_sender = ws::WsSender(tx.clone());
 
     // Start MPRIS2 poller if client is enabled
@@ -278,4 +283,28 @@ async fn build_app() -> Router {
         .layer(CompressionLayer::new())
         .layer(axum::Extension(now_playing))
         .layer(TraceLayer::new_for_http())
+}
+
+/// Controller restarts do not stop the separate RAUC service. One-time startup
+/// migrations must therefore defer their reboot if a recovered install is still
+/// writing, or if that state cannot be checked authoritatively.
+#[cfg(not(debug_assertions))]
+async fn request_safe_startup_reboot(reason: &str) -> bool {
+    match system::rauc_operation().await {
+        Ok(operation) if operation == "idle" => match system::reboot().await {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::error!(%error, %reason, "startup reboot failed");
+                false
+            }
+        },
+        Ok(operation) => {
+            tracing::warn!(%operation, %reason, "startup reboot deferred while RAUC is active");
+            false
+        }
+        Err(error) => {
+            tracing::warn!(%error, %reason, "startup reboot deferred because RAUC state is unavailable");
+            false
+        }
+    }
 }

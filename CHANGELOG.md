@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/SnapDogRocks/snapdog-os/compare/v0.13.1...v0.14.0) (2026-07-22)
+
+
+### Features
+
+* **release:** publish installer release catalogs ([#125](https://github.com/SnapDogRocks/snapdog-os/issues/125)) ([19e910b](https://github.com/SnapDogRocks/snapdog-os/commit/19e910bf3fd6f164832f62fc82c4b3b4350fe900))
+
 ## [0.13.1](https://github.com/SnapDogRocks/snapdog-os/compare/v0.13.0...v0.13.1) (2026-07-22)
 
 

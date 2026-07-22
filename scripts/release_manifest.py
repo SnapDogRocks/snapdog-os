@@ -26,6 +26,8 @@ from urllib.parse import quote, unquote, urlparse
 BOARDS = ("pi3", "pi4", "pi5", "zero2w")
 CHANNELS = ("release", "beta")
 SCHEMA_VERSION = 2
+CATALOG_SCHEMA_VERSION = 1
+MAX_CATALOG_RELEASES = 20
 CHUNK_SIZE = 1024 * 1024
 
 SEMVER_RE = re.compile(
@@ -348,6 +350,90 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
         )
 
 
+def _semver_key(value: str) -> tuple[Any, ...]:
+    """Return a precedence key compatible with SemVer ordering."""
+    precedence = value.split("+", 1)[0]
+    core, separator, prerelease = precedence.partition("-")
+    major, minor, patch = (int(part) for part in core.split("."))
+    if not separator:
+        return (major, minor, patch, 1, ())
+    identifiers = tuple(
+        (0, int(identifier)) if identifier.isdigit() else (1, identifier)
+        for identifier in prerelease.split(".")
+    )
+    return (major, minor, patch, 0, identifiers)
+
+
+def validate_catalog(catalog: dict[str, Any]) -> None:
+    """Validate a bounded, newest-first catalog of complete v2 manifests."""
+    _require(
+        catalog.get("schema_version") == CATALOG_SCHEMA_VERSION,
+        f"catalog: schema_version must be {CATALOG_SCHEMA_VERSION}",
+    )
+    channel = catalog.get("channel")
+    _require(channel in CHANNELS, f"catalog: unsupported channel {channel!r}")
+    releases = catalog.get("releases")
+    _require(isinstance(releases, list), "catalog: releases must be an array")
+    _require(
+        0 < len(releases) <= MAX_CATALOG_RELEASES,
+        f"catalog: releases must contain 1..{MAX_CATALOG_RELEASES} entries",
+    )
+    versions: list[str] = []
+    for index, manifest in enumerate(releases):
+        _require(
+            isinstance(manifest, dict),
+            f"catalog: release {index} must be a manifest object",
+        )
+        validate_manifest(manifest)
+        _require(
+            manifest.get("channel") == channel,
+            f"catalog: release {index} channel must be {channel!r}",
+        )
+        versions.append(manifest["version"])
+    _require(len(set(versions)) == len(versions), "catalog: duplicate release version")
+    _require(
+        versions == sorted(versions, key=_semver_key, reverse=True),
+        "catalog: releases must be sorted by descending SemVer",
+    )
+
+
+def create_catalog(
+    *,
+    channel: str,
+    manifest: dict[str, Any],
+    previous: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Merge a verified manifest into a bounded channel catalog."""
+    _require(channel in CHANNELS, f"unsupported channel {channel!r}")
+    validate_manifest(manifest)
+    _require(
+        manifest.get("channel") == channel,
+        f"manifest channel must be {channel!r}",
+    )
+    releases: list[dict[str, Any]] = []
+    if previous is not None:
+        validate_catalog(previous)
+        _require(
+            previous.get("channel") == channel,
+            f"previous catalog channel must be {channel!r}",
+        )
+        releases.extend(previous["releases"])
+    releases = [
+        release
+        for release in releases
+        if release.get("version") != manifest.get("version")
+    ]
+    releases.append(manifest)
+    releases.sort(key=lambda release: _semver_key(release["version"]), reverse=True)
+    catalog = {
+        "schema_version": CATALOG_SCHEMA_VERSION,
+        "channel": channel,
+        "releases": releases[:MAX_CATALOG_RELEASES],
+    }
+    validate_catalog(catalog)
+    return catalog
+
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -376,6 +462,19 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "validate", help="validate an existing public manifest"
     )
     validate.add_argument("--manifest", required=True, type=Path)
+
+    catalog = commands.add_parser(
+        "catalog", help="merge a manifest into a public release catalog"
+    )
+    catalog.add_argument("--channel", required=True, choices=CHANNELS)
+    catalog.add_argument("--manifest", required=True, type=Path)
+    catalog.add_argument("--previous", type=Path)
+    catalog.add_argument("--output", required=True, type=Path)
+
+    validate_catalog_command = commands.add_parser(
+        "validate-catalog", help="validate an existing public release catalog"
+    )
+    validate_catalog_command.add_argument("--catalog", required=True, type=Path)
     return parser.parse_args(argv)
 
 
@@ -400,8 +499,17 @@ def main(argv: list[str] | None = None) -> int:
                 metadata_paths=args.metadata,
             )
             _write_json(args.output, value)
-        else:
+        elif args.command == "validate":
             validate_manifest(_read_json(args.manifest))
+        elif args.command == "catalog":
+            value = create_catalog(
+                channel=args.channel,
+                manifest=_read_json(args.manifest),
+                previous=_read_json(args.previous) if args.previous else None,
+            )
+            _write_json(args.output, value)
+        else:
+            validate_catalog(_read_json(args.catalog))
     except ManifestError as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 2

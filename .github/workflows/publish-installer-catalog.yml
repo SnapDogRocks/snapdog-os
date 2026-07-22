@@ -1,0 +1,88 @@
+# Backfill installer catalogs without rebuilding SnapDog OS images.
+name: Publish installer catalog
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Channel to publish
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - release
+          - beta
+
+permissions:
+  contents: read
+
+env:
+  R2_BUCKET: snapdog-updates
+
+jobs:
+  publish:
+    name: Publish ${{ matrix.channel }} catalog
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: r2-maintenance
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: ${{ fromJSON(inputs.channel == 'all' && '["release","beta"]' || format('["{0}"]', inputs.channel)) }}
+    environment:
+      name: ${{ matrix.channel == 'release' && 'stable' || 'beta' }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install publish tools
+        run: |
+          if ! aws --version 2>/dev/null; then
+            curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscli.zip
+            unzip -q /tmp/awscli.zip -d /tmp && sudo /tmp/aws/install
+          fi
+
+      - name: Publish validated catalog
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          AWS_DEFAULT_REGION: auto
+          CHANNEL: ${{ matrix.channel }}
+        run: |
+          set -euo pipefail
+
+          test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "Missing R2_ACCESS_KEY_ID"; exit 1; }
+          test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "Missing R2_SECRET_ACCESS_KEY"; exit 1; }
+          test -n "${AWS_ENDPOINT_URL:-}" || { echo "Missing R2_ENDPOINT_URL"; exit 1; }
+
+          aws s3 cp "s3://${R2_BUCKET}/os/images/latest-${CHANNEL}.json" latest.json \
+            --endpoint-url "$AWS_ENDPOINT_URL"
+          python3 scripts/release_manifest.py validate --manifest latest.json
+          test "$(jq -r '.schema_version')" = "2"
+          test "$(jq -r '.channel')" = "$CHANNEL"
+          VERSION=$(jq -r '.version' latest.json)
+
+          CATALOG="catalog-${CHANNEL}.json"
+          PREVIOUS_ARGS=()
+          if aws s3 cp "s3://${R2_BUCKET}/os/images/${CATALOG}" previous-catalog.json \
+               --endpoint-url "$AWS_ENDPOINT_URL" 2>/dev/null; then
+            PREVIOUS_ARGS=(--previous previous-catalog.json)
+          fi
+          python3 scripts/release_manifest.py catalog \
+            --channel "$CHANNEL" \
+            --manifest latest.json \
+            "${PREVIOUS_ARGS[@]}" \
+            --output "$CATALOG"
+          python3 scripts/release_manifest.py validate-catalog --catalog "$CATALOG"
+
+          aws s3 cp latest.json \
+            "s3://${R2_BUCKET}/os/images/manifests/${CHANNEL}/${VERSION}.json" \
+            --cache-control "public, max-age=31536000, immutable" \
+            --content-type "application/json" \
+            --endpoint-url "$AWS_ENDPOINT_URL"
+          aws s3 cp "$CATALOG" "s3://${R2_BUCKET}/os/images/${CATALOG}" \
+            --cache-control "public, max-age=60" \
+            --content-type "application/json" \
+            --endpoint-url "$AWS_ENDPOINT_URL"

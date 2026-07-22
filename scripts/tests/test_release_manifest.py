@@ -16,8 +16,10 @@ from release_manifest import (  # noqa: E402
     BOARDS,
     ManifestError,
     create_board_metadata,
+    create_catalog,
     create_manifest,
     main,
+    validate_catalog,
     validate_manifest,
 )
 
@@ -256,6 +258,78 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertEqual(main(["validate", "--manifest", str(output)]), 0)
         self.assertEqual(
             json.loads(output.read_text(encoding="utf-8"))["schema_version"], 2
+        )
+
+    def test_catalog_is_newest_first_and_replaces_matching_version(self) -> None:
+        current = self._manifest()
+        older = deepcopy(current)
+        older["version"] = "1.2.2"
+        older["date"] = "2026-07-18T12:34:56Z"
+        for board, entry in older["boards"].items():
+            entry["url"] = f"{BASE_URL}/snapdog-os-{board}-1.2.2.img.gz"
+
+        catalog = create_catalog(channel="release", manifest=older)
+        catalog = create_catalog(
+            channel="release", manifest=current, previous=catalog
+        )
+        self.assertEqual(
+            [release["version"] for release in catalog["releases"]],
+            [VERSION, "1.2.2"],
+        )
+
+        replacement = deepcopy(current)
+        replacement["date"] = "2026-07-20T12:34:56Z"
+        catalog = create_catalog(
+            channel="release", manifest=replacement, previous=catalog
+        )
+        self.assertEqual(len(catalog["releases"]), 2)
+        self.assertEqual(catalog["releases"][0]["date"], replacement["date"])
+        validate_catalog(catalog)
+
+    def test_catalog_rejects_wrong_channel_duplicates_and_order(self) -> None:
+        manifest = self._manifest()
+        catalog = create_catalog(channel="release", manifest=manifest)
+
+        wrong_channel = deepcopy(catalog)
+        wrong_channel["channel"] = "beta"
+        with self.assertRaisesRegex(ManifestError, "channel"):
+            validate_catalog(wrong_channel)
+
+        duplicate = deepcopy(catalog)
+        duplicate["releases"].append(deepcopy(manifest))
+        with self.assertRaisesRegex(ManifestError, "duplicate"):
+            validate_catalog(duplicate)
+
+        newer = deepcopy(manifest)
+        newer["version"] = "1.2.4"
+        for board, entry in newer["boards"].items():
+            entry["url"] = f"{BASE_URL}/snapdog-os-{board}-1.2.4.img.gz"
+        unsorted = deepcopy(catalog)
+        unsorted["releases"].append(newer)
+        with self.assertRaisesRegex(ManifestError, "descending SemVer"):
+            validate_catalog(unsorted)
+
+    def test_catalog_command_line_round_trip(self) -> None:
+        manifest_path = self.root / "latest-release.json"
+        manifest_path.write_text(json.dumps(self._manifest()), encoding="utf-8")
+        catalog_path = self.root / "catalog-release.json"
+
+        self.assertEqual(
+            main(
+                [
+                    "catalog",
+                    "--channel",
+                    "release",
+                    "--manifest",
+                    str(manifest_path),
+                    "--output",
+                    str(catalog_path),
+                ]
+            ),
+            0,
+        )
+        self.assertEqual(
+            main(["validate-catalog", "--catalog", str(catalog_path)]), 0
         )
 
 

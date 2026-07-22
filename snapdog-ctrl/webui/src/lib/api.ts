@@ -216,10 +216,7 @@ export interface ZoneKnxGos {
   presence?: string | null;
   presence_enable?: string | null;
   presence_enable_status?: string | null;
-  presence_timeout?: string | null;
-  presence_timeout_status?: string | null;
   presence_timer_status?: string | null;
-  presence_source_override?: string | null;
 }
 
 export interface ClientKnxGos {
@@ -237,19 +234,24 @@ export interface ClientKnxGos {
 }
 
 export interface ServerConfig {
+  revision: string;
+  raw_toml: string;
+  raw_toml_changed?: boolean;
   name: string;
-  http: { api_keys: string[] };
+  http: { port: number; bind: string; base_url: string; tls_cert: string | null; tls_key: string | null; api_keys: string[]; api_docs: boolean };
   audio: { sample_rate: number; bit_depth: number; channels: number; source_conflict: string; zone_switch_fade_ms: number; source_switch_fade_ms: number };
-  snapcast: { streaming_port: number; codec: string; encryption_psk: string | null; group_volume_mode: string; unknown_clients: string; default_zone: string; mdns_name: string; advertise_snapcast: boolean };
-  subsonic: { url: string; username: string; password: string; format: string } | null;
+  snapcast: { address: string; jsonrpc_tcp_port: number; streaming_port: number; managed: boolean; verbose: boolean; codec: string; encryption_psk: string | null; group_volume_mode: string; unknown_clients: string; default_zone: string | null };
+  mdns: { enabled: boolean; advertise_snapcast: boolean };
+  dbus: { enabled: boolean };
+  subsonic: { url: string; username: string; password: string; format: string; tls_skip_verify: boolean; cache: { path: string; max_size_mb: number } } | null;
   spotify: { name: string; bitrate: number } | null;
-  airplay: { password: string | null; mode: string } | null;
-  mqtt: { broker: string; username: string | null; password: string | null; base_topic: string } | null;
-  knx: { role: "client" | "device"; url: string | null } | null;
-  zones: { name: string; icon: string; knx: ZoneKnxGos | null }[];
-  clients: { name: string; mac: string; zone: string; icon: string; max_volume: number; knx: ClientKnxGos | null }[];
-  radio: { name: string; url: string; cover: string | null }[];
-  system: { log_level: string };
+  airplay: { password: string | null; mode: string; bind: string[] } | null;
+  mqtt: { broker: string; client_id: string; username: string | null; password: string | null; base_topic: string } | null;
+  knx: { role: "client" | "device"; url: string | null; individual_address: string | null; persist_ets_config: boolean | null; restart_after_ets: boolean | null; start_prog_mode: boolean; server_online: string | null; all_stop: string | null; all_mute: string | null; all_mute_status: string | null; system_fault: string | null; knx_time: string | null; heartbeat_minutes: number; sync_system_clock: boolean } | null;
+  zones: { source_index: number | null; name: string; icon: string; sink: string | null; airplay_name: string | null; spotify_name: string | null; group_volume_mode: string | null; knx: ZoneKnxGos | null }[];
+  clients: { source_index: number | null; name: string; mac: string; zone: string; icon: string; max_volume: number; default_volume: number; default_latency: number; knx: ClientKnxGos | null }[];
+  radio: { source_index: number | null; name: string; url: string; cover: string | null }[];
+  system: { log_level: string; log_file: string | null; state_dir: string };
 }
 
 export interface ServerStatus { enabled: boolean; running: boolean }

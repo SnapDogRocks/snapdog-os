@@ -306,6 +306,9 @@
     "subtabSources": "Quellen",
     "subtabZones": "Zonen & Clients",
     "subtabIntegrations": "Integrationen",
+    "subtabAdvanced": "Erweitertes TOML",
+    "advancedDescription": "Bearbeite die vollständige Serverkonfiguration für erweiterte oder neu eingeführte Optionen. Vor der Aktivierung prüft der installierte SnapDog-Server dieses TOML; ein fehlgeschlagener Neustart wird automatisch zurückgerollt.",
+    "advancedPreservation": "Die normalen Tabs erhalten alle nicht dargestellten Felder. Nutze diesen Editor nur für den direkten Zugriff auf das vollständige Schema.",
     "name": "Name",
     "port": "Port",
     "codec": "Codec",
@@ -370,6 +373,8 @@
     "knxGatewayRequired": "Die Gateway-URL ist im KNX-Client-Modus erforderlich.",
     "validationFailed": "Bitte korrigiere die markierten Felder.",
     "saveFailed": "Speichern fehlgeschlagen. Bitte prüfe die Konfiguration.",
+    "loadFailed": "Die Serverkonfiguration konnte nicht geladen werden. Änderungen sind erst wieder möglich, wenn sie verfügbar ist.",
+    "reload": "Erneut versuchen",
     "save": "Speichern",
     "saved": "Gespeichert!"
   },

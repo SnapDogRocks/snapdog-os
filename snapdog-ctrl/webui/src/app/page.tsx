@@ -95,38 +95,6 @@ function Field({ label, htmlFor, children }: { label: string; htmlFor?: string; 
   );
 }
 
-const DEFAULT_SERVER_CONFIG: ServerConfig = {
-  name: "SnapDog",
-  http: { api_keys: [] },
-  audio: {
-    sample_rate: 48000,
-    bit_depth: 32,
-    channels: 2,
-    source_conflict: "last_wins",
-    zone_switch_fade_ms: 300,
-    source_switch_fade_ms: 300,
-  },
-  snapcast: {
-    streaming_port: 1704,
-    codec: "f32lz4",
-    encryption_psk: null,
-    group_volume_mode: "relative",
-    unknown_clients: "accept",
-    default_zone: "",
-    mdns_name: "SnapDog",
-    advertise_snapcast: false,
-  },
-  subsonic: null,
-  spotify: null,
-  airplay: null,
-  mqtt: null,
-  knx: null,
-  zones: [{ name: "Default", icon: "🔊", knx: null }],
-  clients: [],
-  radio: [],
-  system: { log_level: "info" },
-};
-
 type ZoneKnxKey = Extract<keyof NonNullable<ServerConfig["zones"][number]["knx"]>, string>;
 type ClientKnxKey = Extract<keyof NonNullable<ServerConfig["clients"][number]["knx"]>, string>;
 
@@ -171,10 +139,7 @@ const ZONE_KNX_FIELDS = [
   { key: "presence", label: "Presence", dpt: "1.001", direction: "← KNX" },
   { key: "presence_enable", label: "Presence Enable", dpt: "1.001", direction: "← KNX" },
   { key: "presence_enable_status", label: "Presence Enable Status", dpt: "1.001", direction: "→ KNX" },
-  { key: "presence_timeout", label: "Presence Timeout", dpt: "7.005", direction: "← KNX" },
-  { key: "presence_timeout_status", label: "Presence Timeout Status", dpt: "7.005", direction: "→ KNX" },
   { key: "presence_timer_status", label: "Presence Timer", dpt: "1.001", direction: "→ KNX" },
-  { key: "presence_source_override", label: "Presence Source Override", dpt: "1.001", direction: "← KNX" },
 ] as const satisfies readonly KnxField<ZoneKnxKey>[];
 
 const CLIENT_KNX_FIELDS = [
@@ -195,8 +160,8 @@ function isValidKnxGroupAddress(value: string | null | undefined) {
   const trimmed = value?.trim() ?? "";
   if (!trimmed) return true;
   const parts = trimmed.split("/");
-  if (parts.length !== 3) return false;
-  const limits = [31, 7, 255];
+  if (parts.length !== 2 && parts.length !== 3) return false;
+  const limits = parts.length === 2 ? [31, 2047] : [31, 7, 255];
   return parts.every((part, index) => {
     if (!/^\d+$/.test(part)) return false;
     const numeric = Number(part);
@@ -2875,7 +2840,7 @@ function SystemTab() {
 
 // ── Server Tab ────────────────────────────────────────────────
 
-type ServerSubTab = "audio" | "sources" | "zones" | "integrations";
+type ServerSubTab = "audio" | "sources" | "zones" | "integrations" | "advanced";
 
 function Stepper({ value, onChange, min, max, step, suffix }: { value: number; onChange: (v: number) => void; min: number; max: number; step: number; suffix?: string }) {
   return (
@@ -2894,18 +2859,43 @@ function ServerTab() {
   const [subTab, setSubTab] = useState<ServerSubTab>("audio");
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const cardId = useId();
 
+  const load = useCallback(async () => {
+    try {
+      const [nextStatus, nextConfig] = await Promise.all([
+        api.getServerStatus(),
+        api.getServer(),
+      ]);
+      setLoadError(null);
+      setStatus(nextStatus);
+      setConfig(nextConfig);
+    } catch (error) {
+      setStatus(null);
+      setConfig(null);
+      setLoadError(error instanceof Error ? error.message : t("loadFailed"));
+    }
+  }, [t]);
+
   useEffect(() => {
-    api.getServerStatus().then(setStatus).catch(() => setStatus({ enabled: false, running: false }));
-    api.getServer().then(setConfig).catch(() => setConfig(DEFAULT_SERVER_CONFIG));
-  }, []);
+    void Promise.all([api.getServerStatus(), api.getServer()])
+      .then(([nextStatus, nextConfig]) => {
+        setLoadError(null);
+        setStatus(nextStatus);
+        setConfig(nextConfig);
+      })
+      .catch((error: unknown) => {
+        setStatus(null);
+        setConfig(null);
+        setLoadError(error instanceof Error ? error.message : t("loadFailed"));
+      });
+  }, [t]);
 
   useWebSocket("server_changed", useCallback(() => {
-    api.getServerStatus().then(setStatus).catch(() => {});
-    api.getServer().then(setConfig).catch(() => {});
-  }, []));
+    void load();
+  }, [load]));
 
   const toggle = async (enabled: boolean) => {
     const prev = status;
@@ -2917,13 +2907,14 @@ function ServerTab() {
 
   const save = async () => {
     if (!config) return;
-    const errors = collectServerValidationErrors(config, t);
+    const errors = config.raw_toml_changed ? [] : collectServerValidationErrors(config, t);
     setValidationErrors(errors);
     setSaveError(null);
     if (errors.length > 0) return;
 
     try {
       await api.setServer(config);
+      setConfig(await api.getServer());
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (error) {
@@ -2937,7 +2928,22 @@ function ServerTab() {
     { id: "sources", label: t("subtabSources") },
     { id: "zones", label: t("subtabZones") },
     { id: "integrations", label: t("subtabIntegrations") },
+    { id: "advanced", label: t("subtabAdvanced") },
   ];
+
+  if (loadError) {
+    return (
+      <Card title={t("title")} id={cardId}>
+        <div className="rounded-2xl border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive" role="alert">
+          <p className="font-medium">{t("loadFailed")}</p>
+          <p className="mt-1 text-xs opacity-90">{loadError}</p>
+          <Button className="mt-3" size="sm" variant="outline" onClick={() => void load()}>
+            {t("reload")}
+          </Button>
+        </div>
+      </Card>
+    );
+  }
 
   if (!status || !config) return <Skeleton className="h-40 w-full" />;
 
@@ -2954,7 +2960,7 @@ function ServerTab() {
 
         {status.enabled && (
           <a
-            href={`http://${typeof window !== "undefined" ? window.location.hostname : "localhost"}:5555`}
+            href={`${config.http.tls_cert && config.http.tls_key ? "https" : "http"}://${typeof window !== "undefined" ? window.location.hostname : "localhost"}:${config.http.port}`}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 text-xs text-primary underline-offset-4 hover:underline"
@@ -2989,6 +2995,7 @@ function ServerTab() {
             {subTab === "sources" && <ServerSourcesSubTab config={config} setConfig={setConfig} />}
             {subTab === "zones" && <ServerZonesSubTab config={config} setConfig={setConfig} />}
             {subTab === "integrations" && <ServerIntegrationsSubTab config={config} setConfig={setConfig} />}
+            {subTab === "advanced" && <ServerAdvancedSubTab config={config} setConfig={setConfig} />}
 
             {(validationErrors.length > 0 || saveError) && (
               <div className="rounded-2xl border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">
@@ -3012,9 +3019,32 @@ function ServerTab() {
   );
 }
 
+function ServerAdvancedSubTab({ config, setConfig }: { config: ServerConfig; setConfig: (c: ServerConfig) => void }) {
+  const t = useTranslations("server");
+  return (
+    <div className="space-y-3">
+      <div className="rounded-2xl border border-primary/20 bg-primary/5 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+        {t("advancedDescription")}
+      </div>
+      <label className="block space-y-1.5">
+        <span className="text-sm text-muted-foreground">/etc/snapdog/snapdog.toml</span>
+        <textarea
+          value={config.raw_toml}
+          onChange={(event) => setConfig({ ...config, raw_toml: event.target.value, raw_toml_changed: true })}
+          spellCheck={false}
+          className="min-h-96 w-full resize-y rounded-2xl border border-border bg-background px-3 py-2 font-mono text-xs leading-relaxed text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20"
+          aria-label="Complete SnapDog server TOML configuration"
+        />
+      </label>
+      <p className="text-[11px] text-muted-foreground">
+        {t("advancedPreservation")}
+      </p>
+    </div>
+  );
+}
+
 function ServerAudioSubTab({ config, setConfig }: { config: ServerConfig; setConfig: (c: ServerConfig) => void }) {
   const t = useTranslations("server");
-  const nameId = useId();
   const portId = useId();
   const codecId = useId();
   const pskId = useId();
@@ -3038,9 +3068,6 @@ function ServerAudioSubTab({ config, setConfig }: { config: ServerConfig; setCon
 
   return (
     <div className="space-y-3">
-      <Field label={t("name")} htmlFor={nameId}>
-        <Input id={nameId} value={config.snapcast.mdns_name} onChange={(e) => update("snapcast.mdns_name", e.target.value)} />
-      </Field>
       <Field label={t("port")} htmlFor={portId}>
         <Input id={portId} type="number" value={config.snapcast.streaming_port} onChange={(e) => update("snapcast.streaming_port", Number(e.target.value))} />
       </Field>
@@ -3053,8 +3080,8 @@ function ServerAudioSubTab({ config, setConfig }: { config: ServerConfig; setCon
           if (codec.startsWith("f32")) c.audio.bit_depth = 32;
           setConfig(c);
         }}>
-          <option value="PCM">PCM</option>
-          <option value="FLAC">FLAC</option>
+          <option value="pcm">PCM</option>
+          <option value="flac">FLAC</option>
           <option value="f32lz4">f32lz4</option>
           <option value="f32lz4e">f32lz4e</option>
         </Select>
@@ -3068,7 +3095,10 @@ function ServerAudioSubTab({ config, setConfig }: { config: ServerConfig; setCon
         <Select id={sampleRateId} value={String(config.audio.sample_rate)} onChange={(e) => update("audio.sample_rate", Number(e.target.value))}>
           <option value="44100">44100</option>
           <option value="48000">48000</option>
+          <option value="88200">88200</option>
           <option value="96000">96000</option>
+          <option value="176400">176400</option>
+          <option value="192000">192000</option>
         </Select>
       </Field>
       <Field label={t("bitDepth")} htmlFor={bitDepthId}>
@@ -3091,15 +3121,16 @@ function ServerAudioSubTab({ config, setConfig }: { config: ServerConfig; setCon
         </Select>
       </Field>
       <Field label={t("zoneSwitchFade")}>
-        <Stepper value={config.audio.zone_switch_fade_ms} onChange={(v) => update("audio.zone_switch_fade_ms", v)} min={0} max={500} step={50} suffix="ms" />
+        <Stepper value={config.audio.zone_switch_fade_ms} onChange={(v) => update("audio.zone_switch_fade_ms", v)} min={0} max={1000} step={50} suffix="ms" />
       </Field>
       <Field label={t("sourceSwitchFade")}>
-        <Stepper value={config.audio.source_switch_fade_ms} onChange={(v) => update("audio.source_switch_fade_ms", v)} min={0} max={500} step={50} suffix="ms" />
+        <Stepper value={config.audio.source_switch_fade_ms} onChange={(v) => update("audio.source_switch_fade_ms", v)} min={0} max={1000} step={50} suffix="ms" />
       </Field>
       <Field label={t("groupVolume")} htmlFor={groupVolumeId}>
         <Select id={groupVolumeId} value={config.snapcast.group_volume_mode} onChange={(e) => update("snapcast.group_volume_mode", e.target.value)}>
           <option value="relative">{t("relative")}</option>
           <option value="absolute">{t("absolute")}</option>
+          <option value="compressed">Compressed</option>
         </Select>
       </Field>
       <Field label={t("unknownClients")} htmlFor={unknownClientsId}>
@@ -3110,7 +3141,8 @@ function ServerAudioSubTab({ config, setConfig }: { config: ServerConfig; setCon
         </Select>
       </Field>
       <Field label={t("defaultZone")} htmlFor={defaultZoneId}>
-        <Select id={defaultZoneId} value={config.snapcast.default_zone} onChange={(e) => update("snapcast.default_zone", e.target.value)}>
+        <Select id={defaultZoneId} value={config.snapcast.default_zone ?? ""} onChange={(e) => update("snapcast.default_zone", e.target.value || null)}>
+          <option value="">Automatic</option>
           {config.zones.map((z) => <option key={z.name} value={z.name}>{z.name}</option>)}
         </Select>
       </Field>
@@ -3120,11 +3152,16 @@ function ServerAudioSubTab({ config, setConfig }: { config: ServerConfig; setCon
           <option value="warn">warn</option>
           <option value="info">info</option>
           <option value="debug">debug</option>
+          <option value="trace">trace</option>
         </Select>
       </Field>
       <div className="flex items-center justify-between">
+        <span className="text-sm">mDNS / Bonjour</span>
+        <Switch checked={config.mdns.enabled} onCheckedChange={(v) => update("mdns.enabled", v)} />
+      </div>
+      <div className="flex items-center justify-between">
         <span className="text-sm">{t("advertiseSnapcast")}</span>
-        <Switch checked={config.snapcast.advertise_snapcast} onCheckedChange={(v) => update("snapcast.advertise_snapcast", v)} />
+        <Switch checked={config.mdns.advertise_snapcast} onCheckedChange={(v) => update("mdns.advertise_snapcast", v)} />
       </div>
     </div>
   );
@@ -3141,7 +3178,7 @@ function ServerSourcesSubTab({ config, setConfig }: { config: ServerConfig; setC
 
   const toggleSubsonic = (on: boolean) => {
     const c = structuredClone(config);
-    c.subsonic = on ? { url: "", username: "", password: "", format: "raw" } : null;
+    c.subsonic = on ? { url: "", username: "", password: "", format: "raw", tls_skip_verify: false, cache: { path: "", max_size_mb: 2048 } } : null;
     setConfig(c);
   };
   const toggleSpotify = (on: boolean) => {
@@ -3151,13 +3188,13 @@ function ServerSourcesSubTab({ config, setConfig }: { config: ServerConfig; setC
   };
   const toggleAirplay = (on: boolean) => {
     const c = structuredClone(config);
-    c.airplay = on ? { password: null, mode: "airplay2" } : null;
+    c.airplay = on ? { password: null, mode: "airplay2", bind: [] } : null;
     setConfig(c);
   };
 
   const updateSub = (key: string, value: string) => {
     const c = structuredClone(config);
-    if (c.subsonic) (c.subsonic as Record<string, string>)[key] = value;
+    if (c.subsonic) (c.subsonic as unknown as Record<string, unknown>)[key] = value;
     setConfig(c);
   };
   const updateSpot = (key: string, value: string | number) => {
@@ -3168,7 +3205,7 @@ function ServerSourcesSubTab({ config, setConfig }: { config: ServerConfig; setC
 
   const addRadio = () => {
     const c = structuredClone(config);
-    c.radio.push({ name: "", url: "", cover: null });
+    c.radio.push({ source_index: null, name: "", url: "", cover: null });
     setConfig(c);
   };
   const removeRadio = (i: number) => {
@@ -3263,11 +3300,11 @@ function ServerSourcesSubTab({ config, setConfig }: { config: ServerConfig; setC
 function ServerZonesSubTab({ config, setConfig }: { config: ServerConfig; setConfig: (c: ServerConfig) => void }) {
   const t = useTranslations("server");
 
-  const addZone = () => { const c = structuredClone(config); c.zones.push({ name: "", icon: "🔊", knx: null }); setConfig(c); };
+  const addZone = () => { const c = structuredClone(config); c.zones.push({ source_index: null, name: "", icon: "🔊", sink: null, airplay_name: null, spotify_name: null, group_volume_mode: null, knx: null }); setConfig(c); };
   const removeZone = (i: number) => { const c = structuredClone(config); c.zones.splice(i, 1); setConfig(c); };
   const updateZone = (i: number, key: "name" | "icon", value: string) => { const c = structuredClone(config); c.zones[i][key] = value; setConfig(c); };
 
-  const addClient = () => { const c = structuredClone(config); c.clients.push({ name: "", mac: "", zone: config.zones[0]?.name ?? "", icon: "🔊", max_volume: 100, knx: null }); setConfig(c); };
+  const addClient = () => { const c = structuredClone(config); c.clients.push({ source_index: null, name: "", mac: "", zone: config.zones[0]?.name ?? "", icon: "🔊", max_volume: 100, default_volume: 50, default_latency: 0, knx: null }); setConfig(c); };
   const removeClient = (i: number) => { const c = structuredClone(config); c.clients.splice(i, 1); setConfig(c); };
   const updateClient = (i: number, key: "name" | "mac" | "zone" | "icon" | "max_volume", value: string | number) => {
     const c = structuredClone(config);
@@ -3413,7 +3450,7 @@ function ServerIntegrationsSubTab({ config, setConfig }: { config: ServerConfig;
 
   const toggleMqtt = (on: boolean) => {
     const c = structuredClone(config);
-    c.mqtt = on ? { broker: "", username: null, password: null, base_topic: "snapdog" } : null;
+    c.mqtt = on ? { broker: "", client_id: "snapdog", username: null, password: null, base_topic: "snapdog/" } : null;
     setConfig(c);
   };
   const updateMqtt = (key: string, value: string | null) => {
@@ -3424,7 +3461,7 @@ function ServerIntegrationsSubTab({ config, setConfig }: { config: ServerConfig;
 
   const toggleKnx = (on: boolean) => {
     const c = structuredClone(config);
-    c.knx = on ? { role: "client", url: null } : null;
+    c.knx = on ? { role: "client", url: null, individual_address: null, persist_ets_config: null, restart_after_ets: null, start_prog_mode: false, server_online: null, all_stop: null, all_mute: null, all_mute_status: null, system_fault: null, knx_time: null, heartbeat_minutes: 5, sync_system_clock: false } : null;
     setConfig(c);
   };
   const updateKnx = (key: string, value: string | null) => {

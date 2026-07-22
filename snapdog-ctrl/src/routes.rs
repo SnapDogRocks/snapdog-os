@@ -529,19 +529,28 @@ mod mock_handlers {
         use crate::server_config::{ClientEntry, RadioStation, ServerConfig, ZoneConfig};
         Json(ServerConfig {
             zones: vec![ZoneConfig {
+                source_index: None,
                 name: "Living Room".into(),
                 icon: "🛋️".into(),
+                sink: None,
+                airplay_name: None,
+                spotify_name: None,
+                group_volume_mode: None,
                 knx: None,
             }],
             clients: vec![ClientEntry {
+                source_index: None,
                 name: "Kitchen".into(),
                 mac: "aa:bb:cc:dd:ee:ff".into(),
                 zone: "Living Room".into(),
                 icon: "🍽️".into(),
                 max_volume: 100,
+                default_volume: 50,
+                default_latency: 0,
                 knx: None,
             }],
             radio: vec![RadioStation {
+                source_index: None,
                 name: "SWR3".into(),
                 url: "https://swr3.de/stream".into(),
                 cover: None,
@@ -1421,21 +1430,29 @@ async fn get_server() -> Result<Json<ServerConfig>, StatusCode> {
 async fn put_server(
     Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
     Json(body): Json<ServerConfig>,
-) -> StatusCode {
-    if let Err(e) = server_config::validate(&body) {
-        tracing::error!("put_server validate: {e}");
-        return StatusCode::BAD_REQUEST;
+) -> Result<StatusCode, (StatusCode, String)> {
+    if !server_config::uses_advanced_toml(&body)
+        && let Err(error) = server_config::validate(&body)
+    {
+        tracing::warn!(error = %error, "invalid server configuration request");
+        return Err((StatusCode::BAD_REQUEST, error.to_string()));
     }
-    if let Err(e) = server_config::write_config(&body).await {
-        tracing::error!("put_server write: {e}");
-        return StatusCode::INTERNAL_SERVER_ERROR;
-    }
-    if let Err(e) = run_systemctl(&["restart", "snapdog"]).await {
-        tracing::error!("put_server restart: {e}");
-        return StatusCode::INTERNAL_SERVER_ERROR;
+    if let Err(error) = server_config::apply_and_restart(&body).await {
+        tracing::error!(error = %error, "failed to apply server configuration");
+        let message = format!("{error:#}");
+        let status = if message.contains("changed since it was loaded") {
+            StatusCode::CONFLICT
+        } else if message.contains("rejected the configuration")
+            || message.contains("advanced TOML is invalid")
+        {
+            StatusCode::UNPROCESSABLE_ENTITY
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        };
+        return Err((status, message));
     }
     let _ = tx.send("server_changed".to_string());
-    StatusCode::OK
+    Ok(StatusCode::OK)
 }
 
 async fn get_server_status() -> Json<ServerStatus> {

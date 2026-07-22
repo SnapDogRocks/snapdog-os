@@ -1,5 +1,15 @@
 const TOKEN_KEY = "snapdog_auth_token";
 
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
   return localStorage.getItem(TOKEN_KEY);
@@ -23,9 +33,11 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   if (res.status === 401) {
     clearToken();
     window.dispatchEvent(new Event("snapdog-auth-expired"));
-    throw new Error("Unauthorized");
+    throw new ApiError(res.status, text || "Unauthorized");
   }
-  if (!res.ok) throw new Error(text || `API error: ${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    throw new ApiError(res.status, text || `API error: ${res.status} ${res.statusText}`);
+  }
   if (!text) return undefined as T;
   return JSON.parse(text) as T;
 }
@@ -155,22 +167,42 @@ export interface UpdateCheck {
   latest_version: string;
   channel: string;
   is_downgrade: boolean;
-  signature_verified: boolean;
+  /** The device has a trusted keyring with which an update can be verified. */
+  trusted_keyring_available?: boolean;
+  /** @deprecated Compatibility with controllers older than the phased update API. */
+  signature_verified?: boolean;
   /** Version installed to the boot slot and awaiting a reboot (null if none). */
   staged_version: string | null;
 }
 
-export interface RaucProgress {
-  percentage: number;
-  message: string;
-}
+export type UpdatePhase =
+  | "idle"
+  | "downloading"
+  | "verifying"
+  | "writing"
+  | "finalizing"
+  | "ready_to_reboot"
+  | "failed";
 
 export interface UpdateStatus {
-  operation: string; // "idle" | "installing" | "unknown"
-  progress: RaucProgress | null;
+  /** Opaque identifier/name for the current update operation. */
+  operation: string;
+  phase: UpdatePhase;
+  /** Real progress within the current phase; null means indeterminate. */
+  phase_progress: number | null;
+  /** RAUC's cumulative hierarchical install progress; null outside RAUC work. */
+  overall_progress: number | null;
+  bytes_done: number | null;
+  bytes_total: number | null;
+  /** Backend diagnostic detail. User-facing phase copy remains localized in the UI. */
+  detail: string;
   last_error: string;
   /** True when the last-installed bundle failed to boot and the bootloader rolled back. */
   rolled_back: boolean;
+  /** True only after RAUC verified the concrete bundle in this operation. */
+  signature_verified: boolean;
+  /** @deprecated Compatibility with controllers older than the phased update API. */
+  progress?: { percentage: number; message: string } | null;
 }
 
 export interface AutoUpdateRuntimeStatus {
@@ -269,31 +301,48 @@ export const api = {
   checkUpdate: () => request<UpdateCheck>("/api/system/update/check"),
   getUpdateStatus: () => request<import("./api").UpdateStatus>("/api/system/update/status"),
   // XMLHttpRequest (not fetch) so we get real upload-progress events for the large
-  // bundle. onProgress receives 0..1 (or null when the total is unknown). A stall
-  // watchdog aborts if no progress fires for 30s so a half-open connection surfaces
-  // an error instead of hanging forever.
+  // bundle. onProgress receives 0..1 (or null when the total is unknown). While the
+  // browser is still sending bytes, a stall watchdog aborts if no progress fires for
+  // 30s so a half-open connection surfaces an error instead of hanging forever.
   uploadUpdate: (file: File, onProgress?: (fraction: number | null) => void) =>
     new Promise<void>((resolve, reject) => {
       const form = new FormData();
       form.append("file", file);
       const xhr = new XMLHttpRequest();
-      // Optional: arm() clears it before the first assignment; clearTimeout(undefined) is a no-op.
       let stall: ReturnType<typeof setTimeout> | undefined;
-      const arm = () => {
+      let uploadComplete = false;
+      const disarm = () => {
         clearTimeout(stall);
+        stall = undefined;
+      };
+      const arm = () => {
+        disarm();
+        if (uploadComplete) return;
         stall = setTimeout(() => xhr.abort(), 30000);
       };
       xhr.upload.onprogress = (e) => {
-        arm();
         onProgress?.(e.lengthComputable ? e.loaded / e.total : null);
+        if (e.lengthComputable && e.loaded >= e.total) {
+          uploadComplete = true;
+          disarm();
+        } else {
+          arm();
+        }
+      };
+      // Upload completion only means that the browser finished sending bytes. The
+      // server may still need substantial time to flush and fsync a large bundle;
+      // that response wait must not be mistaken for a stalled upload.
+      xhr.upload.onload = () => {
+        uploadComplete = true;
+        disarm();
       };
       xhr.onload = () => {
-        clearTimeout(stall);
+        disarm();
         if (xhr.status >= 200 && xhr.status < 300) resolve();
         else reject(new Error(`Upload failed: ${xhr.status} ${xhr.statusText}`));
       };
-      xhr.onerror = () => { clearTimeout(stall); reject(new Error("Upload failed: network error")); };
-      xhr.onabort = () => { clearTimeout(stall); reject(new Error("Upload aborted (stalled)")); };
+      xhr.onerror = () => { disarm(); reject(new Error("Upload failed: network error")); };
+      xhr.onabort = () => { disarm(); reject(new Error("Upload aborted (stalled)")); };
       const token = getToken();
       xhr.open("POST", "/api/system/update/upload");
       if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);

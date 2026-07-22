@@ -3,10 +3,9 @@ compatible=snapdog-os-@SNAPDOG_BOARD@
 bootloader=custom
 statusfile=/data/rauc.status
 bundle-formats=verity
-# URL-based OTA installs (BR2_PACKAGE_RAUC_NETWORK) download the whole bundle; RAUC
-# aborts with "Maximum file size exceeded" once it passes this cap. Without it the
-# default is far below an OS bundle (~63 MiB and growing), so online updates fail
-# at download. 1 GiB leaves ample headroom.
+# Retain enough headroom for RAUC tooling or externally triggered URL installs.
+# snapdog-ctrl's normal WebUI/automatic path stages the bundle locally so it can
+# expose byte progress before invoking RAUC. 1 GiB covers either path.
 max-bundle-download-size=1073741824
 
 [handlers]

@@ -17,12 +17,11 @@
 //!   * transient failures (RAUC busy or unreadable, manifest unreachable) retry on the
 //!     next tick instead of costing a whole interval.
 
-use crate::schedule::{InstallPoll, classify_install_status, interval_elapsed, parse_time};
+use crate::schedule::{interval_elapsed, parse_time};
 use crate::system::{
     UpdateDecision, bundle_url, current_os_version, decide_update, get_auto_update,
-    last_auto_update_date, last_failed_update, rauc_install, rauc_last_error, rauc_operation,
-    reboot, record_auto_update_date, record_pending_update, remote_channel_version,
-    update_auto_update_status,
+    last_auto_update_date, last_failed_update, rauc_operation, reboot, record_auto_update_date,
+    record_pending_update, remote_channel_version, update_auto_update_status,
 };
 use chrono::{Local, Timelike};
 
@@ -64,6 +63,14 @@ async fn wait_for_trustworthy_clock() {
 async fn tick() -> anyhow::Result<()> {
     let config = get_auto_update().await;
     if !config.enabled {
+        return Ok(());
+    }
+
+    // A WebUI/manual update may still be downloading while RAUC itself is idle.
+    // Treat the coordinator as busy too, otherwise the scheduler could consume the
+    // interval with a spurious "already in progress" failure.
+    if crate::update::is_busy() {
+        tracing::info!("auto-update: another firmware operation is active, retrying next tick");
         return Ok(());
     }
 
@@ -156,45 +163,16 @@ async fn install_and_reboot(version: &str, channel: &str) -> anyhow::Result<()> 
     // Bundle URL: <board>-<channel>.raucb (channel is "release" or "beta").
     let url = bundle_url(channel).await;
     tracing::info!("auto-update: installing {version} from {url}");
-    rauc_install(&url).await?;
-
-    // Wait for RAUC to actually start and then finish (max 30 minutes). InstallBundle
-    // is asynchronous, so the first idle state is pre-start, not completion.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1800);
-    let mut saw_installing = false;
-    loop {
-        if std::time::Instant::now() > deadline {
-            anyhow::bail!("RAUC installation timed out after 30 minutes");
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-        let operation = match rauc_operation().await {
-            Ok(operation) => operation,
-            Err(e) => {
-                tracing::warn!("auto-update: RAUC status unavailable during install: {e}");
-                continue;
-            }
-        };
-        let last_error = rauc_last_error().await.unwrap_or_default();
-        match classify_install_status(&operation, &last_error, saw_installing) {
-            InstallPoll::Installing => {
-                if !saw_installing {
-                    tracing::info!("auto-update: RAUC installation started");
-                }
-                saw_installing = true;
-            }
-            InstallPoll::Completed => break,
-            InstallPoll::Failed => anyhow::bail!("RAUC installation failed: {last_error}"),
-            InstallPoll::Waiting => {
-                tracing::debug!("auto-update: waiting for RAUC (operation={operation})");
-            }
-        }
-    }
+    let update_guard = crate::update::install_online(&url).await?;
 
     // Record the version we are about to boot into so the next boot can confirm it took —
     // or mark it bad if the bootloader rolls back to the previous slot.
-    record_pending_update(version).await;
+    record_pending_update(version).await?;
     tracing::info!("auto-update: install complete, rebooting");
-    reboot().await;
+    reboot().await?;
+    // `systemctl reboot` can return after systemd accepted the request but before
+    // this process is stopped. Keep every firmware entry point locked throughout
+    // that window; releasing the guard could admit a second write during shutdown.
+    std::mem::forget(update_guard);
     Ok(())
 }

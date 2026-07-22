@@ -7,34 +7,6 @@
 
 use chrono::NaiveDate;
 
-/// Interpretation of RAUC's asynchronous operation state after `InstallBundle`.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum InstallPoll {
-    Waiting,
-    Installing,
-    Completed,
-    Failed,
-}
-
-/// `InstallBundle` returns before RAUC necessarily changes `operation` from idle.
-/// Therefore idle is completion only after installing has been observed. A reported
-/// error always wins, including when RAUC has already returned to idle.
-#[must_use]
-pub fn classify_install_status(
-    operation: &str,
-    last_error: &str,
-    saw_installing: bool,
-) -> InstallPoll {
-    if !last_error.trim().is_empty() {
-        return InstallPoll::Failed;
-    }
-    match operation {
-        "installing" => InstallPoll::Installing,
-        "idle" if saw_installing => InstallPoll::Completed,
-        _ => InstallPoll::Waiting,
-    }
-}
-
 /// Parse an `HH:MM` string into `(hour, minute)`, clamping out-of-range / malformed
 /// input to the 04:00 default rather than a nonsense time.
 pub fn parse_time(s: &str) -> (u32, u32) {
@@ -100,33 +72,5 @@ mod tests {
         assert!(interval_elapsed("monthly", Some(today - days(30)), today));
         // unknown interval falls back to daily
         assert!(interval_elapsed("hourly", Some(today - days(1)), today));
-    }
-
-    #[test]
-    fn asynchronous_rauc_install_requires_a_real_install_transition() {
-        assert_eq!(
-            classify_install_status("idle", "", false),
-            InstallPoll::Waiting
-        );
-        assert_eq!(
-            classify_install_status("installing", "", false),
-            InstallPoll::Installing
-        );
-        assert_eq!(
-            classify_install_status("idle", "", true),
-            InstallPoll::Completed
-        );
-        assert_eq!(
-            classify_install_status("idle", "signature rejected", true),
-            InstallPoll::Failed
-        );
-        assert_eq!(
-            classify_install_status("installing", "write failed", true),
-            InstallPoll::Failed
-        );
-        assert_eq!(
-            classify_install_status("unknown", "", true),
-            InstallPoll::Waiting
-        );
     }
 }

@@ -4,6 +4,8 @@
 
 use std::collections::HashMap;
 
+use futures_util::StreamExt;
+use tokio::sync::watch;
 use zbus::Connection;
 use zbus::proxy;
 
@@ -59,10 +61,11 @@ pub struct SlotStatus {
     pub booted: bool,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct InstallProgress {
     pub percentage: i32,
     pub message: String,
+    pub depth: i32,
 }
 
 #[allow(dead_code)] // mark/primary/compatible used by rauc-mark-good and future WebUI
@@ -74,10 +77,52 @@ impl Rauc {
         Ok(Self { proxy })
     }
 
-    /// Install a bundle from a local path or URL.
-    pub async fn install(&self, source: &str) -> anyhow::Result<()> {
+    /// Trigger an installation, forward every RAUC progress update, and wait for
+    /// the authoritative `Completed` signal. Subscribing before `InstallBundle`
+    /// prevents a fast rejection from being missed.
+    pub async fn install_and_wait(
+        &self,
+        source: &str,
+        progress_tx: watch::Sender<InstallProgress>,
+        warning_after: std::time::Duration,
+    ) -> anyhow::Result<()> {
+        let mut completed = self.proxy.receive_completed().await?;
         self.proxy.install_bundle(source, HashMap::new()).await?;
-        Ok(())
+
+        let warning_deadline = tokio::time::Instant::now() + warning_after;
+        let mut warned = false;
+        let mut ticker = tokio::time::interval(std::time::Duration::from_millis(250));
+        loop {
+            tokio::select! {
+                signal = completed.next() => {
+                    let signal = signal.ok_or_else(|| anyhow::anyhow!("RAUC completion stream ended"))?;
+                    let args = signal.args()?;
+                    if args.result == 0 {
+                        return Ok(());
+                    }
+                    let error = self.last_error().await.unwrap_or_default();
+                    anyhow::bail!(
+                        "RAUC installation failed{}",
+                        if error.is_empty() { String::new() } else { format!(": {error}") }
+                    );
+                }
+                _ = ticker.tick() => {
+                    if !warned && tokio::time::Instant::now() >= warning_deadline {
+                        warned = true;
+                        // RAUC has no cancellation primitive. Returning here would
+                        // release the coordinator guard while the service may still
+                        // be writing the inactive slot, so retain ownership and wait
+                        // for the authoritative Completed signal.
+                        tracing::warn!(
+                            "RAUC installation exceeded 30 minutes; continuing to wait for completion"
+                        );
+                    }
+                    if let Ok(progress) = self.progress().await {
+                        let _ = progress_tx.send(progress);
+                    }
+                }
+            }
+        }
     }
 
     /// Mark a slot good/bad/active.
@@ -104,10 +149,11 @@ impl Rauc {
 
     /// Get installation progress.
     pub async fn progress(&self) -> anyhow::Result<InstallProgress> {
-        let (pct, msg, _depth) = self.proxy.progress().await?;
+        let (pct, msg, depth) = self.proxy.progress().await?;
         Ok(InstallProgress {
             percentage: pct,
             message: msg,
+            depth,
         })
     }
 
@@ -118,7 +164,7 @@ impl Rauc {
 
     /// Get status of all slots.
     pub async fn slot_status(&self) -> anyhow::Result<Vec<SlotStatus>> {
-        let boot_slot = self.proxy.boot_slot().await.unwrap_or_default();
+        let boot_slot = self.proxy.boot_slot().await?;
         let raw = self.proxy.get_slot_status().await?;
         let mut slots = Vec::new();
 

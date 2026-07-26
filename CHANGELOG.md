@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.2](https://github.com/SnapDogRocks/snapdog-os/compare/v0.16.1...v0.16.2) (2026-07-26)
+
+
+### Bug Fixes
+
+* **os:** give snapdog.service a real, writable, persistent state directory ([#143](https://github.com/SnapDogRocks/snapdog-os/issues/143)) ([2722ab0](https://github.com/SnapDogRocks/snapdog-os/commit/2722ab019b5005fff237f31f291d938ab172abd5))
+
 ## [0.16.1](https://github.com/SnapDogRocks/snapdog-os/compare/v0.16.0...v0.16.1) (2026-07-26)
 
 

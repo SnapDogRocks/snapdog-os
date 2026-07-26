@@ -12,4 +12,7 @@ DynamicUser=yes
 SupplementaryGroups=audio
 ProtectHome=yes
 PrivateTmp=yes
+# ProtectSystem=strict is implied by DynamicUser=yes; carve out the persistent
+# state directory (snapdog-data-init creates it before this unit starts).
+ReadWritePaths=/data/snapdog/state
 

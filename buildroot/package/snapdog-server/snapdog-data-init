@@ -14,6 +14,16 @@ rm -f "$DATA/pending-flash.img.gz" "$DATA/pending-flash.img.gz.part"
 # Create directory structure
 mkdir -p "$DATA/default"
 mkdir -p "$DATA/snapdog"
+# snapdog.service's persistent state (zone/group Store, EQ settings, AirPlay
+# pairing, server_id) lives in its own subdirectory, not directly under
+# $DATA/snapdog, so widening its permissions below doesn't also affect
+# snapdog.toml (which sits next to it and is written by root via snapdog-ctrl).
+mkdir -p "$DATA/snapdog/state"
+# snapdog.service runs as DynamicUser (a fresh, unpredictable UID each start),
+# so a fixed-owner directory can't grant it write access — world-writable is
+# the pragmatic tradeoff on a single-purpose device with no untrusted local
+# users.
+chmod 0777 "$DATA/snapdog/state"
 mkdir -p "$DATA/wpa_supplicant"
 mkdir -p "$DATA/hostapd"
 mkdir -p "$DATA/systemd/network"

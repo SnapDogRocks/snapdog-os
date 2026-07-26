@@ -3,6 +3,12 @@
 
 [system]
 log_level = "info"
+# /var/lib is tmpfs on this OS (wiped every boot) and DynamicUser=yes's implied
+# ProtectSystem=strict only excludes it from the read-only sandbox via
+# StateDirectory=, which for a dynamic user re-creates it fresh under
+# /var/lib/private on every start anyway — no persistence either way. Use the
+# real, persistent /data partition directly instead.
+state_dir = "/data/snapdog/state"
 
 [audio]
 sample_rate = 48000

@@ -2,11 +2,13 @@ const TOKEN_KEY = "snapdog_auth_token";
 
 export class ApiError extends Error {
   readonly status: number;
+  readonly payload: unknown;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, payload: unknown = null) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.payload = payload;
   }
 }
 
@@ -23,6 +25,29 @@ function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY);
 }
 
+function responseErrorMessage(text: string, fallback: string): string {
+  if (!text) return fallback;
+  try {
+    const payload = JSON.parse(text) as {
+      issue?: { summary?: unknown; detail?: unknown };
+      summary?: unknown;
+      detail?: unknown;
+      message?: unknown;
+    };
+    const issue = payload.issue ?? payload;
+    const summary = typeof issue.summary === "string"
+      ? issue.summary
+      : typeof payload.message === "string"
+        ? payload.message
+        : "";
+    const detail = typeof issue.detail === "string" ? issue.detail : "";
+    if (summary && detail && detail !== summary) return `${summary}: ${detail}`;
+    return summary || detail || fallback;
+  } catch {
+    return text;
+  }
+}
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const token = getToken();
@@ -30,13 +55,17 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 
   const res = await fetch(url, { headers, ...options });
   const text = await res.text();
+  let errorPayload: unknown = null;
+  if (!res.ok && text) {
+    try { errorPayload = JSON.parse(text); } catch { /* Plain-text API error. */ }
+  }
   if (res.status === 401) {
     clearToken();
     window.dispatchEvent(new Event("snapdog-auth-expired"));
-    throw new ApiError(res.status, text || "Unauthorized");
+    throw new ApiError(res.status, responseErrorMessage(text, "Unauthorized"), errorPayload);
   }
   if (!res.ok) {
-    throw new ApiError(res.status, text || `API error: ${res.status} ${res.statusText}`);
+    throw new ApiError(res.status, responseErrorMessage(text, `API error: ${res.status} ${res.statusText}`), errorPayload);
   }
   if (!text) return undefined as T;
   return JSON.parse(text) as T;
@@ -277,7 +306,7 @@ export interface ServerConfig {
   dbus: { enabled: boolean };
   subsonic: { url: string; username: string; password: string; format: string; tls_skip_verify: boolean; cache: { path: string; max_size_mb: number } } | null;
   spotify: { name: string; bitrate: number } | null;
-  airplay: { password: string | null; mode: string; bind: string[] } | null;
+  airplay: { password: string | null; mode: string; bind: string[] };
   mqtt: { broker: string; client_id: string; username: string | null; password: string | null; base_topic: string } | null;
   knx: { role: "client" | "device"; url: string | null; individual_address: string | null; persist_ets_config: boolean | null; restart_after_ets: boolean | null; start_prog_mode: boolean; server_online: string | null; all_stop: string | null; all_mute: string | null; all_mute_status: string | null; system_fault: string | null; knx_time: string | null; heartbeat_minutes: number; sync_system_clock: boolean } | null;
   zones: { source_index: number | null; name: string; icon: string; sink: string | null; airplay_name: string | null; spotify_name: string | null; group_volume_mode: string | null; knx: ZoneKnxGos | null }[];
@@ -287,6 +316,132 @@ export interface ServerConfig {
 }
 
 export interface ServerStatus { enabled: boolean; running: boolean }
+
+export type ServerSetupState = "needs_setup" | "configured" | "needs_repair";
+export type ServerDesiredState = "stopped" | "running";
+export type ServerRuntimeState =
+  | "stopped"
+  | "starting"
+  | "running"
+  | "restarting"
+  | "stopping"
+  | "failed"
+  | "unknown";
+export type ServerHealthState = "unknown" | "checking" | "healthy" | "unhealthy";
+export type ServerConfigState = "missing" | "valid_unverified" | "valid" | "invalid" | "unreadable";
+export type ServerAction = "start" | "stop" | "restart" | "retry";
+
+export interface ServerIssue {
+  code: string;
+  stage?: string | null;
+  summary: string;
+  detail?: string | null;
+  field_path?: string | null;
+  line?: number | null;
+  column?: number | null;
+  exit_code?: number | null;
+  systemd_result?: string | null;
+  rollback_succeeded?: boolean | null;
+}
+
+export interface ServerOperation {
+  id: string;
+  kind: string;
+  phase: string;
+  started_at?: string | null;
+}
+
+export interface ServerState {
+  setup_state: ServerSetupState;
+  desired_state: ServerDesiredState;
+  runtime_state: ServerRuntimeState;
+  health_state: ServerHealthState;
+  config_state: ServerConfigState;
+  active_revision: string | null;
+  last_good_revision: string | null;
+  endpoint: string | null;
+  operation: ServerOperation | null;
+  issue: ServerIssue | null;
+  /** Legacy convenience fields kept by the backend during the migration. */
+  enabled: boolean;
+  running: boolean;
+}
+
+export interface ServerConfigIssue {
+  code: string;
+  message: string;
+  summary?: string;
+  detail?: string | null;
+  stage?: string | null;
+  field_path?: string | null;
+  /** Compatibility alias accepted from early backend builds. */
+  field?: string | null;
+  severity?: "error" | "warning";
+  line?: number | null;
+  column?: number | null;
+}
+
+export interface ServerConfigEnvelope {
+  state: ServerConfigState;
+  revision: string;
+  raw_toml: string;
+  config: ServerConfig | null;
+  issues: ServerConfigIssue[];
+}
+
+export interface ServerValidationResult {
+  valid: boolean;
+  issues: ServerConfigIssue[];
+  config?: ServerConfig | null;
+}
+
+export interface ServerMutationResult {
+  state?: ServerState;
+  operation?: ServerOperation | null;
+}
+
+export interface ServerDiagnostics {
+  generated_at: string;
+  state: ServerState;
+  systemd: {
+    load_state: string;
+    active_state: string;
+    sub_state: string;
+    result: string;
+    exec_main_code: number | null;
+    exec_main_status: number | null;
+    restart_count: number | null;
+    invocation_id: string;
+  };
+  journal: string[];
+}
+
+interface ServerConfigEnvelopeWire extends Omit<ServerConfigEnvelope, "issues"> {
+  issues: (ServerIssue | ServerConfigIssue)[];
+}
+
+interface ServerValidationResultWire extends Omit<ServerValidationResult, "issues"> {
+  issues: (ServerIssue | ServerConfigIssue)[];
+}
+
+function normalizeServerConfigIssue(issue: ServerIssue | ServerConfigIssue): ServerConfigIssue {
+  const message = "message" in issue && issue.message
+    ? issue.message
+    : issue.detail || issue.summary || issue.code || "Invalid configuration";
+  return {
+    ...issue,
+    message,
+    severity: "severity" in issue ? issue.severity : "error",
+  };
+}
+
+function normalizeServerConfigEnvelope(envelope: ServerConfigEnvelopeWire): ServerConfigEnvelope {
+  return { ...envelope, issues: envelope.issues.map(normalizeServerConfigIssue) };
+}
+
+function normalizeServerValidation(result: ServerValidationResultWire): ServerValidationResult {
+  return { ...result, issues: result.issues.map(normalizeServerConfigIssue) };
+}
 
 // ── API calls ─────────────────────────────────────────────────
 
@@ -377,11 +532,30 @@ export const api = {
   setSsh: (config: SshConfig) =>
     request<void>("/api/ssh", { method: "PUT", body: JSON.stringify(config) }),
 
+  // Server management. The WebUI and controller ship as one artifact, so the
+  // explicit lifecycle API is a strict contract: a missing route must surface
+  // as an integration error rather than silently falling back to legacy state.
   getServer: () => request<ServerConfig>("/api/server"),
   setServer: (config: ServerConfig) => request<void>("/api/server", { method: "PUT", body: JSON.stringify(config) }),
   getServerStatus: () => request<ServerStatus>("/api/server/status"),
   enableServer: () => request<void>("/api/server/enable", { method: "POST" }),
   disableServer: () => request<void>("/api/server/disable", { method: "POST" }),
+  getServerState: () => request<ServerState>("/api/server/state"),
+  getServerConfig: async () => normalizeServerConfigEnvelope(await request<ServerConfigEnvelopeWire>("/api/server/config")),
+  validateServerConfig: async (config: ServerConfig) => normalizeServerValidation(await request<ServerValidationResultWire>("/api/server/config/validate", {
+      method: "POST",
+      body: JSON.stringify(config),
+    })),
+  putServerConfig: (config: ServerConfig) => request<ServerMutationResult>("/api/server/config", {
+      method: "PUT",
+      body: JSON.stringify(config),
+    }),
+  setupServer: (config: ServerConfig) => request<ServerMutationResult>("/api/server/setup", {
+      method: "POST",
+      body: JSON.stringify(config),
+    }),
+  serverAction: (action: ServerAction) => request<ServerMutationResult>(`/api/server/actions/${action}`, { method: "POST" }),
+  getServerDiagnostics: () => request<ServerDiagnostics>("/api/server/diagnostics"),
 
   // Auth
   getAuthStatus: () => request<AuthStatus>("/api/auth/status"),

@@ -8,12 +8,27 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table};
 
-const CONFIG_PATH: &str = "/etc/snapdog/snapdog.toml";
-const CONFIG_BACKUP: &str = "/etc/snapdog/snapdog.toml.bak";
-const CONFIG_CANDIDATE: &str = "/etc/snapdog/.snapdog.toml.candidate";
+/// The active file and every transaction artifact live on the writable data
+/// partition. `/etc/snapdog/snapdog.toml` is only an immutable rootfs symlink
+/// used by the service's `ExecStart`; renaming through that symlink would try to
+/// mutate the read-only `/etc/snapdog` directory rather than its target.
+pub const CONFIG_PATH: &str = "/data/snapdog/snapdog.toml";
+pub const CONFIG_BACKUP: &str = "/data/snapdog/.snapdog.toml.previous";
+pub const CONFIG_CANDIDATE: &str = "/data/snapdog/.snapdog.toml.candidate";
+pub const CONFIG_LAST_GOOD: &str = "/data/snapdog/snapdog.toml.last-good";
+pub const CONFIG_JOURNAL: &str = "/data/snapdog/server-operation.json";
+pub const LAST_OPERATION_ISSUE: &str = "/data/snapdog/server-last-issue.json";
 const SNAPDOG_BINARY: &str = "/usr/bin/snapdog";
-const SERVICE_NAME: &str = "snapdog";
-static CONFIG_APPLY_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigGuardError {
+    #[error("SnapDog rejected the configuration: {0}")]
+    Rejected(String),
+    #[error("SnapDog configuration guard timed out")]
+    TimedOut,
+    #[error("failed to execute the SnapDog configuration guard: {0}")]
+    Unavailable(#[source] std::io::Error),
+}
 
 /// Complete server configuration as exposed via the API.
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -35,7 +50,8 @@ pub struct ServerConfig {
     pub dbus: DbusConfig,
     pub subsonic: Option<SubsonicConfig>,
     pub spotify: Option<SpotifyConfig>,
-    pub airplay: Option<AirplayConfig>,
+    #[serde(default)]
+    pub airplay: AirplayConfig,
     pub mqtt: Option<MqttConfig>,
     pub knx: Option<KnxConfig>,
     pub zones: Vec<ZoneConfig>,
@@ -83,7 +99,7 @@ impl Default for AudioConfig {
     fn default() -> Self {
         Self {
             sample_rate: 48000,
-            bit_depth: 32,
+            bit_depth: 16,
             channels: 2,
             source_conflict: "last_wins".into(),
             zone_switch_fade_ms: 300,
@@ -114,9 +130,9 @@ impl Default for SnapcastConfig {
             streaming_port: 1704,
             managed: true,
             verbose: false,
-            codec: "f32lz4".into(),
+            codec: "flac".into(),
             encryption_psk: None,
-            group_volume_mode: "compressed".into(),
+            group_volume_mode: "relative".into(),
             unknown_clients: "accept".into(),
             default_zone: None,
         }
@@ -168,7 +184,7 @@ pub struct SubsonicCacheConfig {
 impl Default for SubsonicCacheConfig {
     fn default() -> Self {
         Self {
-            path: String::new(),
+            path: "/data/snapdog/state/cache".into(),
             max_size_mb: 2048,
         }
     }
@@ -185,6 +201,16 @@ pub struct AirplayConfig {
     pub password: Option<String>,
     pub mode: String,
     pub bind: Vec<String>,
+}
+
+impl Default for AirplayConfig {
+    fn default() -> Self {
+        Self {
+            password: None,
+            mode: "airplay2".into(),
+            bind: Vec::new(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -339,7 +365,7 @@ impl Default for SystemConfig {
         Self {
             log_level: "info".into(),
             log_file: None,
-            state_dir: "/var/lib/snapdog".into(),
+            state_dir: "/data/snapdog/state".into(),
         }
     }
 }
@@ -355,72 +381,31 @@ pub async fn read_config() -> Result<ServerConfig> {
     };
 
     if content.is_empty() {
-        return Ok(ServerConfig {
-            revision: config_revision(""),
-            raw_toml: String::new(),
-            ..ServerConfig::default()
-        });
+        let mut config = default_server_config();
+        config.revision = config_revision("");
+        config.raw_toml.clear();
+        return Ok(config);
     }
 
+    parse_config_toml(&content)
+}
+
+/// Parse an exact on-disk document while preserving its raw source and revision.
+pub fn parse_config_toml(content: &str) -> Result<ServerConfig> {
     let doc: DocumentMut = content.parse().context("failed to parse snapdog.toml")?;
     let mut config = parse_document(&doc);
-    config.revision = config_revision(&content);
-    config.raw_toml = content;
+    config.revision = config_revision(content);
+    config.raw_toml = content.to_string();
     Ok(config)
 }
 
-/// Validate, atomically install, restart, and health-check a server configuration.
-///
-/// Any failure after activation restores the previous file and restarts the old
-/// configuration before returning the error to the caller.
-pub async fn apply_and_restart(config: &ServerConfig) -> Result<()> {
-    let _guard = CONFIG_APPLY_LOCK.lock().await;
-    if !uses_advanced_toml(config) {
-        validate(config)?;
-    }
-
-    let previous = tokio::fs::read_to_string(CONFIG_PATH).await.ok();
-    let source = previous.as_deref().unwrap_or("");
-    ensure_current_revision(config, source)?;
-
-    let candidate = render_candidate(source, config)?;
-    tokio::fs::create_dir_all("/etc/snapdog").await?;
-    durable_atomic_write(CONFIG_CANDIDATE, &candidate)
-        .await
-        .context("failed to stage server configuration")?;
-
-    let validation = validate_with_server(CONFIG_CANDIDATE).await;
-    if let Err(error) = validation {
-        let _ = tokio::fs::remove_file(CONFIG_CANDIDATE).await;
-        return Err(error);
-    }
-
-    if let Some(old) = &previous {
-        durable_atomic_write(CONFIG_BACKUP, old)
-            .await
-            .context("failed to create server configuration backup")?;
-    }
-    durable_atomic_write(CONFIG_PATH, &candidate)
-        .await
-        .context("failed to activate server configuration")?;
-    let _ = tokio::fs::remove_file(CONFIG_CANDIDATE).await;
-
-    if let Err(apply_error) = restart_and_wait_healthy().await {
-        let rollback_result = rollback(previous.as_deref()).await;
-        return match rollback_result {
-            Ok(()) => Err(apply_error.context(
-                "new configuration was rejected at runtime; the previous configuration was restored",
-            )),
-            Err(rollback_error) => Err(anyhow::anyhow!(
-                "new configuration failed: {apply_error:#}; rollback also failed: {rollback_error:#}"
-            )),
-        };
-    }
-
-    Ok(())
+/// Canonical first-setup model generated from the same TOML shipped to disk.
+pub fn default_server_config() -> ServerConfig {
+    parse_config_toml(&default_config_toml())
+        .expect("built-in server config must remain valid TOML")
 }
 
-fn render_candidate(source: &str, config: &ServerConfig) -> Result<String> {
+pub fn render_candidate(source: &str, config: &ServerConfig) -> Result<String> {
     if uses_advanced_toml(config) {
         config
             .raw_toml
@@ -439,82 +424,37 @@ fn render_candidate(source: &str, config: &ServerConfig) -> Result<String> {
     Ok(doc.to_string())
 }
 
-async fn validate_with_server(path: &str) -> Result<()> {
-    let output = tokio::process::Command::new(SNAPDOG_BINARY)
+pub async fn validate_with_server(path: &str) -> std::result::Result<(), ConfigGuardError> {
+    let mut command = tokio::process::Command::new(SNAPDOG_BINARY);
+    command
         .args(["--config", path, "--check-config"])
-        .output()
+        .kill_on_drop(true);
+    let output = tokio::time::timeout(std::time::Duration::from_secs(5), command.output())
         .await
-        .context("failed to execute the SnapDog configuration guard")?;
-    anyhow::ensure!(
-        output.status.success(),
-        "SnapDog rejected the configuration: {}",
-        command_error(&output)
-    );
-    Ok(())
-}
-
-async fn restart_and_wait_healthy() -> Result<()> {
-    run_systemctl(&["restart", SERVICE_NAME]).await?;
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
-    loop {
-        if run_systemctl(&["is-active", "--quiet", SERVICE_NAME])
-            .await
-            .is_ok()
-        {
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            if run_systemctl(&["is-active", "--quiet", SERVICE_NAME])
-                .await
-                .is_ok()
-            {
-                return Ok(());
-            }
-        }
-        anyhow::ensure!(
-            tokio::time::Instant::now() < deadline,
-            "SnapDog did not become healthy after restart"
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        .map_err(|_| ConfigGuardError::TimedOut)?
+        .map_err(ConfigGuardError::Unavailable)?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(ConfigGuardError::Rejected(command_error(&output)))
     }
 }
 
-async fn rollback(previous: Option<&str>) -> Result<()> {
-    if let Some(content) = previous {
-        durable_atomic_write(CONFIG_PATH, content).await?;
-    } else if tokio::fs::try_exists(CONFIG_PATH).await? {
-        tokio::fs::remove_file(CONFIG_PATH).await?;
-        #[cfg(unix)]
-        tokio::fs::File::open("/etc/snapdog")
-            .await?
-            .sync_all()
-            .await?;
+pub async fn durable_atomic_write(path: &str, content: &str) -> Result<()> {
+    crate::system::atomic_write_with_mode(path, content, server_file_mode(path)).await
+}
+
+pub fn server_file_mode(path: &str) -> u32 {
+    if matches!(path, CONFIG_PATH | CONFIG_CANDIDATE) {
+        // The DynamicUser service reads these through the snapdog-state group.
+        0o640
+    } else {
+        // Backups, LKG, and the WAL are controller-only and may contain secrets.
+        0o600
     }
-    restart_and_wait_healthy().await
 }
 
-async fn durable_atomic_write(path: &str, content: &str) -> Result<()> {
-    crate::system::atomic_write(path, content).await?;
-    #[cfg(unix)]
-    if let Some(parent) = std::path::Path::new(path).parent() {
-        tokio::fs::File::open(parent).await?.sync_all().await?;
-    }
-    Ok(())
-}
-
-async fn run_systemctl(args: &[&str]) -> Result<()> {
-    let output = tokio::process::Command::new("systemctl")
-        .args(args)
-        .output()
-        .await?;
-    anyhow::ensure!(
-        output.status.success(),
-        "systemctl {} failed: {}",
-        args.join(" "),
-        command_error(&output)
-    );
-    Ok(())
-}
-
-fn command_error(output: &std::process::Output) -> String {
+pub fn command_error(output: &std::process::Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
     if stderr.is_empty() {
         String::from_utf8_lossy(&output.stdout).trim().to_owned()
@@ -523,10 +463,11 @@ fn command_error(output: &std::process::Output) -> String {
     }
 }
 
-fn config_revision(content: &str) -> String {
+pub fn config_revision(content: &str) -> String {
     format!("{:x}", Sha256::digest(content.as_bytes()))
 }
 
+#[cfg(test)]
 fn ensure_current_revision(config: &ServerConfig, source: &str) -> Result<()> {
     anyhow::ensure!(
         !config.revision.is_empty() && config.revision == config_revision(source),
@@ -544,6 +485,19 @@ pub fn uses_advanced_toml(config: &ServerConfig) -> bool {
 
 /// Validate config before writing.
 pub fn validate(config: &ServerConfig) -> Result<()> {
+    anyhow::ensure!(!config.name.trim().is_empty(), "Server name is required");
+    anyhow::ensure!(
+        config.http.port != 0,
+        "HTTP port must be between 1 and 65535"
+    );
+    anyhow::ensure!(
+        config.snapcast.streaming_port != 0,
+        "Snapcast streaming port must be between 1 and 65535"
+    );
+    anyhow::ensure!(
+        config.snapcast.jsonrpc_tcp_port != 0,
+        "Snapcast JSON-RPC port must be between 1 and 65535"
+    );
     anyhow::ensure!(
         [44100, 48000, 88200, 96000, 176_400, 192_000].contains(&config.audio.sample_rate),
         "Invalid sample rate"
@@ -593,12 +547,67 @@ pub fn validate(config: &ServerConfig) -> Result<()> {
         config.http.tls_cert.is_some() == config.http.tls_key.is_some(),
         "TLS certificate and private key must be configured together"
     );
+    anyhow::ensure!(
+        sanitized_public_base_url(&config.http.base_url).is_some(),
+        "HTTP base_url must be an http(s) URL without credentials, query parameters, or a fragment"
+    );
 
     validate_integrations(config)?;
     validate_topology(config)
 }
 
+/// Return a display-safe public endpoint, rejecting URL components that can
+/// contain credentials or bearer material. This deliberately accepts an
+/// optional path because reverse-proxy deployments may publish `SnapDog` below a
+/// path prefix.
+#[must_use]
+pub fn sanitized_public_base_url(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed != value
+        || trimmed.chars().any(char::is_control)
+        || trimmed.contains(['?', '#'])
+    {
+        return None;
+    }
+    let (scheme, remainder) = trimmed.split_once("://")?;
+    if !matches!(scheme, "http" | "https") {
+        return None;
+    }
+    let authority = remainder.split('/').next()?;
+    if authority.is_empty() || authority.contains('@') {
+        return None;
+    }
+    Some(trimmed.trim_end_matches('/').to_string())
+}
+
 fn validate_integrations(config: &ServerConfig) -> Result<()> {
+    anyhow::ensure!(
+        matches!(config.airplay.mode.as_str(), "airplay1" | "airplay2"),
+        "Invalid AirPlay mode"
+    );
+    for address in &config.airplay.bind {
+        address
+            .parse::<std::net::IpAddr>()
+            .with_context(|| format!("Invalid AirPlay bind IP address: {address}"))?;
+    }
+    if let Some(spotify) = config.spotify.as_ref() {
+        anyhow::ensure!(!spotify.name.trim().is_empty(), "Spotify name is required");
+        anyhow::ensure!(
+            [96, 160, 320].contains(&spotify.bitrate),
+            "Spotify bitrate must be 96, 160, or 320"
+        );
+    }
+    if let Some(subsonic) = config.subsonic.as_ref() {
+        anyhow::ensure!(!subsonic.url.trim().is_empty(), "Subsonic URL is required");
+        anyhow::ensure!(
+            ["raw", "flac", "mp3", "opus"].contains(&subsonic.format.as_str()),
+            "Invalid Subsonic format"
+        );
+    }
+    if let Some(mqtt) = config.mqtt.as_ref() {
+        anyhow::ensure!(!mqtt.broker.trim().is_empty(), "MQTT broker is required");
+    }
     if let Some(knx) = &config.knx {
         anyhow::ensure!(
             ["client", "device"].contains(&knx.role.as_str()),
@@ -615,8 +624,11 @@ fn validate_integrations(config: &ServerConfig) -> Result<()> {
     }
 
     for station in &config.radio {
-        anyhow::ensure!(!station.name.is_empty(), "Radio station name required");
-        anyhow::ensure!(!station.url.is_empty(), "Radio station URL required");
+        anyhow::ensure!(
+            !station.name.trim().is_empty(),
+            "Radio station name required"
+        );
+        anyhow::ensure!(!station.url.trim().is_empty(), "Radio station URL required");
     }
 
     Ok(())
@@ -712,10 +724,11 @@ pub fn default_config_toml() -> String {
 
 [system]
 log_level = "info"
+state_dir = "/data/snapdog/state"
 
 [audio]
 sample_rate = 48000
-bit_depth = 32
+bit_depth = 16
 channels = 2
 source_conflict = "last_wins"
 zone_switch_fade_ms = 300
@@ -723,7 +736,7 @@ source_switch_fade_ms = 300
 
 [snapcast]
 streaming_port = 1704
-codec = "f32lz4"
+codec = "flac"
 group_volume_mode = "relative"
 unknown_clients = "accept"
 
@@ -748,7 +761,7 @@ fn parse_document(doc: &DocumentMut) -> ServerConfig {
     if let Some(system) = doc.get("system").and_then(Item::as_table) {
         config.system.log_level = get_str(system, "log_level", "info");
         config.system.log_file = get_optional_str(system, "log_file");
-        config.system.state_dir = get_str(system, "state_dir", "/var/lib/snapdog");
+        config.system.state_dir = get_str(system, "state_dir", "/data/snapdog/state");
     }
 
     if let Some(http) = doc.get("http").and_then(Item::as_table) {
@@ -816,7 +829,10 @@ fn parse_document(doc: &DocumentMut) -> ServerConfig {
             format: get_str(sub, "format", "raw"),
             tls_skip_verify: get_bool(sub, "tls_skip_verify", false),
             cache: SubsonicCacheConfig {
-                path: cache.map_or_else(String::new, |table| get_str(table, "path", "")),
+                path: cache.map_or_else(
+                    || "/data/snapdog/state/cache".to_string(),
+                    |table| get_str(table, "path", "/data/snapdog/state/cache"),
+                ),
                 max_size_mb: cache.map_or(2048, |table| get_u64(table, "max_size_mb", 2048)),
             },
         });
@@ -830,14 +846,14 @@ fn parse_document(doc: &DocumentMut) -> ServerConfig {
     }
 
     if let Some(air) = doc.get("airplay").and_then(Item::as_table) {
-        config.airplay = Some(AirplayConfig {
+        config.airplay = AirplayConfig {
             password: air
                 .get("password")
                 .and_then(|v| v.as_str())
                 .map(String::from),
             mode: get_str(air, "mode", "airplay2"),
             bind: get_string_array(air, "bind"),
-        });
+        };
     }
 
     if let Some(mqtt) = doc.get("mqtt").and_then(Item::as_table) {
@@ -1084,7 +1100,8 @@ fn apply_source_sections(doc: &mut DocumentMut, config: &ServerConfig) {
         doc,
         "airplay",
         &["mode", "password", "bind"],
-        config.airplay.as_ref().map(|a| {
+        Some({
+            let a = &config.airplay;
             let mut t = Table::new();
             if a.mode != "airplay2" {
                 t["mode"] = toml_edit::value(&a.mode);
@@ -1989,6 +2006,67 @@ default_latency = 125
         };
         assert!(ensure_current_revision(&stale, current).is_err());
         assert!(ensure_current_revision(&ServerConfig::default(), current).is_err());
+    }
+
+    #[test]
+    fn public_base_url_rejects_secret_bearing_components() {
+        assert_eq!(
+            sanitized_public_base_url("https://snapdog.example/server").as_deref(),
+            Some("https://snapdog.example/server")
+        );
+        for unsafe_url in [
+            "https://user:secret@snapdog.example",
+            "https://snapdog.example?token=secret",
+            "https://snapdog.example#secret",
+            "ftp://snapdog.example",
+        ] {
+            assert!(
+                sanitized_public_base_url(unsafe_url).is_none(),
+                "{unsafe_url}"
+            );
+        }
+    }
+
+    #[test]
+    fn structured_validation_rejects_empty_identity_ports_and_integrations() {
+        let baseline = default_server_config();
+        assert!(validate(&baseline).is_ok());
+
+        let mut config = baseline.clone();
+        config.name = "   ".to_string();
+        assert!(validate(&config).unwrap_err().to_string().contains("name"));
+
+        let mut config = baseline.clone();
+        config.snapcast.streaming_port = 0;
+        assert!(
+            validate(&config)
+                .unwrap_err()
+                .to_string()
+                .contains("streaming")
+        );
+
+        let mut config = baseline.clone();
+        config.spotify = Some(SpotifyConfig {
+            name: "SnapDog".to_string(),
+            bitrate: 123,
+        });
+        assert!(
+            validate(&config)
+                .unwrap_err()
+                .to_string()
+                .contains("bitrate")
+        );
+
+        let mut config = baseline;
+        config.subsonic = Some(SubsonicConfig {
+            url: "  ".to_string(),
+            username: String::new(),
+            password: String::new(),
+            format: "raw".to_string(),
+            tls_skip_verify: false,
+            cache: SubsonicCacheConfig::default(),
+        });
+        assert!(validate(&config).unwrap_err().to_string().contains("URL"));
     }
 
     #[test]

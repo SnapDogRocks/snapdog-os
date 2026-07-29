@@ -12,6 +12,7 @@ use rust_embed::Embed;
 use serde::{Deserialize, Serialize};
 
 use crate::server_config::{self, ServerConfig};
+use crate::server_manager::{self, ConfigPayload, ManagerError, ManagerErrorKind, SetupPayload};
 use crate::system;
 
 // --- Static files ---
@@ -100,13 +101,35 @@ pub fn api() -> Router {
         .route("/ssh", get(get_ssh).put(put_ssh))
         // Server
         .route("/server", get(get_server).put(put_server))
+        .route("/server/state", get(get_server_state))
+        .route(
+            "/server/config",
+            get(get_server_config).put(put_server_config),
+        )
+        .route("/server/config/validate", post(post_server_config_validate))
+        .route("/server/setup", post(post_server_setup))
+        .route("/server/actions/start", post(post_server_start))
+        .route("/server/actions/stop", post(post_server_stop))
+        .route("/server/actions/restart", post(post_server_restart))
+        .route("/server/actions/retry", post(post_server_retry))
+        .route("/server/diagnostics", get(get_server_diagnostics))
         .route("/server/status", get(get_server_status))
         .route("/server/enable", post(post_server_enable))
         .route("/server/disable", post(post_server_disable))
         // Settings export/import
         .route("/settings/export", get(get_settings_export))
-        .route("/settings/preview", post(post_settings_preview))
-        .route("/settings/import", post(post_settings_import))
+        .route(
+            "/settings/preview",
+            post(post_settings_preview).layer(DefaultBodyLimit::max(
+                crate::settings::SETTINGS_UPLOAD_LIMIT_BYTES,
+            )),
+        )
+        .route(
+            "/settings/import",
+            post(post_settings_import).layer(DefaultBodyLimit::max(
+                crate::settings::SETTINGS_UPLOAD_LIMIT_BYTES,
+            )),
+        )
         // Now Playing
         .route("/now-playing", get(get_now_playing))
         .route("/now-playing/command", post(post_now_playing_command))
@@ -121,6 +144,36 @@ async fn api_not_found() -> (StatusCode, Json<serde_json::Value>) {
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error": "not found"})),
     )
+}
+
+pub async fn no_store_api_responses(request: Request, next: axum::middleware::Next) -> Response {
+    let is_api = request.uri().path().starts_with("/api");
+    let mut response = next.run(request).await;
+    if is_api {
+        apply_no_store_header(&mut response);
+    }
+    response
+}
+
+fn apply_no_store_header(response: &mut Response) {
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+}
+
+#[cfg(test)]
+mod api_response_header_tests {
+    use super::*;
+
+    #[test]
+    fn sensitive_api_responses_are_never_cacheable() {
+        let mut response = StatusCode::OK.into_response();
+        apply_no_store_header(&mut response);
+        assert_eq!(
+            response.headers().get(header::CACHE_CONTROL),
+            Some(&HeaderValue::from_static("no-store"))
+        );
+    }
 }
 
 // --- Auth handlers ---
@@ -542,71 +595,162 @@ mod mock_handlers {
             .await
             .map_or(StatusCode::INTERNAL_SERVER_ERROR, |()| StatusCode::OK)
     }
-    pub async fn get_server() -> Json<crate::server_config::ServerConfig> {
-        use crate::server_config::{ClientEntry, RadioStation, ServerConfig, ZoneConfig};
-        Json(ServerConfig {
-            zones: vec![ZoneConfig {
-                source_index: None,
-                name: "Living Room".into(),
-                icon: "🛋️".into(),
-                sink: None,
-                airplay_name: None,
-                spotify_name: None,
-                group_volume_mode: None,
-                knx: None,
-            }],
-            clients: vec![ClientEntry {
-                source_index: None,
-                name: "Kitchen".into(),
-                mac: "aa:bb:cc:dd:ee:ff".into(),
-                zone: "Living Room".into(),
-                icon: "🍽️".into(),
-                max_volume: 100,
-                default_volume: 50,
-                default_latency: 0,
-                knx: None,
-            }],
-            radio: vec![RadioStation {
-                source_index: None,
-                name: "SWR3".into(),
-                url: "https://swr3.de/stream".into(),
-                cover: None,
-            }],
-            ..ServerConfig::default()
-        })
+    pub async fn get_server(
+        State(m): State<crate::mock::MockState>,
+    ) -> Json<crate::server_config::ServerConfig> {
+        Json(m.get_server_legacy().await)
     }
     pub async fn put_server(
+        State(m): State<crate::mock::MockState>,
         Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
-        Json(_body): Json<crate::server_config::ServerConfig>,
-    ) -> StatusCode {
-        tracing::info!("[mock] put_server");
+        Json(body): Json<crate::server_config::ServerConfig>,
+    ) -> Result<StatusCode, axum::response::Response> {
+        m.apply_server(crate::server_manager::ConfigPayload::Direct(body))
+            .await
+            .map_err(super::server_manager_error_response)?;
         let _ = tx.send("server_changed".to_string());
-        StatusCode::OK
+        Ok(StatusCode::OK)
     }
-    static SERVER_ENABLED: std::sync::atomic::AtomicBool =
-        std::sync::atomic::AtomicBool::new(false);
-    pub async fn get_server_status() -> Json<super::ServerStatus> {
-        let enabled = SERVER_ENABLED.load(std::sync::atomic::Ordering::Relaxed);
+
+    pub async fn get_server_state(
+        State(m): State<crate::mock::MockState>,
+    ) -> Json<crate::server_manager::ServerState> {
+        Json(m.server_state().await)
+    }
+
+    pub async fn get_server_config(
+        State(m): State<crate::mock::MockState>,
+    ) -> Json<crate::server_manager::ServerConfigEnvelope> {
+        Json(m.server_config_envelope().await)
+    }
+
+    pub async fn validate_server_config(
+        State(m): State<crate::mock::MockState>,
+        Json(body): Json<crate::server_manager::ConfigPayload>,
+    ) -> Result<Json<crate::server_manager::ValidationResponse>, axum::response::Response> {
+        let validation = m
+            .validate_server(body)
+            .await
+            .map_err(super::server_manager_error_response)?;
+        Ok(Json(validation))
+    }
+
+    pub async fn apply_server_config(
+        State(m): State<crate::mock::MockState>,
+        Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
+        Json(body): Json<crate::server_manager::ConfigPayload>,
+    ) -> Result<Json<serde_json::Value>, axum::response::Response> {
+        let state = m
+            .apply_server(body)
+            .await
+            .map_err(super::server_manager_error_response)?;
+        let _ = tx.send("server_changed".to_string());
+        Ok(Json(serde_json::json!({ "state": state })))
+    }
+
+    pub async fn setup_server(
+        State(m): State<crate::mock::MockState>,
+        Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
+        Json(body): Json<crate::server_manager::SetupPayload>,
+    ) -> Result<Json<serde_json::Value>, axum::response::Response> {
+        let state = m
+            .setup_server(body)
+            .await
+            .map_err(super::server_manager_error_response)?;
+        let _ = tx.send("server_changed".to_string());
+        Ok(Json(serde_json::json!({ "state": state })))
+    }
+
+    async fn mock_server_action(
+        m: crate::mock::MockState,
+        tx: tokio::sync::broadcast::Sender<String>,
+        action: &str,
+    ) -> Result<Json<serde_json::Value>, axum::response::Response> {
+        let state = m
+            .server_action(action)
+            .await
+            .map_err(super::server_manager_error_response)?;
+        let _ = tx.send("server_changed".to_string());
+        Ok(Json(serde_json::json!({ "state": state })))
+    }
+
+    pub async fn start_server(
+        State(m): State<crate::mock::MockState>,
+        Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
+    ) -> Result<Json<serde_json::Value>, axum::response::Response> {
+        mock_server_action(m, tx, "start").await
+    }
+
+    pub async fn stop_server(
+        State(m): State<crate::mock::MockState>,
+        Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
+    ) -> Result<Json<serde_json::Value>, axum::response::Response> {
+        mock_server_action(m, tx, "stop").await
+    }
+
+    pub async fn restart_server(
+        State(m): State<crate::mock::MockState>,
+        Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
+    ) -> Result<Json<serde_json::Value>, axum::response::Response> {
+        mock_server_action(m, tx, "restart").await
+    }
+
+    pub async fn retry_server(
+        State(m): State<crate::mock::MockState>,
+        Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
+    ) -> Result<Json<serde_json::Value>, axum::response::Response> {
+        mock_server_action(m, tx, "retry").await
+    }
+
+    pub async fn get_server_diagnostics(
+        State(m): State<crate::mock::MockState>,
+    ) -> Json<crate::server_manager::ServerDiagnostics> {
+        Json(m.server_diagnostics().await)
+    }
+
+    #[derive(serde::Deserialize)]
+    pub struct ServerScenarioRequest {
+        scenario: crate::mock::MockServerScenario,
+    }
+
+    pub async fn set_server_scenario(
+        State(m): State<crate::mock::MockState>,
+        Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
+        Json(body): Json<ServerScenarioRequest>,
+    ) -> Json<crate::server_manager::ServerState> {
+        m.set_server_scenario(body.scenario).await;
+        let _ = tx.send("server_changed".to_string());
+        Json(m.server_state().await)
+    }
+
+    pub async fn get_server_status(
+        State(m): State<crate::mock::MockState>,
+    ) -> Json<super::ServerStatus> {
+        let state = m.server_state().await;
         Json(super::ServerStatus {
-            enabled,
-            running: enabled,
+            enabled: state.enabled,
+            running: state.running,
         })
     }
     pub async fn post_server_enable(
+        State(m): State<crate::mock::MockState>,
         Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
-    ) -> StatusCode {
-        SERVER_ENABLED.store(true, std::sync::atomic::Ordering::Relaxed);
-        tracing::info!("[mock] server enabled");
+    ) -> Result<StatusCode, axum::response::Response> {
+        m.server_action("start")
+            .await
+            .map_err(super::server_manager_error_response)?;
         let _ = tx.send("server_changed".to_string());
-        StatusCode::ACCEPTED
+        Ok(StatusCode::ACCEPTED)
     }
     pub async fn post_server_disable(
+        State(m): State<crate::mock::MockState>,
         Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
-    ) -> StatusCode {
-        SERVER_ENABLED.store(false, std::sync::atomic::Ordering::Relaxed);
-        tracing::info!("[mock] server disabled");
+    ) -> Result<StatusCode, axum::response::Response> {
+        m.server_action("stop")
+            .await
+            .map_err(super::server_manager_error_response)?;
         let _ = tx.send("server_changed".to_string());
-        StatusCode::ACCEPTED
+        Ok(StatusCode::ACCEPTED)
     }
 
     // Auth (no-op in mock — always authenticated)
@@ -706,9 +850,22 @@ pub fn api_mock(state: crate::mock::MockState) -> Router {
         .route("/ssh", get(h::get_ssh).put(h::put_ssh))
         // Server
         .route("/server", get(h::get_server).put(h::put_server))
+        .route("/server/state", get(h::get_server_state))
+        .route(
+            "/server/config",
+            get(h::get_server_config).put(h::apply_server_config),
+        )
+        .route("/server/config/validate", post(h::validate_server_config))
+        .route("/server/setup", post(h::setup_server))
+        .route("/server/actions/start", post(h::start_server))
+        .route("/server/actions/stop", post(h::stop_server))
+        .route("/server/actions/restart", post(h::restart_server))
+        .route("/server/actions/retry", post(h::retry_server))
+        .route("/server/diagnostics", get(h::get_server_diagnostics))
         .route("/server/status", get(h::get_server_status))
         .route("/server/enable", post(h::post_server_enable))
         .route("/server/disable", post(h::post_server_disable))
+        .route("/mock/server/scenario", post(h::set_server_scenario))
         .with_state(state)
         .fallback(api_not_found)
 }
@@ -794,8 +951,11 @@ async fn get_health(Extension(health): Extension<HealthState>) -> Json<serde_jso
     }))
 }
 
-async fn get_system() -> Json<SystemInfo> {
-    Json(system::get_system_info().await)
+async fn get_system() -> Result<Json<SystemInfo>, StatusCode> {
+    system::get_system_info().await.map(Json).map_err(|error| {
+        tracing::error!(%error, "get_system: ctrl.toml is unreadable or invalid");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })
 }
 
 async fn put_system(Json(body): Json<SystemUpdate>) -> StatusCode {
@@ -933,8 +1093,11 @@ fn legacy_update_progress(
     })
 }
 
-async fn get_update_check() -> Json<UpdateCheckResponse> {
-    Json(system::check_update().await)
+async fn get_update_check() -> Result<Json<UpdateCheckResponse>, StatusCode> {
+    system::check_update().await.map(Json).map_err(|error| {
+        tracing::error!(%error, "get_update_check: ctrl.toml is unreadable or invalid");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })
 }
 
 async fn get_update_status() -> Result<Json<UpdateStatus>, StatusCode> {
@@ -1044,8 +1207,11 @@ pub struct AutoUpdateConfig {
     pub time: String,
 }
 
-async fn get_auto_update() -> Json<AutoUpdateConfig> {
-    Json(system::get_auto_update().await)
+async fn get_auto_update() -> Result<Json<AutoUpdateConfig>, StatusCode> {
+    system::get_auto_update().await.map(Json).map_err(|error| {
+        tracing::error!(%error, "get_auto_update: ctrl.toml is unreadable or invalid");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })
 }
 
 async fn get_auto_update_status() -> Json<system::AutoUpdateRuntimeStatus> {
@@ -1075,7 +1241,13 @@ async fn post_update() -> StatusCode {
     }
     // Stage the channel bundle ourselves so download bytes are observable, then
     // hand the verified local file to RAUC for installation.
-    let config = system::get_auto_update().await;
+    let config = match system::get_auto_update().await {
+        Ok(config) => config,
+        Err(error) => {
+            tracing::error!(%error, "post_update: refusing defaults from invalid ctrl.toml");
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
+    };
     let url = system::bundle_url(&config.channel).await;
     match crate::update::start_online(url).await {
         Ok(()) => StatusCode::ACCEPTED,
@@ -1413,8 +1585,11 @@ async fn post_wifi_scan() -> Json<WifiScanResult> {
 /// Returns a masked `SoftApView`: the passphrase is included only while the setup
 /// AP is actually running (so it can be shown for first-join) and withheld
 /// otherwise, plus the SSID + country for display.
-async fn get_softap() -> Json<system::SoftApView> {
-    Json(system::get_softap_view().await)
+async fn get_softap() -> Result<Json<system::SoftApView>, StatusCode> {
+    system::get_softap_view().await.map(Json).map_err(|error| {
+        tracing::error!(%error, "get_softap: ctrl.toml is unreadable or invalid");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })
 }
 
 async fn put_softap(Json(body): Json<system::SoftApConfig>) -> impl axum::response::IntoResponse {
@@ -1590,95 +1765,126 @@ async fn get_server() -> Result<Json<ServerConfig>, StatusCode> {
     })
 }
 
-async fn put_server(
-    Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
-    Json(body): Json<ServerConfig>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    if !server_config::uses_advanced_toml(&body)
-        && let Err(error) = server_config::validate(&body)
-    {
-        tracing::warn!(error = %error, "invalid server configuration request");
-        return Err((StatusCode::BAD_REQUEST, error.to_string()));
-    }
-    if let Err(error) = server_config::apply_and_restart(&body).await {
-        tracing::error!(error = %error, "failed to apply server configuration");
-        let message = format!("{error:#}");
-        let status = if message.contains("changed since it was loaded") {
-            StatusCode::CONFLICT
-        } else if message.contains("rejected the configuration")
-            || message.contains("advanced TOML is invalid")
-        {
-            StatusCode::UNPROCESSABLE_ENTITY
-        } else {
-            StatusCode::INTERNAL_SERVER_ERROR
-        };
-        return Err((status, message));
-    }
-    let _ = tx.send("server_changed".to_string());
+async fn put_server(Json(body): Json<ServerConfig>) -> Result<StatusCode, Response> {
+    server_manager::apply_config(ConfigPayload::Direct(body))
+        .await
+        .map_err(server_manager_error_response)?;
     Ok(StatusCode::OK)
 }
 
-async fn get_server_status() -> Json<ServerStatus> {
-    let config = system::get_service_config().await;
-    let enabled = config.get("server").copied().unwrap_or(false);
-    let running = run_systemctl(&["is-active", "snapdog"]).await.is_ok();
-    Json(ServerStatus { enabled, running })
+async fn get_server_state() -> Json<server_manager::ServerState> {
+    Json(server_manager::server_state().await)
 }
 
-async fn post_server_enable(
-    Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
-) -> StatusCode {
-    // Write default config if none exists
-    if tokio::fs::metadata("/etc/snapdog/snapdog.toml")
+async fn get_server_config() -> Json<server_manager::ServerConfigEnvelope> {
+    Json(server_manager::config_envelope().await)
+}
+
+async fn post_server_config_validate(
+    Json(body): Json<ConfigPayload>,
+) -> Result<Json<server_manager::ValidationResponse>, Response> {
+    let validation = server_manager::validate_config(body)
         .await
-        .is_err()
-    {
-        let default = server_config::default_config_toml();
-        let _ = tokio::fs::create_dir_all("/etc/snapdog").await;
-        if let Err(e) = tokio::fs::write("/etc/snapdog/snapdog.toml", default).await {
-            tracing::error!("post_server_enable write default: {e}");
-            return StatusCode::INTERNAL_SERVER_ERROR;
-        }
-    }
-    if let Err(e) = system::set_service("server", true).await {
-        tracing::error!("post_server_enable: {e}");
-        return StatusCode::INTERNAL_SERVER_ERROR;
-    }
-    let _ = tx.send("server_changed".to_string());
-    StatusCode::ACCEPTED
+        .map_err(server_manager_error_response)?;
+    Ok(Json(validation))
 }
 
-async fn post_server_disable(
-    Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
-) -> StatusCode {
-    if let Err(e) = system::set_service("server", false).await {
-        tracing::error!("post_server_disable: {e}");
-        return StatusCode::INTERNAL_SERVER_ERROR;
-    }
-    let _ = tx.send("server_changed".to_string());
-    StatusCode::ACCEPTED
+async fn put_server_config(
+    Json(body): Json<ConfigPayload>,
+) -> Result<Json<serde_json::Value>, Response> {
+    let state = server_manager::apply_config(body)
+        .await
+        .map_err(server_manager_error_response)?;
+    Ok(Json(serde_json::json!({ "state": state })))
 }
 
-async fn run_systemctl(args: &[&str]) -> anyhow::Result<()> {
-    let output = tokio::process::Command::new("systemctl")
-        .args(args)
-        .output()
-        .await?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        anyhow::bail!(
-            "systemctl {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr)
-        )
+async fn post_server_setup(
+    Json(body): Json<SetupPayload>,
+) -> Result<Json<serde_json::Value>, Response> {
+    let state = server_manager::setup(body)
+        .await
+        .map_err(server_manager_error_response)?;
+    Ok(Json(serde_json::json!({ "state": state })))
+}
+
+async fn post_server_start() -> Result<Json<serde_json::Value>, Response> {
+    server_action_response(server_manager::start().await)
+}
+
+async fn post_server_stop() -> Result<Json<serde_json::Value>, Response> {
+    server_action_response(server_manager::stop().await)
+}
+
+async fn post_server_restart() -> Result<Json<serde_json::Value>, Response> {
+    server_action_response(server_manager::restart().await)
+}
+
+async fn post_server_retry() -> Result<Json<serde_json::Value>, Response> {
+    server_action_response(server_manager::retry().await)
+}
+
+#[allow(clippy::result_large_err)]
+fn server_action_response(
+    result: Result<server_manager::ServerState, ManagerError>,
+) -> Result<Json<serde_json::Value>, Response> {
+    let state = result.map_err(server_manager_error_response)?;
+    Ok(Json(serde_json::json!({ "state": state })))
+}
+
+async fn get_server_diagnostics() -> Json<server_manager::ServerDiagnostics> {
+    Json(server_manager::diagnostics().await)
+}
+
+fn server_manager_error_response(error: ManagerError) -> Response {
+    let ManagerError { kind, issue } = error;
+    tracing::warn!(
+        code = %issue.code,
+        stage = %issue.stage,
+        detail = %issue.detail,
+        "SnapDog server operation failed"
+    );
+    let status = match kind {
+        ManagerErrorKind::Conflict => StatusCode::CONFLICT,
+        ManagerErrorKind::Invalid => StatusCode::UNPROCESSABLE_ENTITY,
+        ManagerErrorKind::Runtime => StatusCode::SERVICE_UNAVAILABLE,
+        ManagerErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (status, Json(serde_json::json!({ "issue": issue }))).into_response()
+}
+
+async fn get_server_status() -> Json<ServerStatus> {
+    let state = server_manager::server_state().await;
+    Json(ServerStatus {
+        enabled: state.enabled,
+        running: state.running,
+    })
+}
+
+async fn post_server_enable() -> Result<StatusCode, Response> {
+    let envelope = server_manager::config_envelope().await;
+    if envelope.state == server_manager::ConfigState::Missing {
+        return Err(server_manager_error_response(
+            server_manager::setup_required_error(),
+        ));
     }
+    server_manager::start()
+        .await
+        .map_err(server_manager_error_response)?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+async fn post_server_disable() -> Result<StatusCode, Response> {
+    server_manager::stop()
+        .await
+        .map_err(server_manager_error_response)?;
+    Ok(StatusCode::ACCEPTED)
 }
 
 // ── Settings export/import ────────────────────────────────────
 
 async fn get_settings_export() -> impl IntoResponse {
-    match crate::settings::export_settings() {
+    let settings_guard = crate::settings::lock_settings_mutation().await;
+    match crate::settings::export_settings(&settings_guard) {
         Ok(data) => (
             StatusCode::OK,
             [
@@ -1712,6 +1918,9 @@ async fn post_settings_preview(body: axum::body::Bytes) -> impl IntoResponse {
     }
 }
 
+// Both leases intentionally span the successful response and move into the
+// reboot task; shortening either lifetime would reopen the overwrite race.
+#[allow(clippy::significant_drop_tightening)]
 async fn post_settings_import(body: axum::body::Bytes) -> impl IntoResponse {
     let reboot_guard = match crate::update::reserve_upload() {
         Ok(guard) => guard,
@@ -1731,25 +1940,154 @@ async fn post_settings_import(body: axum::body::Bytes) -> impl IntoResponse {
         )
             .into_response();
     }
-    if let Err(e) = crate::settings::import_settings(&body) {
-        tracing::error!("settings import failed: {e}");
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response();
-    }
+    let imported_server_source = match crate::settings::validated_server_config_source(&body) {
+        Ok(source) => source,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": error.to_string()})),
+            )
+                .into_response();
+        }
+    };
+    let server_import =
+        match server_manager::prepare_settings_import(imported_server_source.as_deref()).await {
+            Ok(guard) => guard,
+            Err(error) if error.kind == ManagerErrorKind::Invalid => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "issue": error.issue })),
+                )
+                    .into_response();
+            }
+            Err(error) => return server_manager_error_response(error),
+        };
+    // Global lock order is server operation -> settings mutation -> ctrl config.
+    // Keep every lease through import and hand them to the reboot task on success.
+    let settings_guard = crate::settings::lock_settings_mutation().await;
+    let ctrl_import = system::lock_ctrl_config_for_settings_import().await;
+    let settings_import = match crate::settings::begin_settings_import(&body, &settings_guard) {
+        Ok(transaction) => transaction,
+        Err(e) => {
+            tracing::error!("settings import failed: {e}");
+            drop(ctrl_import);
+            drop(settings_guard);
+            let recovered = server_import.abort(&e).await;
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": e.to_string(),
+                    "previous_server_state_restored": recovered,
+                })),
+            )
+                .into_response();
+        }
+    };
 
     tracing::info!("Settings imported, rebooting in 1s");
-    tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        match system::reboot().await {
-            Ok(()) => std::mem::forget(reboot_guard),
-            Err(error) => tracing::error!(%error, "settings-import reboot failed"),
-        }
-    });
+    drop(tokio::spawn(finalize_settings_import_reboot(
+        reboot_guard,
+        ctrl_import,
+        settings_guard,
+        settings_import,
+        server_import,
+    )));
 
     Json(serde_json::json!({"status": "ok", "rebooting": true})).into_response()
+}
+
+async fn finalize_settings_import_reboot(
+    reboot_guard: crate::update::BusyGuard,
+    ctrl_import: system::CtrlConfigImportGuard,
+    settings_guard: crate::settings::SettingsMutationGuard,
+    settings_import: crate::settings::SettingsImportTransaction,
+    server_import: server_manager::SettingsImportGuard,
+) {
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    match system::reboot().await {
+        Ok(()) => {
+            settings_import.leave_for_restart();
+            std::mem::forget(reboot_guard);
+            std::mem::forget(ctrl_import);
+            std::mem::forget(settings_guard);
+            // No await/cancellation point is allowed after systemd accepted
+            // the reboot and before the final operation lease is retained.
+            server_import.hold_until_process_exit();
+        }
+        Err(error) => {
+            tracing::error!(%error, "settings-import reboot failed");
+            match settings_import.rollback() {
+                Ok(()) => {
+                    drop(ctrl_import);
+                    drop(settings_guard);
+                    let detail =
+                        format!("reboot failed: {error}; the previous settings were restored");
+                    let _ = server_import.abort(&detail).await;
+                }
+                Err(rollback_error) => {
+                    recover_pending_settings_rollback(
+                        reboot_guard,
+                        ctrl_import,
+                        settings_guard,
+                        server_import,
+                        error.to_string(),
+                        rollback_error,
+                    )
+                    .await;
+                }
+            }
+        }
+    }
+}
+
+async fn recover_pending_settings_rollback(
+    _reboot_guard: crate::update::BusyGuard,
+    ctrl_import: system::CtrlConfigImportGuard,
+    settings_guard: crate::settings::SettingsMutationGuard,
+    server_import: server_manager::SettingsImportGuard,
+    reboot_detail: String,
+    rollback_error: anyhow::Error,
+) {
+    tracing::error!(
+        %rollback_error,
+        "settings-import reboot failed and settings rollback is pending"
+    );
+    let mut rollback_detail = format!("{rollback_error:#}");
+    server_import
+        .mark_rollback_pending(&reboot_detail, &rollback_detail)
+        .await;
+
+    // Never reconcile or start SnapDog against a partially restored settings
+    // set. Keep server/settings/ctrl and firmware leases held while retrying.
+    let mut retry_delay = std::time::Duration::from_secs(1);
+    loop {
+        match crate::settings::retry_pending_import_rollback() {
+            Ok(()) => {
+                drop(ctrl_import);
+                drop(settings_guard);
+                let detail = format!(
+                    "reboot failed: {reboot_detail}; the initially failed settings rollback was recovered"
+                );
+                let _ = server_import.abort(&detail).await;
+                break;
+            }
+            Err(recovery_error) => {
+                rollback_detail = format!("{recovery_error:#}");
+                tracing::error!(
+                    error = %recovery_error,
+                    "settings rollback retry failed; SnapDog remains stopped"
+                );
+                server_import
+                    .mark_rollback_pending(&reboot_detail, &rollback_detail)
+                    .await;
+                tokio::time::sleep(retry_delay).await;
+                retry_delay = std::cmp::min(
+                    retry_delay.saturating_mul(2),
+                    std::time::Duration::from_secs(30),
+                );
+            }
+        }
+    }
 }
 
 // ── Now Playing ───────────────────────────────────────────────

@@ -32,6 +32,9 @@ jobs:
       - name: Test release manifest contract
         run: make check-release-manifest
 
+      - name: Test SnapDog server service contract
+        run: make check-server-service
+
       - name: Install Rust toolchain
         run: |
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
@@ -48,6 +51,9 @@ jobs:
 
       - name: WebUI i18n completeness
         run: cd snapdog-ctrl/webui && npm run i18n:check
+
+      - name: Test server config merge
+        run: cd snapdog-ctrl/webui && npm run test:server-merge
 
       - name: Lint webui
         run: cd snapdog-ctrl/webui && npm run lint
@@ -198,3 +204,5 @@ jobs:
           bash -n buildroot/board/raspberrypi/post-image-ab.sh
           bash -n buildroot/rauc/create-bundle.sh
           sh -n buildroot/package/snapdog-rauc/boot-handler.sh
+          sh -n buildroot/package/snapdog-server/snapdog-data-init
+          sh -n buildroot/package/snapdog-server/snapdog-run

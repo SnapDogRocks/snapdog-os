@@ -1,0 +1,26 @@
+#!/bin/sh
+# Fail once, with a distinct systemd-visible status, when the installed server
+# configuration is invalid. Keep the real SnapDog process as the service's main
+# process so signals and runtime exit statuses remain unchanged.
+
+set -u
+
+SNAPDOG=/usr/bin/snapdog
+CONFIG=/etc/snapdog/snapdog.toml
+
+config_status=0
+"$SNAPDOG" --config "$CONFIG" --check-config >/dev/null || config_status=$?
+
+# SnapDog 0.27.0 returns 1 for a rejected --check-config invocation. Reserve 78
+# for that audited case so systemd can distinguish it from runtime failures.
+if [ "$config_status" -eq 1 ]; then
+  echo "snapdog-run: configuration rejected: $CONFIG" >&2
+  exit 78
+fi
+
+if [ "$config_status" -ne 0 ]; then
+  echo "snapdog-run: configuration check failed with status $config_status" >&2
+  exit "$config_status"
+fi
+
+exec "$SNAPDOG" --config "$CONFIG"

@@ -20,6 +20,8 @@ mod routes;
 #[cfg_attr(debug_assertions, allow(dead_code))]
 mod schedule;
 mod server_config;
+#[cfg_attr(debug_assertions, allow(dead_code))]
+mod server_manager;
 mod settings;
 #[cfg_attr(debug_assertions, allow(dead_code))]
 mod system;
@@ -58,6 +60,10 @@ async fn main() -> anyhow::Result<()> {
             .with(tracing_subscriber::fmt::layer())
             .init();
     }
+
+    // Resolve a power-loss-interrupted settings import before authentication,
+    // networking, schedulers, or service intent read any potentially mixed set.
+    settings::recover_interrupted_import()?;
 
     let app = build_app().await;
 
@@ -105,6 +111,7 @@ async fn build_app() -> Router {
 
     let (tx, _rx) = tokio::sync::broadcast::channel::<String>(100);
     update::set_broadcaster(tx.clone());
+    server_manager::set_broadcaster(tx.clone());
     let ws_sender = ws::WsSender(tx);
 
     Router::new()
@@ -122,6 +129,7 @@ async fn build_app() -> Router {
         .layer(axum::Extension(ws_sender))
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
+        .layer(axum::middleware::from_fn(routes::no_store_api_responses))
 }
 
 #[cfg(not(debug_assertions))]
@@ -137,7 +145,13 @@ async fn build_app() -> Router {
         }
         let _ = network::configure_resolved().await;
 
-        let softap = system::get_softap_config().await;
+        let softap = match system::get_softap_config().await {
+            Ok(config) => config,
+            Err(error) => {
+                tracing::error!(%error, "Refusing to apply SoftAP defaults from invalid ctrl.toml");
+                return;
+            }
+        };
 
         // WiFi already configured: nothing has started the supplicant on this
         // path yet, so bring the client up and we're done (no AP).
@@ -232,11 +246,6 @@ async fn build_app() -> Router {
             }
         }
 
-        // Apply service config (start/stop ssh, client, server based on ctrl.toml)
-        tokio::spawn(async {
-            system::apply_service_config().await;
-        });
-
         // Consolidate the legacy /data/snapdog-os.channel mirror into ctrl.toml
         // before the scheduler reads its canonical channel configuration.
         system::migrate_legacy_update_channel().await;
@@ -249,7 +258,19 @@ async fn build_app() -> Router {
 
     let (tx, _rx) = tokio::sync::broadcast::channel::<String>(100);
     update::set_broadcaster(tx.clone());
+    server_manager::set_broadcaster(tx.clone());
     let ws_sender = ws::WsSender(tx.clone());
+
+    if !has_critical {
+        tokio::spawn(async {
+            // Generic service setup deliberately excludes snapdog.service;
+            // its own manager performs crash recovery and readiness gating.
+            if let Err(error) = system::apply_service_config().await {
+                tracing::error!(%error, "Refusing to apply service defaults from invalid ctrl.toml");
+            }
+            server_manager::reconcile_at_boot().await;
+        });
+    }
 
     // Start MPRIS2 poller if client is enabled
     let now_playing = if system::is_service_enabled("client").await {
@@ -283,6 +304,7 @@ async fn build_app() -> Router {
         .layer(CompressionLayer::new())
         .layer(axum::Extension(now_playing))
         .layer(TraceLayer::new_for_http())
+        .layer(axum::middleware::from_fn(routes::no_store_api_responses))
 }
 
 /// Controller restarts do not stop the separate RAUC service. One-time startup

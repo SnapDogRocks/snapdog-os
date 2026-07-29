@@ -85,12 +85,12 @@ async fn inactive_root_partition_exists() -> Result<()> {
 
 // --- System ---
 
-pub async fn get_system_info() -> SystemInfo {
+pub async fn get_system_info() -> Result<SystemInfo> {
     let hostname = read_file("/etc/hostname").await.unwrap_or_default();
     let version = read_file("/etc/snapdog-os.version")
         .await
         .unwrap_or_default();
-    let channel = get_auto_update().await.channel;
+    let channel = get_auto_update().await?.channel;
     let uptime = get_uptime().await;
 
     let kernel = tokio::process::Command::new("uname")
@@ -115,7 +115,7 @@ pub async fn get_system_info() -> SystemInfo {
         })
         .unwrap_or_default();
 
-    SystemInfo {
+    Ok(SystemInfo {
         hostname: hostname.trim().to_string(),
         version: version.trim().to_string(),
         channel,
@@ -127,7 +127,7 @@ pub async fn get_system_info() -> SystemInfo {
             ctrl: env!("SNAPDOG_CTRL_VERSION").to_string(),
             kernel,
         },
-    }
+    })
 }
 
 pub async fn detect_board_model() -> String {
@@ -142,11 +142,14 @@ pub async fn detect_board_model() -> String {
 }
 
 pub async fn set_system(hostname: Option<String>, channel: Option<String>) -> Result<()> {
+    // Hostname is part of the settings archive; channel then acquires the ctrl
+    // lock, preserving the global settings -> ctrl lock order.
+    let _settings_guard = crate::settings::lock_settings_mutation().await;
     if let Some(h) = hostname {
         run_cmd("hostnamectl", &["set-hostname", &h]).await?;
     }
     if let Some(c) = channel {
-        let mut config = get_auto_update().await;
+        let mut config = get_auto_update().await?;
         config.channel = c;
         set_auto_update(config).await?;
     }
@@ -332,7 +335,7 @@ pub async fn set_wifi(
     password: &str,
     static_cfg: Option<&crate::network::StaticConfig>,
 ) -> Result<()> {
-    let country = get_softap_config().await.country;
+    let country = get_softap_config().await?.country;
     crate::network::connect_wifi(ssid, password, &country, static_cfg).await
 }
 
@@ -823,6 +826,7 @@ pub async fn get_client() -> ClientConfig {
 }
 
 pub async fn set_client(config: ClientConfig) -> Result<()> {
+    let _settings_guard = crate::settings::lock_settings_mutation().await;
     let mut args = Vec::new();
     if !config.server_url.is_empty() {
         validate_client_arg("server_url", &config.server_url)?;
@@ -878,6 +882,8 @@ pub async fn get_ssh() -> SshConfig {
 }
 
 pub async fn set_ssh(config: SshConfig) -> Result<()> {
+    // SSH state touches both archived keys and ctrl.toml. Acquire settings first.
+    let _settings_guard = crate::settings::lock_settings_mutation().await;
     set_service("ssh", config.enabled).await?;
 
     tokio::fs::create_dir_all("/root/.ssh").await?;
@@ -926,9 +932,9 @@ pub async fn detect_board() -> String {
         .to_string()
 }
 
-pub async fn check_update() -> UpdateCheckResponse {
+pub async fn check_update() -> Result<UpdateCheckResponse> {
     let current = current_os_version().await;
-    let config = get_auto_update().await;
+    let config = get_auto_update().await?;
     let url = bundle_url(&config.channel).await;
 
     // This only reports whether RAUC has a trust anchor available. The concrete
@@ -963,7 +969,7 @@ pub async fn check_update() -> UpdateCheckResponse {
         is_downgrade = false;
     }
 
-    UpdateCheckResponse {
+    Ok(UpdateCheckResponse {
         available,
         // A downgrade is manually installable too (e.g. switching the beta channel
         // back to stable): RAUC installs any signature-verified bundle regardless of
@@ -983,7 +989,7 @@ pub async fn check_update() -> UpdateCheckResponse {
         signature_verified: trusted_keyring_available,
         bundle_url: url,
         staged_version,
-    }
+    })
 }
 
 /// The version installed to the boot-target slot and awaiting a reboot to activate.
@@ -1088,7 +1094,13 @@ pub async fn get_auto_update_status() -> AutoUpdateRuntimeStatus {
 async fn next_auto_update_check() -> Option<String> {
     use chrono::{TimeZone as _, Timelike as _};
 
-    let config = get_auto_update().await;
+    let config = match get_auto_update().await {
+        Ok(config) => config,
+        Err(error) => {
+            tracing::warn!(%error, "cannot compute next auto-update check from ctrl.toml");
+            return None;
+        }
+    };
     if !config.enabled {
         return None;
     }
@@ -1253,6 +1265,9 @@ fn parse_version(version: &str) -> Option<Vec<u64>> {
 // --- Factory Reset ---
 
 pub async fn factory_reset() -> Result<()> {
+    // Factory reset rewrites the full archive set (and then ctrl.toml via
+    // set_service), so it follows the same settings -> ctrl lock order.
+    let _settings_guard = crate::settings::lock_settings_mutation().await;
     tracing::warn!("Factory reset initiated");
 
     // Remove configurations directly from the writeable /data partition to preserve symbolic links
@@ -1485,33 +1500,191 @@ fn parse_soundcard_line(line: &str) -> Option<Soundcard> {
 // --- Auto-Update Settings ---
 
 const CTRL_CONFIG: &str = "/data/snapdog/ctrl.toml";
+static CTRL_CONFIG_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-pub async fn get_auto_update() -> AutoUpdateConfig {
-    let content = read_file(CTRL_CONFIG).await.unwrap_or_default();
-    let doc: toml_edit::DocumentMut = content.parse().unwrap_or_default();
-    let au = doc.get("auto-update");
-    AutoUpdateConfig {
-        enabled: au
+#[derive(Clone, Copy)]
+enum CtrlValueKind {
+    Boolean,
+    String,
+}
+
+/// Validate the schema that snapdog-ctrl itself owns while preserving unknown
+/// top-level sections and fields for forward compatibility. A present known
+/// value must never silently turn into its default merely because it has the
+/// wrong TOML type.
+pub fn validate_ctrl_document(document: &toml_edit::DocumentMut) -> Result<()> {
+    validate_ctrl_table(
+        document,
+        "services",
+        &[
+            ("ssh", CtrlValueKind::Boolean),
+            ("client", CtrlValueKind::Boolean),
+            ("server", CtrlValueKind::Boolean),
+        ],
+    )?;
+    validate_ctrl_table(
+        document,
+        "auto-update",
+        &[
+            ("enabled", CtrlValueKind::Boolean),
+            ("channel", CtrlValueKind::String),
+            ("interval", CtrlValueKind::String),
+            ("time", CtrlValueKind::String),
+        ],
+    )?;
+    validate_ctrl_table(
+        document,
+        "softap",
+        &[
+            ("enabled", CtrlValueKind::Boolean),
+            ("password", CtrlValueKind::String),
+            ("country", CtrlValueKind::String),
+        ],
+    )?;
+    validate_ctrl_table(
+        document,
+        "auth",
+        &[("password_hash", CtrlValueKind::String)],
+    )?;
+    Ok(())
+}
+
+fn validate_ctrl_table(
+    document: &toml_edit::DocumentMut,
+    section: &str,
+    fields: &[(&str, CtrlValueKind)],
+) -> Result<()> {
+    let Some(item) = document.get(section) else {
+        return Ok(());
+    };
+    let table = item
+        .as_table()
+        .with_context(|| format!("ctrl.toml [{section}] must be a table"))?;
+    for (field, kind) in fields {
+        let Some(value) = table.get(field) else {
+            continue;
+        };
+        let valid = match kind {
+            CtrlValueKind::Boolean => value.as_bool().is_some(),
+            CtrlValueKind::String => value.as_str().is_some(),
+        };
+        anyhow::ensure!(
+            valid,
+            "ctrl.toml [{section}].{field} has the wrong type (expected {})",
+            match kind {
+                CtrlValueKind::Boolean => "boolean",
+                CtrlValueKind::String => "string",
+            }
+        );
+    }
+    Ok(())
+}
+
+/// Return a mutable owned controller section without relying on `toml_edit`'s
+/// indexing panic when a syntactically valid document contains the wrong shape.
+pub fn ctrl_table_mut<'a>(
+    document: &'a mut toml_edit::DocumentMut,
+    section: &str,
+) -> Result<&'a mut toml_edit::Table> {
+    let item = document
+        .as_table_mut()
+        .entry(section)
+        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+    item.as_table_mut()
+        .with_context(|| format!("ctrl.toml [{section}] must be a table"))
+}
+
+/// Exclusive ctrl.toml lease for a settings import. Callers acquire the server
+/// operation lease first, then the settings-mutation lease, then this lease.
+/// Release this and the settings lease before asking the server manager to
+/// reconcile an aborted import.
+#[must_use]
+pub struct CtrlConfigImportGuard {
+    _guard: tokio::sync::MutexGuard<'static, ()>,
+}
+
+pub async fn lock_ctrl_config_for_settings_import() -> CtrlConfigImportGuard {
+    CtrlConfigImportGuard {
+        _guard: CTRL_CONFIG_LOCK.lock().await,
+    }
+}
+
+async fn read_ctrl_document_from(path: &std::path::Path) -> Result<toml_edit::DocumentMut> {
+    let content = match tokio::fs::read_to_string(path).await {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to read ctrl.toml at {}", path.display()));
+        }
+    };
+    let document = content
+        .parse()
+        .with_context(|| format!("invalid ctrl.toml at {}", path.display()))?;
+    validate_ctrl_document(&document)?;
+    Ok(document)
+}
+
+async fn read_ctrl_document_for_update() -> Result<toml_edit::DocumentMut> {
+    read_ctrl_document_from(std::path::Path::new(CTRL_CONFIG)).await
+}
+
+pub async fn read_ctrl_document() -> Result<toml_edit::DocumentMut> {
+    read_ctrl_document_for_update().await
+}
+
+async fn write_ctrl_document(document: &toml_edit::DocumentMut) -> Result<()> {
+    validate_ctrl_document(document)?;
+    if let Some(parent) = std::path::Path::new(CTRL_CONFIG).parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    // ctrl.toml contains Wi-Fi/SoftAP credentials and is controller-only.
+    atomic_write_with_mode(CTRL_CONFIG, &document.to_string(), 0o600).await
+}
+
+pub async fn update_ctrl_document<F>(update: F) -> Result<()>
+where
+    F: FnOnce(&mut toml_edit::DocumentMut) -> Result<()>,
+{
+    let _guard = CTRL_CONFIG_LOCK.lock().await;
+    let mut document = read_ctrl_document_for_update().await?;
+    update(&mut document)?;
+    write_ctrl_document(&document).await
+}
+
+pub async fn get_auto_update() -> Result<AutoUpdateConfig> {
+    let document = read_ctrl_document_for_update().await?;
+    auto_update_from_document(&document)
+}
+
+fn auto_update_from_document(document: &toml_edit::DocumentMut) -> Result<AutoUpdateConfig> {
+    validate_ctrl_document(document)?;
+    let auto_update = document.get("auto-update");
+    let config = AutoUpdateConfig {
+        enabled: auto_update
             .and_then(|t| t.get("enabled"))
             .and_then(toml_edit::Item::as_bool)
             .unwrap_or(true),
         channel: normalize_update_channel(
-            au.and_then(|t| t.get("channel"))
+            auto_update
+                .and_then(|t| t.get("channel"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("release"),
         )
         .to_string(),
-        interval: au
+        interval: auto_update
             .and_then(|t| t.get("interval"))
             .and_then(|v| v.as_str())
             .unwrap_or("daily")
             .to_string(),
-        time: au
+        time: auto_update
             .and_then(|t| t.get("time"))
             .and_then(|v| v.as_str())
             .unwrap_or("04:00")
             .to_string(),
-    }
+    };
+    validate_auto_update(&config)?;
+    Ok(config)
 }
 
 /// `stable` was used by early ctrl.toml versions, while the release service has
@@ -1530,21 +1703,21 @@ fn normalize_update_channel(channel: &str) -> &str {
 pub async fn set_auto_update(config: AutoUpdateConfig) -> Result<()> {
     validate_auto_update(&config)?;
 
-    let content = read_file(CTRL_CONFIG).await.unwrap_or_default();
-    let mut doc: toml_edit::DocumentMut = content.parse().unwrap_or_default();
+    let _guard = CTRL_CONFIG_LOCK.lock().await;
+    let mut document = read_ctrl_document_for_update().await?;
+    update_auto_update_document(&mut document, &config)?;
+    write_ctrl_document(&document).await
+}
 
-    let au = doc
-        .entry("auto-update")
-        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
-    au["enabled"] = toml_edit::value(config.enabled);
-    au["channel"] = toml_edit::value(&config.channel);
-    au["interval"] = toml_edit::value(&config.interval);
-    au["time"] = toml_edit::value(&config.time);
-
-    if let Some(parent) = std::path::Path::new(CTRL_CONFIG).parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-    atomic_write(CTRL_CONFIG, &doc.to_string()).await?;
+fn update_auto_update_document(
+    document: &mut toml_edit::DocumentMut,
+    config: &AutoUpdateConfig,
+) -> Result<()> {
+    let auto_update = ctrl_table_mut(document, "auto-update")?;
+    auto_update["enabled"] = toml_edit::value(config.enabled);
+    auto_update["channel"] = toml_edit::value(&config.channel);
+    auto_update["interval"] = toml_edit::value(&config.interval);
+    auto_update["time"] = toml_edit::value(&config.time);
     Ok(())
 }
 
@@ -1573,33 +1746,46 @@ pub fn validate_auto_update(config: &AutoUpdateConfig) -> Result<()> {
 /// Import the pre-0.13 channel file once, then remove it. From this point onward
 /// `[auto-update].channel` in ctrl.toml is the only channel store.
 pub async fn migrate_legacy_update_channel() {
-    let content = read_file(CTRL_CONFIG).await.unwrap_or_default();
-    let doc: toml_edit::DocumentMut = content.parse().unwrap_or_default();
-    let has_channel = doc
+    let image_default = if current_os_version().await.contains("beta") {
+        "beta"
+    } else {
+        "release"
+    };
+    let channel = read_file("/data/snapdog-os.channel")
+        .await
+        .ok()
+        .map_or_else(
+            || image_default.to_string(),
+            |legacy| normalize_update_channel(legacy.trim()).to_string(),
+        );
+    let guard = CTRL_CONFIG_LOCK.lock().await;
+    let mut document = match read_ctrl_document_for_update().await {
+        Ok(document) => document,
+        Err(error) => {
+            tracing::warn!("failed to inspect ctrl.toml for channel migration: {error:#}");
+            return;
+        }
+    };
+    let has_channel = document
         .get("auto-update")
-        .and_then(|t| t.get("channel"))
-        .and_then(|v| v.as_str())
+        .and_then(|table| table.get("channel"))
+        .and_then(toml_edit::Item::as_str)
         .is_some();
-
     if !has_channel {
-        let mut config = get_auto_update().await;
-        let image_default = if current_os_version().await.contains("beta") {
-            "beta"
-        } else {
-            "release"
+        let auto_update = match ctrl_table_mut(&mut document, "auto-update") {
+            Ok(auto_update) => auto_update,
+            Err(error) => {
+                tracing::warn!("failed to migrate update channel: {error:#}");
+                return;
+            }
         };
-        config.channel = read_file("/data/snapdog-os.channel")
-            .await
-            .ok()
-            .map_or_else(
-                || image_default.to_string(),
-                |legacy| normalize_update_channel(legacy.trim()).to_string(),
-            );
-        if let Err(e) = set_auto_update(config).await {
-            tracing::warn!("failed to migrate legacy update channel: {e}");
+        auto_update["channel"] = toml_edit::value(channel);
+        if let Err(error) = write_ctrl_document(&document).await {
+            tracing::warn!("failed to migrate legacy update channel: {error:#}");
             return;
         }
     }
+    drop(guard);
     remove_state_file("/data/snapdog-os.channel").await;
 }
 
@@ -1643,75 +1829,74 @@ fn gen_ap_password() -> String {
         .collect()
 }
 
-pub async fn get_softap_config() -> SoftApConfig {
-    let content = read_file(CTRL_CONFIG).await.unwrap_or_default();
-    let doc: toml_edit::DocumentMut = content.parse().unwrap_or_default();
-    let ap = doc.get("softap");
-    let enabled = ap
-        .and_then(|t| t.get("enabled"))
-        .and_then(toml_edit::Item::as_bool)
-        .unwrap_or(true);
-    let country = ap
-        .and_then(|t| t.get("country"))
-        .and_then(|v| v.as_str())
-        .unwrap_or(crate::network::DEFAULT_COUNTRY)
-        .to_string();
-    let stored = ap
-        .and_then(|t| t.get("password"))
-        .and_then(|v| v.as_str())
-        .filter(|p| !p.is_empty());
-    let password = if let Some(p) = stored {
-        p.to_string()
-    } else {
-        // First access with no stored passphrase → generate + persist a unique one.
-        let pw = gen_ap_password();
-        let cfg = SoftApConfig {
-            enabled,
-            password: pw.clone(),
-            country: country.clone(),
-        };
-        if let Err(e) = set_softap_config(cfg).await {
-            tracing::warn!("failed to persist generated AP password: {e:#}");
-        }
-        pw
-    };
-    SoftApConfig {
-        enabled,
-        password,
-        country,
+pub async fn get_softap_config() -> Result<SoftApConfig> {
+    // The first read can initialize a unique password. Hold the ctrl lock across
+    // read + initialization so concurrent first readers cannot return a password
+    // that a later reader immediately replaces.
+    let _guard = CTRL_CONFIG_LOCK.lock().await;
+    let mut document = read_ctrl_document_for_update().await?;
+    let mut config = softap_from_document(&document)?;
+    if config.password.is_empty() {
+        config.password = gen_ap_password();
+        update_softap_document(&mut document, &config)?;
+        write_ctrl_document(&document)
+            .await
+            .context("failed to persist generated AP password")?;
     }
+    Ok(config)
 }
 
-pub async fn get_softap_view() -> SoftApView {
-    let cfg = get_softap_config().await;
+fn softap_from_document(document: &toml_edit::DocumentMut) -> Result<SoftApConfig> {
+    validate_ctrl_document(document)?;
+    let softap = document.get("softap");
+    Ok(SoftApConfig {
+        enabled: softap
+            .and_then(|table| table.get("enabled"))
+            .and_then(toml_edit::Item::as_bool)
+            .unwrap_or(true),
+        password: softap
+            .and_then(|table| table.get("password"))
+            .and_then(toml_edit::Item::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        country: softap
+            .and_then(|table| table.get("country"))
+            .and_then(toml_edit::Item::as_str)
+            .unwrap_or(crate::network::DEFAULT_COUNTRY)
+            .to_string(),
+    })
+}
+
+pub async fn get_softap_view() -> Result<SoftApView> {
+    let cfg = get_softap_config().await?;
     let password = if crate::network::is_ap_active().await {
         Some(cfg.password)
     } else {
         None
     };
-    SoftApView {
+    Ok(SoftApView {
         enabled: cfg.enabled,
         ssid: crate::network::ap_ssid().await,
         country: cfg.country,
         password,
-    }
+    })
 }
 
 pub async fn set_softap_config(config: SoftApConfig) -> Result<()> {
-    let content = read_file(CTRL_CONFIG).await.unwrap_or_default();
-    let mut doc: toml_edit::DocumentMut = content.parse().unwrap_or_default();
+    let _guard = CTRL_CONFIG_LOCK.lock().await;
+    let mut document = read_ctrl_document_for_update().await?;
+    update_softap_document(&mut document, &config)?;
+    write_ctrl_document(&document).await
+}
 
-    let ap = doc
-        .entry("softap")
-        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+fn update_softap_document(
+    document: &mut toml_edit::DocumentMut,
+    config: &SoftApConfig,
+) -> Result<()> {
+    let ap = ctrl_table_mut(document, "softap")?;
     ap["enabled"] = toml_edit::value(config.enabled);
     ap["password"] = toml_edit::value(&config.password);
     ap["country"] = toml_edit::value(&config.country);
-
-    if let Some(parent) = std::path::Path::new(CTRL_CONFIG).parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-    atomic_write(CTRL_CONFIG, &doc.to_string()).await?;
     Ok(())
 }
 
@@ -1746,37 +1931,51 @@ async fn set_ssh_enabled_flag(enabled: bool) -> Result<()> {
 }
 
 /// Read service states from ctrl.toml, apply defaults if missing.
-pub async fn get_service_config() -> std::collections::HashMap<String, bool> {
-    let content = read_file(CTRL_CONFIG).await.unwrap_or_default();
-    let doc: toml_edit::DocumentMut = content.parse().unwrap_or_default();
-    let svc = doc.get("services");
+pub async fn get_service_config() -> Result<std::collections::HashMap<String, bool>> {
+    let document = read_ctrl_document_for_update().await?;
+    service_config_from_document(&document)
+}
+
+fn service_config_from_document(
+    document: &toml_edit::DocumentMut,
+) -> Result<std::collections::HashMap<String, bool>> {
+    validate_ctrl_document(document)?;
+    let services = document.get("services");
 
     let mut map = std::collections::HashMap::new();
     map.insert(
         "ssh".into(),
-        svc.and_then(|t| t.get("ssh"))
+        services
+            .and_then(|table| table.get("ssh"))
             .and_then(toml_edit::Item::as_bool)
             .unwrap_or(false),
     );
     map.insert(
         "client".into(),
-        svc.and_then(|t| t.get("client"))
+        services
+            .and_then(|table| table.get("client"))
             .and_then(toml_edit::Item::as_bool)
             .unwrap_or(true),
     );
     map.insert(
         "server".into(),
-        svc.and_then(|t| t.get("server"))
+        services
+            .and_then(|table| table.get("server"))
             .and_then(toml_edit::Item::as_bool)
             .unwrap_or(false),
     );
-    map
+    Ok(map)
 }
 
 /// Apply service states: start enabled services, stop disabled ones.
-pub async fn apply_service_config() {
-    let config = get_service_config().await;
+pub async fn apply_service_config() -> Result<()> {
+    let config = get_service_config().await?;
     for (key, unit) in SERVICE_MAP {
+        // Server activation is transactional and readiness-gated by
+        // server_manager::reconcile_at_boot.
+        if *key == "server" {
+            continue;
+        }
         let enabled = config.get(*key).copied().unwrap_or(false);
         if enabled {
             if *key == "ssh" {
@@ -1790,45 +1989,90 @@ pub async fn apply_service_config() {
             }
         }
     }
+    Ok(())
 }
 
 /// Set a service enabled/disabled and start/stop it.
 pub async fn set_service(name: &str, enabled: bool) -> Result<()> {
+    set_service_desired(name, enabled).await?;
+    control_service(name, if enabled { "start" } else { "stop" }).await
+}
+
+/// Persist only the desired service state without touching systemd.
+///
+/// Server config saves use this split contract so saving while stopped cannot
+/// start the service and a failed explicit start remains truthfully visible as
+/// desired-running/runtime-failed.
+pub async fn set_service_desired(name: &str, enabled: bool) -> Result<()> {
+    let _guard = CTRL_CONFIG_LOCK.lock().await;
+    anyhow::ensure!(
+        SERVICE_MAP.iter().any(|(key, _)| *key == name),
+        "unknown service: {name}"
+    );
+    let mut document = read_ctrl_document_for_update().await?;
+    update_service_document(&mut document, name, enabled)?;
+    write_ctrl_document(&document).await
+}
+
+fn update_service_document(
+    document: &mut toml_edit::DocumentMut,
+    name: &str,
+    enabled: bool,
+) -> Result<()> {
+    let services = ctrl_table_mut(document, "services")?;
+    services[name] = toml_edit::value(enabled);
+    Ok(())
+}
+
+/// Start, stop, or restart a managed unit without changing its desired state.
+pub async fn control_service(name: &str, action: &str) -> Result<()> {
+    anyhow::ensure!(
+        ["start", "stop", "restart", "reset-failed"].contains(&action),
+        "unsupported service action: {action}"
+    );
     let unit = SERVICE_MAP
         .iter()
         .find(|(k, _)| *k == name)
         .map(|(_, v)| *v)
         .ok_or_else(|| anyhow::anyhow!("unknown service: {name}"))?;
 
-    let content = read_file(CTRL_CONFIG).await.unwrap_or_default();
-    let mut doc: toml_edit::DocumentMut = content.parse().unwrap_or_default();
-    let svc = doc
-        .entry("services")
-        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
-    svc[name] = toml_edit::value(enabled);
-
-    if let Some(parent) = std::path::Path::new(CTRL_CONFIG).parent() {
-        tokio::fs::create_dir_all(parent).await?;
+    if action == "start" && name == "ssh" {
+        set_ssh_enabled_flag(true).await?;
     }
-    atomic_write(CTRL_CONFIG, &doc.to_string()).await?;
-
-    if enabled {
-        if name == "ssh" {
-            set_ssh_enabled_flag(true).await?;
-        }
-        run_cmd("systemctl", &["start", unit]).await?;
-    } else {
-        run_cmd("systemctl", &["stop", unit]).await?;
-        if name == "ssh" {
-            set_ssh_enabled_flag(false).await?;
-        }
+    run_cmd("systemctl", &[action, unit]).await?;
+    if action == "stop" && name == "ssh" {
+        set_ssh_enabled_flag(false).await?;
     }
     Ok(())
 }
 
 pub async fn is_service_enabled(name: &str) -> bool {
-    let config = get_service_config().await;
-    *config.get(name).unwrap_or(&false)
+    service_desired_state(name).await.unwrap_or(false)
+}
+
+/// Strict desired-state read for transactional service management. Invalid or
+/// unreadable ctrl.toml is an error, never an implicit "disabled".
+pub async fn service_desired_state(name: &str) -> Result<bool> {
+    anyhow::ensure!(
+        SERVICE_MAP.iter().any(|(key, _)| *key == name),
+        "unknown service: {name}"
+    );
+    let document = read_ctrl_document_for_update().await?;
+    let default = name == "client";
+    let Some(services) = document.get("services") else {
+        return Ok(default);
+    };
+    let services = services
+        .as_table()
+        .context("ctrl.toml [services] must be a table")?;
+    services.get(name).map_or_else(
+        || Ok(default),
+        |value| {
+            value
+                .as_bool()
+                .with_context(|| format!("ctrl.toml [services].{name} must be a boolean"))
+        },
+    )
 }
 
 // --- Server Connectivity Test ---
@@ -1869,13 +2113,68 @@ async fn read_file(path: &str) -> Result<String> {
 
 /// Write file atomically: write to temp, fsync, rename.
 pub async fn atomic_write(path: &str, content: &str) -> Result<()> {
-    let tmp = format!("{path}.tmp");
-    tokio::fs::write(&tmp, content).await?;
-    // fsync the file
-    let f = tokio::fs::File::open(&tmp).await?;
-    f.sync_all().await?;
-    drop(f);
-    tokio::fs::rename(&tmp, path).await?;
+    atomic_write_with_mode(path, content, 0o644).await
+}
+
+/// Write a file atomically with its final Unix mode applied before any content
+/// is exposed in the temporary file.
+pub async fn atomic_write_with_mode(path: &str, content: &str, mode: u32) -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+
+    static WRITE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let target = std::path::Path::new(path);
+    let parent = target
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("atomic-write target has no parent: {path}"))?;
+    let file_name = target
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("atomic-write target has no file name: {path}"))?
+        .to_string_lossy();
+    let (temporary, mut file) = loop {
+        let sequence = WRITE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let temporary = parent.join(format!(
+            ".{file_name}.tmp.{}.{sequence}",
+            std::process::id()
+        ));
+        let mut options = tokio::fs::OpenOptions::new();
+        options.create_new(true).write(true);
+        #[cfg(unix)]
+        {
+            options.mode(mode);
+        }
+        match options.open(&temporary).await {
+            Ok(file) => break (temporary, file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
+        }
+    };
+    #[cfg(unix)]
+    if let Err(error) = tokio::fs::set_permissions(&temporary, {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::Permissions::from_mode(mode)
+    })
+    .await
+    {
+        let _ = tokio::fs::remove_file(&temporary).await;
+        return Err(error.into());
+    }
+    let write_result = async {
+        file.write_all(content.as_bytes()).await?;
+        file.flush().await?;
+        file.sync_all().await
+    }
+    .await;
+    drop(file);
+    if let Err(error) = write_result {
+        let _ = tokio::fs::remove_file(&temporary).await;
+        return Err(error.into());
+    }
+    if let Err(error) = tokio::fs::rename(&temporary, target).await {
+        let _ = tokio::fs::remove_file(&temporary).await;
+        return Err(error.into());
+    }
+    #[cfg(unix)]
+    tokio::fs::File::open(parent).await?.sync_all().await?;
     Ok(())
 }
 
@@ -1896,10 +2195,11 @@ async fn command_stdout(cmd: &str, args: &[&str]) -> Result<String> {
 }
 
 async fn run_cmd(cmd: &str, args: &[&str]) -> Result<()> {
-    let output = tokio::process::Command::new(cmd)
-        .args(args)
-        .output()
-        .await?;
+    let mut command = tokio::process::Command::new(cmd);
+    command.args(args).kill_on_drop(true);
+    let output = tokio::time::timeout(std::time::Duration::from_secs(30), command.output())
+        .await
+        .with_context(|| format!("{cmd} {} timed out", args.join(" ")))??;
     if !output.status.success() {
         anyhow::bail!(
             "{} {} failed: {}",
@@ -1993,6 +2293,14 @@ fn validate_client_arg(field: &str, value: &str) -> Result<()> {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn settings_import_lease_serializes_every_ctrl_toml_writer() {
+        let lease = lock_ctrl_config_for_settings_import().await;
+        assert!(CTRL_CONFIG_LOCK.try_lock().is_err());
+        drop(lease);
+        assert!(CTRL_CONFIG_LOCK.try_lock().is_ok());
+    }
+
     #[test]
     fn legacy_stable_update_channel_maps_to_release() {
         assert_eq!(normalize_update_channel("stable"), "release");
@@ -2023,6 +2331,169 @@ mod tests {
         assert!(validate_change("release", "daily", "24:00").is_err());
         assert!(validate_change("release", "daily", "04:60").is_err());
         assert!(validate_change("release", "daily", "4").is_err());
+    }
+
+    #[test]
+    fn ctrl_document_mutations_preserve_each_others_sections() {
+        let mut document: toml_edit::DocumentMut =
+            "[network]\nhostname = \"snapdog\"\n".parse().unwrap();
+        update_auto_update_document(
+            &mut document,
+            &AutoUpdateConfig {
+                enabled: true,
+                channel: "release".into(),
+                interval: "daily".into(),
+                time: "04:00".into(),
+            },
+        )
+        .unwrap();
+        update_softap_document(
+            &mut document,
+            &SoftApConfig {
+                enabled: true,
+                password: "unique-passphrase".into(),
+                country: "DE".into(),
+            },
+        )
+        .unwrap();
+        update_service_document(&mut document, "server", true).unwrap();
+
+        assert_eq!(document["network"]["hostname"].as_str(), Some("snapdog"));
+        assert_eq!(document["auto-update"]["channel"].as_str(), Some("release"));
+        assert_eq!(
+            document["softap"]["password"].as_str(),
+            Some("unique-passphrase")
+        );
+        assert_eq!(document["services"]["server"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn ctrl_schema_rejects_known_wrong_shapes_and_types() {
+        for source in [
+            "services = 'enabled'\n",
+            "[services]\nserver = 'yes'\n",
+            "[services]\nclient = 1\n",
+            "[auto-update]\ntime = 400\n",
+            "[softap]\nenabled = 'yes'\n",
+            "[auth]\npassword_hash = false\n",
+        ] {
+            let document: toml_edit::DocumentMut = source.parse().unwrap();
+            assert!(validate_ctrl_document(&document).is_err(), "{source}");
+        }
+
+        let document: toml_edit::DocumentMut = "[future]\nvalue = 42\n[services]\nserver = true\n"
+            .parse()
+            .unwrap();
+        assert!(validate_ctrl_document(&document).is_ok());
+    }
+
+    #[test]
+    fn operational_ctrl_readers_preserve_defaults_for_missing_fields() {
+        let document: toml_edit::DocumentMut = "".parse().unwrap();
+
+        let auto_update = auto_update_from_document(&document).unwrap();
+        assert!(auto_update.enabled);
+        assert_eq!(auto_update.channel, "release");
+        assert_eq!(auto_update.interval, "daily");
+        assert_eq!(auto_update.time, "04:00");
+
+        let softap = softap_from_document(&document).unwrap();
+        assert!(softap.enabled);
+        assert!(softap.password.is_empty());
+        assert_eq!(softap.country, crate::network::DEFAULT_COUNTRY);
+
+        let services = service_config_from_document(&document).unwrap();
+        assert!(!services["ssh"]);
+        assert!(services["client"]);
+        assert!(!services["server"]);
+    }
+
+    #[test]
+    fn operational_ctrl_readers_reject_wrong_types_and_invalid_values() {
+        let wrong_auto_update: toml_edit::DocumentMut =
+            "[auto-update]\nenabled = 'yes'\n".parse().unwrap();
+        assert!(auto_update_from_document(&wrong_auto_update).is_err());
+
+        let invalid_auto_update: toml_edit::DocumentMut =
+            "[auto-update]\ninterval = 'hourly'\n".parse().unwrap();
+        assert!(auto_update_from_document(&invalid_auto_update).is_err());
+
+        let wrong_softap: toml_edit::DocumentMut = "[softap]\ncountry = false\n".parse().unwrap();
+        assert!(softap_from_document(&wrong_softap).is_err());
+
+        let wrong_services: toml_edit::DocumentMut = "[services]\nclient = 1\n".parse().unwrap();
+        assert!(service_config_from_document(&wrong_services).is_err());
+    }
+
+    #[tokio::test]
+    async fn operational_ctrl_reader_fails_closed_when_path_is_unreadable() {
+        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "snapdog-ctrl-unreadable-{}-{sequence}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&path).unwrap();
+
+        let result = read_ctrl_document_from(&path).await;
+        std::fs::remove_dir(&path).unwrap();
+
+        let error = result.unwrap_err();
+        assert!(
+            format!("{error:#}").contains("failed to read ctrl.toml"),
+            "{error:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn operational_ctrl_reader_treats_a_missing_file_as_empty_config() {
+        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "snapdog-ctrl-missing-{}-{sequence}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let document = read_ctrl_document_from(&path).await.unwrap();
+        assert_eq!(
+            auto_update_from_document(&document).unwrap().channel,
+            "release"
+        );
+        assert!(service_config_from_document(&document).unwrap()["client"]);
+    }
+
+    #[test]
+    fn ctrl_mutation_helpers_return_errors_instead_of_panicking_on_wrong_shapes() {
+        let mut auto_update: toml_edit::DocumentMut = "auto-update = 'invalid'\n".parse().unwrap();
+        assert!(
+            update_auto_update_document(
+                &mut auto_update,
+                &AutoUpdateConfig {
+                    enabled: true,
+                    channel: "release".into(),
+                    interval: "daily".into(),
+                    time: "04:00".into(),
+                },
+            )
+            .is_err()
+        );
+
+        let mut softap: toml_edit::DocumentMut = "softap = false\n".parse().unwrap();
+        assert!(
+            update_softap_document(
+                &mut softap,
+                &SoftApConfig {
+                    enabled: true,
+                    password: "unique-passphrase".into(),
+                    country: "DE".into(),
+                },
+            )
+            .is_err()
+        );
+
+        let mut services: toml_edit::DocumentMut = "services = []\n".parse().unwrap();
+        assert!(update_service_document(&mut services, "server", true).is_err());
     }
 
     #[test]

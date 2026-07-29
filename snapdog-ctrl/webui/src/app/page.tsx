@@ -10,6 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { AboutButton } from "@/components/AboutButton";
 import { MiniPlayer } from "@/components/MiniPlayer";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { ServerSetup } from "@/components/server/ServerSetup";
 import {
   ApiError,
   api,
@@ -19,8 +20,6 @@ import {
   type ClientConfig,
   type Soundcard,
   type SshConfig,
-  type ServerConfig,
-  type ServerStatus,
   type TuningConfig,
   type UpdateCheck,
   type UpdatePhase,
@@ -31,36 +30,6 @@ import { locales, type Locale } from "@/i18n/config";
 import { useWebSocket } from "@/hooks/useWebSocket";
 
 type Tab = "dashboard" | "network" | "audio" | "client" | "server" | "ssh" | "update" | "system";
-
-const EMOJI_PRESETS = ["🔊", "🛋️", "🍽️", "🛏️", "🎵", "🏠", "🚿", "📺", "💻", "🎧", "🎶", "🌙", "☀️", "🌿", "🏢", "🎮", "📻", "🎹", "🎸", "🥁", "🎺"];
-
-function EmojiPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const t = useTranslations("server");
-  const [open, setOpen] = useState(false);
-  const [custom, setCustom] = useState(false);
-  const isCustom = !EMOJI_PRESETS.includes(value) && value !== "";
-
-  return (
-    <div className="relative">
-      <button type="button" onClick={() => setOpen(!open)} className="flex size-8 items-center justify-center rounded-md border border-border text-base hover:bg-muted" aria-label={t("pickIcon")}>
-        {value || "🔊"}
-      </button>
-      {open && (
-        <div className="absolute left-0 top-9 z-50 rounded-lg border border-border bg-card p-2 shadow-lg">
-          <div className="grid grid-cols-7 gap-1">
-            {EMOJI_PRESETS.map((e) => (
-              <button key={e} type="button" className={`size-7 rounded text-base hover:bg-muted ${value === e ? "bg-primary/20" : ""}`} onClick={() => { onChange(e); setOpen(false); setCustom(false); }}>{e}</button>
-            ))}
-            <button type="button" className={`size-7 rounded text-xs hover:bg-muted ${isCustom || custom ? "bg-primary/20" : ""}`} onClick={() => setCustom(true)}>…</button>
-          </div>
-          {(custom || isCustom) && (
-            <input className="mt-2 w-full rounded border border-border px-2 py-1 text-center text-base" value={value} onChange={(e) => onChange(e.target.value)} placeholder="✨" autoFocus />
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function StatusDot({ connected, label }: { connected: boolean; label: string }) {
   return (
@@ -97,125 +66,6 @@ function Field({ label, htmlFor, children }: { label: string; htmlFor?: string; 
       {children}
     </div>
   );
-}
-
-type ZoneKnxKey = Extract<keyof NonNullable<ServerConfig["zones"][number]["knx"]>, string>;
-type ClientKnxKey = Extract<keyof NonNullable<ServerConfig["clients"][number]["knx"]>, string>;
-
-type KnxField<Key extends string = string> = {
-  key: Key;
-  label: string;
-  dpt: string;
-  direction: string;
-};
-
-const ZONE_KNX_FIELDS = [
-  { key: "play", label: "Play", dpt: "1.001", direction: "→ KNX" },
-  { key: "pause", label: "Pause", dpt: "1.001", direction: "→ KNX" },
-  { key: "stop", label: "Stop", dpt: "1.001", direction: "→ KNX" },
-  { key: "track_next", label: "Next Track", dpt: "1.001", direction: "→ KNX" },
-  { key: "track_previous", label: "Previous Track", dpt: "1.001", direction: "→ KNX" },
-  { key: "control_status", label: "Playback Status", dpt: "1.001", direction: "← KNX" },
-  { key: "volume", label: "Volume", dpt: "5.001", direction: "↔ KNX" },
-  { key: "volume_status", label: "Volume Status", dpt: "5.001", direction: "→ KNX" },
-  { key: "volume_dim", label: "Volume Dim", dpt: "3.007", direction: "← KNX" },
-  { key: "mute", label: "Mute", dpt: "1.001", direction: "↔ KNX" },
-  { key: "mute_status", label: "Mute Status", dpt: "1.001", direction: "→ KNX" },
-  { key: "mute_toggle", label: "Mute Toggle", dpt: "1.001", direction: "← KNX" },
-  { key: "track_title_status", label: "Track Title", dpt: "16.001", direction: "→ KNX" },
-  { key: "track_artist_status", label: "Track Artist", dpt: "16.001", direction: "→ KNX" },
-  { key: "track_album_status", label: "Track Album", dpt: "16.001", direction: "→ KNX" },
-  { key: "track_progress_status", label: "Track Progress", dpt: "5.001", direction: "→ KNX" },
-  { key: "track_playing_status", label: "Track Playing", dpt: "1.001", direction: "→ KNX" },
-  { key: "track_repeat", label: "Track Repeat", dpt: "1.001", direction: "← KNX" },
-  { key: "track_repeat_status", label: "Track Repeat Status", dpt: "1.001", direction: "→ KNX" },
-  { key: "track_repeat_toggle", label: "Track Repeat Toggle", dpt: "1.001", direction: "← KNX" },
-  { key: "playlist", label: "Playlist", dpt: "5.010", direction: "← KNX" },
-  { key: "playlist_status", label: "Playlist Status", dpt: "5.010", direction: "→ KNX" },
-  { key: "playlist_next", label: "Playlist Next", dpt: "1.001", direction: "← KNX" },
-  { key: "playlist_previous", label: "Playlist Previous", dpt: "1.001", direction: "← KNX" },
-  { key: "shuffle", label: "Shuffle", dpt: "1.001", direction: "← KNX" },
-  { key: "shuffle_status", label: "Shuffle Status", dpt: "1.001", direction: "→ KNX" },
-  { key: "shuffle_toggle", label: "Shuffle Toggle", dpt: "1.001", direction: "← KNX" },
-  { key: "repeat", label: "Playlist Repeat", dpt: "1.001", direction: "← KNX" },
-  { key: "repeat_status", label: "Playlist Repeat Status", dpt: "1.001", direction: "→ KNX" },
-  { key: "repeat_toggle", label: "Playlist Repeat Toggle", dpt: "1.001", direction: "← KNX" },
-  { key: "presence", label: "Presence", dpt: "1.001", direction: "← KNX" },
-  { key: "presence_enable", label: "Presence Enable", dpt: "1.001", direction: "← KNX" },
-  { key: "presence_enable_status", label: "Presence Enable Status", dpt: "1.001", direction: "→ KNX" },
-  { key: "presence_timer_status", label: "Presence Timer", dpt: "1.001", direction: "→ KNX" },
-] as const satisfies readonly KnxField<ZoneKnxKey>[];
-
-const CLIENT_KNX_FIELDS = [
-  { key: "volume", label: "Volume", dpt: "5.001", direction: "↔ KNX" },
-  { key: "volume_status", label: "Volume Status", dpt: "5.001", direction: "→ KNX" },
-  { key: "volume_dim", label: "Volume Dim", dpt: "3.007", direction: "← KNX" },
-  { key: "mute", label: "Mute", dpt: "1.001", direction: "↔ KNX" },
-  { key: "mute_status", label: "Mute Status", dpt: "1.001", direction: "→ KNX" },
-  { key: "mute_toggle", label: "Mute Toggle", dpt: "1.001", direction: "← KNX" },
-  { key: "latency", label: "Latency", dpt: "7.005", direction: "← KNX" },
-  { key: "latency_status", label: "Latency Status", dpt: "7.005", direction: "→ KNX" },
-  { key: "zone", label: "Zone", dpt: "5.010", direction: "← KNX" },
-  { key: "zone_status", label: "Zone Status", dpt: "5.010", direction: "→ KNX" },
-  { key: "connected_status", label: "Connected Status", dpt: "1.001", direction: "→ KNX" },
-] as const satisfies readonly KnxField<ClientKnxKey>[];
-
-function isValidKnxGroupAddress(value: string | null | undefined) {
-  const trimmed = value?.trim() ?? "";
-  if (!trimmed) return true;
-  const parts = trimmed.split("/");
-  if (parts.length !== 2 && parts.length !== 3) return false;
-  const limits = parts.length === 2 ? [31, 2047] : [31, 7, 255];
-  return parts.every((part, index) => {
-    if (!/^\d+$/.test(part)) return false;
-    const numeric = Number(part);
-    return Number.isInteger(numeric) && numeric >= 0 && numeric <= limits[index];
-  });
-}
-
-function normalizeKnxValue(value: string) {
-  const trimmed = value.trim();
-  return trimmed === "" ? null : trimmed;
-}
-
-function compactKnxValues<T extends object>(values: T) {
-  const entries = Object.entries(values as Record<string, string | null | undefined>)
-    .map(([key, value]) => [key, typeof value === "string" ? value.trim() : ""] as const)
-    .filter(([, value]) => value !== "");
-  return entries.length > 0 ? Object.fromEntries(entries) as T : null;
-}
-
-type ServerTranslator = (key: string, values?: Record<string, string | number>) => string;
-
-function collectServerValidationErrors(config: ServerConfig, t: ServerTranslator) {
-  const errors: string[] = [];
-  if (config.knx?.role === "client" && !(config.knx.url ?? "").trim()) {
-    errors.push(t("knxGatewayRequired"));
-  }
-
-  const addKnxErrors = (
-    target: string,
-    fields: readonly KnxField[],
-    values: object | null
-  ) => {
-    if (!values) return;
-    const valueBag = values as Record<string, string | null | undefined>;
-    for (const field of fields) {
-      const value = valueBag[field.key];
-      if (value && !isValidKnxGroupAddress(value)) {
-        errors.push(t("knxInvalidGaFor", { target, field: field.label }));
-      }
-    }
-  };
-
-  for (const [index, zone] of config.zones.entries()) {
-    addKnxErrors(zone.name || `${t("zone")} ${index + 1}`, ZONE_KNX_FIELDS, zone.knx);
-  }
-  for (const [index, client] of config.clients.entries()) {
-    addKnxErrors(client.name || `${t("clientName")} ${index + 1}`, CLIENT_KNX_FIELDS, client.knx);
-  }
-
-  return errors;
 }
 
 // ── Dashboard Tab ─────────────────────────────────────────────
@@ -1084,6 +934,12 @@ function ClientTab() {
     api.scanServers().then((r) => setServers(r.servers)).catch(() => {}).finally(() => setScanning(false));
   }, []);
 
+  const refreshLocalServerHealth = useCallback(() => {
+    void api.getServerState()
+      .then((server) => setServerRunning(server.runtime_state === "running" && server.health_state === "healthy"))
+      .catch(() => setServerRunning(false));
+  }, []);
+
   useEffect(() => {
     // Fast path (~50ms): reveal the real config as soon as it arrives. The mDNS
     // scan below always burns its full 3s timeout, so coupling the two (the old
@@ -1108,8 +964,8 @@ function ClientTab() {
       if (m && r.servers.some((s) => s.host === m[1] && s.port === Number(m[2]))) setConnectionMode("auto");
     }).catch(() => {}).finally(() => setScanning(false));
 
-    api.getServerStatus().then((s) => setServerRunning(s.running)).catch(() => {});
-  }, []);
+    refreshLocalServerHealth();
+  }, [refreshLocalServerHealth]);
 
   useWebSocket("client_changed", useCallback(() => {
     api.getClient().then((c) => {
@@ -1118,6 +974,8 @@ function ClientTab() {
       if (c.available_soundcards) setSoundcards(c.available_soundcards);
     }).catch(() => {});
   }, []));
+  useWebSocket("server_changed", refreshLocalServerHealth);
+  useWebSocket("server_status_changed", refreshLocalServerHealth);
 
   const selectServer = (url: string) => {
     setConfig((prev) => (prev ? { ...prev, server_url: url } : prev));
@@ -3351,780 +3209,6 @@ function SystemTab() {
 }
 
 
-// ── Server Tab ────────────────────────────────────────────────
-
-type ServerSubTab = "audio" | "sources" | "zones" | "integrations" | "advanced";
-
-function Stepper({ value, onChange, min, max, step, suffix }: { value: number; onChange: (v: number) => void; min: number; max: number; step: number; suffix?: string }) {
-  return (
-    <div className="flex items-center gap-2">
-      <Button variant="outline" size="icon-xs" onClick={() => onChange(Math.max(min, value - step))} disabled={value <= min}>−</Button>
-      <span className="w-16 text-center text-sm font-mono">{value}{suffix}</span>
-      <Button variant="outline" size="icon-xs" onClick={() => onChange(Math.min(max, value + step))} disabled={value >= max}>+</Button>
-    </div>
-  );
-}
-
-function ServerTab() {
-  const t = useTranslations("server");
-  const [status, setStatus] = useState<ServerStatus | null>(null);
-  const [config, setConfig] = useState<ServerConfig | null>(null);
-  const [subTab, setSubTab] = useState<ServerSubTab>("audio");
-  const [saved, setSaved] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [validationErrors, setValidationErrors] = useState<string[]>([]);
-  const cardId = useId();
-
-  const load = useCallback(async () => {
-    try {
-      const [nextStatus, nextConfig] = await Promise.all([
-        api.getServerStatus(),
-        api.getServer(),
-      ]);
-      setLoadError(null);
-      setStatus(nextStatus);
-      setConfig(nextConfig);
-    } catch (error) {
-      setStatus(null);
-      setConfig(null);
-      setLoadError(error instanceof Error ? error.message : t("loadFailed"));
-    }
-  }, [t]);
-
-  useEffect(() => {
-    void Promise.all([api.getServerStatus(), api.getServer()])
-      .then(([nextStatus, nextConfig]) => {
-        setLoadError(null);
-        setStatus(nextStatus);
-        setConfig(nextConfig);
-      })
-      .catch((error: unknown) => {
-        setStatus(null);
-        setConfig(null);
-        setLoadError(error instanceof Error ? error.message : t("loadFailed"));
-      });
-  }, [t]);
-
-  useWebSocket("server_changed", useCallback(() => {
-    void load();
-  }, [load]));
-
-  const toggle = async (enabled: boolean) => {
-    const prev = status;
-    setStatus((s) => s ? { ...s, enabled, running: enabled } : { enabled, running: enabled });
-    try {
-      if (enabled) { await api.enableServer(); } else { await api.disableServer(); }
-    } catch { setStatus(prev); }
-  };
-
-  const save = async () => {
-    if (!config) return;
-    const errors = config.raw_toml_changed ? [] : collectServerValidationErrors(config, t);
-    setValidationErrors(errors);
-    setSaveError(null);
-    if (errors.length > 0) return;
-
-    try {
-      await api.setServer(config);
-      setConfig(await api.getServer());
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    } catch (error) {
-      setSaved(false);
-      setSaveError(error instanceof Error ? error.message : t("saveFailed"));
-    }
-  };
-
-  const SUB_TABS: { id: ServerSubTab; label: string }[] = [
-    { id: "audio", label: t("subtabAudio") },
-    { id: "sources", label: t("subtabSources") },
-    { id: "zones", label: t("subtabZones") },
-    { id: "integrations", label: t("subtabIntegrations") },
-    { id: "advanced", label: t("subtabAdvanced") },
-  ];
-
-  if (loadError) {
-    return (
-      <Card title={t("title")} id={cardId}>
-        <div className="rounded-2xl border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive" role="alert">
-          <p className="font-medium">{t("loadFailed")}</p>
-          <p className="mt-1 text-xs opacity-90">{loadError}</p>
-          <Button className="mt-3" size="sm" variant="outline" onClick={() => void load()}>
-            {t("reload")}
-          </Button>
-        </div>
-      </Card>
-    );
-  }
-
-  if (!status || !config) return <Skeleton className="h-40 w-full" />;
-
-  return (
-    <Card title={t("title")} id={cardId}>
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <span className="text-sm">{t("enable")}</span>
-            <p className="text-xs text-muted-foreground">{t("enableDescription")}</p>
-          </div>
-          <Switch checked={status.enabled} onCheckedChange={toggle} aria-label={t("enable")} />
-        </div>
-
-        {status.enabled && (
-          <a
-            href={`${config.http.tls_cert && config.http.tls_key ? "https" : "http"}://${typeof window !== "undefined" ? window.location.hostname : "localhost"}:${config.http.port}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-xs text-primary underline-offset-4 hover:underline"
-          >
-            {t("openWebui")} ↗
-          </a>
-        )}
-
-        {status.enabled && (
-          <Field label={t("deviceName")} htmlFor={`${cardId}-name`}>
-            <Input id={`${cardId}-name`} value={config.name} onChange={(e) => { const c = structuredClone(config); c.name = e.target.value; setConfig(c); }} placeholder="SnapDog" />
-          </Field>
-        )}
-
-
-        {status.enabled && (
-          <>
-            <div className="flex gap-1 rounded-lg bg-muted p-1">
-              {SUB_TABS.map((st) => (
-                <button
-                  key={st.id}
-                  type="button"
-                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${subTab === st.id ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-                  onClick={() => setSubTab(st.id)}
-                >
-                  {st.label}
-                </button>
-              ))}
-            </div>
-
-            {subTab === "audio" && <ServerAudioSubTab config={config} setConfig={setConfig} />}
-            {subTab === "sources" && <ServerSourcesSubTab config={config} setConfig={setConfig} />}
-            {subTab === "zones" && <ServerZonesSubTab config={config} setConfig={setConfig} />}
-            {subTab === "integrations" && <ServerIntegrationsSubTab config={config} setConfig={setConfig} />}
-            {subTab === "advanced" && <ServerAdvancedSubTab config={config} setConfig={setConfig} />}
-
-            {(validationErrors.length > 0 || saveError) && (
-              <div className="rounded-2xl border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">
-                <p className="font-medium">{saveError ?? t("validationFailed")}</p>
-                {validationErrors.length > 0 && (
-                  <ul className="mt-1 space-y-0.5">
-                    {validationErrors.slice(0, 6).map((error) => <li key={error}>{error}</li>)}
-                  </ul>
-                )}
-              </div>
-            )}
-
-            <div className="flex items-center gap-3 border-t border-border pt-3">
-              <Button size="sm" onClick={save}>{t("save")}</Button>
-              {saved && <span className="text-xs text-green-600">{t("saved")}</span>}
-            </div>
-          </>
-        )}
-      </div>
-    </Card>
-  );
-}
-
-function ServerAdvancedSubTab({ config, setConfig }: { config: ServerConfig; setConfig: (c: ServerConfig) => void }) {
-  const t = useTranslations("server");
-  return (
-    <div className="space-y-3">
-      <div className="rounded-2xl border border-primary/20 bg-primary/5 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
-        {t("advancedDescription")}
-      </div>
-      <label className="block space-y-1.5">
-        <span className="text-sm text-muted-foreground">/etc/snapdog/snapdog.toml</span>
-        <textarea
-          value={config.raw_toml}
-          onChange={(event) => setConfig({ ...config, raw_toml: event.target.value, raw_toml_changed: true })}
-          spellCheck={false}
-          className="min-h-96 w-full resize-y rounded-2xl border border-border bg-background px-3 py-2 font-mono text-xs leading-relaxed text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20"
-          aria-label="Complete SnapDog server TOML configuration"
-        />
-      </label>
-      <p className="text-[11px] text-muted-foreground">
-        {t("advancedPreservation")}
-      </p>
-    </div>
-  );
-}
-
-function ServerAudioSubTab({ config, setConfig }: { config: ServerConfig; setConfig: (c: ServerConfig) => void }) {
-  const t = useTranslations("server");
-  const portId = useId();
-  const codecId = useId();
-  const pskId = useId();
-  const sampleRateId = useId();
-  const bitDepthId = useId();
-  const sourceConflictId = useId();
-  const groupVolumeId = useId();
-  const unknownClientsId = useId();
-  const defaultZoneId = useId();
-  const logLevelId = useId();
-
-  const update = (path: string, value: unknown) => {
-    const c = structuredClone(config);
-    const parts = path.split(".");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let obj: any = c;
-    for (let i = 0; i < parts.length - 1; i++) obj = obj[parts[i]];
-    obj[parts[parts.length - 1]] = value;
-    setConfig(c);
-  };
-
-  return (
-    <div className="space-y-3">
-      <Field label={t("port")} htmlFor={portId}>
-        <Input id={portId} type="number" value={config.snapcast.streaming_port} onChange={(e) => update("snapcast.streaming_port", Number(e.target.value))} />
-      </Field>
-      <Field label={t("codec")} htmlFor={codecId}>
-        <Select id={codecId} value={config.snapcast.codec} onChange={(e) => {
-          const codec = e.target.value;
-          const c = structuredClone(config);
-          (c.snapcast as Record<string, unknown>).codec = codec;
-          if (codec === "flac" && c.audio.bit_depth > 24) c.audio.bit_depth = 24;
-          if (codec.startsWith("f32")) c.audio.bit_depth = 32;
-          setConfig(c);
-        }}>
-          <option value="pcm">PCM</option>
-          <option value="flac">FLAC</option>
-          <option value="f32lz4">f32lz4</option>
-          <option value="f32lz4e">f32lz4e</option>
-        </Select>
-      </Field>
-      {config.snapcast.codec === "f32lz4e" && (
-        <Field label={t("psk")} htmlFor={pskId}>
-          <Input id={pskId} value={config.snapcast.encryption_psk ?? ""} onChange={(e) => update("snapcast.encryption_psk", e.target.value || null)} />
-        </Field>
-      )}
-      <Field label={t("sampleRate")} htmlFor={sampleRateId}>
-        <Select id={sampleRateId} value={String(config.audio.sample_rate)} onChange={(e) => update("audio.sample_rate", Number(e.target.value))}>
-          <option value="44100">44100</option>
-          <option value="48000">48000</option>
-          <option value="88200">88200</option>
-          <option value="96000">96000</option>
-          <option value="176400">176400</option>
-          <option value="192000">192000</option>
-        </Select>
-      </Field>
-      <Field label={t("bitDepth")} htmlFor={bitDepthId}>
-        {config.snapcast.codec.startsWith("f32") ? (
-          <Select id={bitDepthId} value="32" disabled>
-            <option value="32">32 (float)</option>
-          </Select>
-        ) : (
-          <Select id={bitDepthId} value={String(config.audio.bit_depth)} onChange={(e) => update("audio.bit_depth", Number(e.target.value))}>
-            <option value="16">16</option>
-            <option value="24">24</option>
-            {config.snapcast.codec !== "flac" && <option value="32">32</option>}
-          </Select>
-        )}
-      </Field>
-      <Field label={t("sourceConflict")} htmlFor={sourceConflictId}>
-        <Select id={sourceConflictId} value={config.audio.source_conflict} onChange={(e) => update("audio.source_conflict", e.target.value)}>
-          <option value="last_wins">{t("lastWins")}</option>
-          <option value="receiver_wins">{t("receiverWins")}</option>
-        </Select>
-      </Field>
-      <Field label={t("zoneSwitchFade")}>
-        <Stepper value={config.audio.zone_switch_fade_ms} onChange={(v) => update("audio.zone_switch_fade_ms", v)} min={0} max={1000} step={50} suffix="ms" />
-      </Field>
-      <Field label={t("sourceSwitchFade")}>
-        <Stepper value={config.audio.source_switch_fade_ms} onChange={(v) => update("audio.source_switch_fade_ms", v)} min={0} max={1000} step={50} suffix="ms" />
-      </Field>
-      <Field label={t("groupVolume")} htmlFor={groupVolumeId}>
-        <Select id={groupVolumeId} value={config.snapcast.group_volume_mode} onChange={(e) => update("snapcast.group_volume_mode", e.target.value)}>
-          <option value="relative">{t("relative")}</option>
-          <option value="absolute">{t("absolute")}</option>
-          <option value="compressed">Compressed</option>
-        </Select>
-      </Field>
-      <Field label={t("unknownClients")} htmlFor={unknownClientsId}>
-        <Select id={unknownClientsId} value={config.snapcast.unknown_clients} onChange={(e) => update("snapcast.unknown_clients", e.target.value)}>
-          <option value="accept">{t("accept")}</option>
-          <option value="ignore">{t("ignore")}</option>
-          <option value="reject">{t("reject")}</option>
-        </Select>
-      </Field>
-      <Field label={t("defaultZone")} htmlFor={defaultZoneId}>
-        <Select id={defaultZoneId} value={config.snapcast.default_zone ?? ""} onChange={(e) => update("snapcast.default_zone", e.target.value || null)}>
-          <option value="">Automatic</option>
-          {config.zones.map((z) => <option key={z.name} value={z.name}>{z.name}</option>)}
-        </Select>
-      </Field>
-      <Field label={t("logLevel")} htmlFor={logLevelId}>
-        <Select id={logLevelId} value={config.system.log_level} onChange={(e) => update("system.log_level", e.target.value)}>
-          <option value="error">error</option>
-          <option value="warn">warn</option>
-          <option value="info">info</option>
-          <option value="debug">debug</option>
-          <option value="trace">trace</option>
-        </Select>
-      </Field>
-      <div className="flex items-center justify-between">
-        <span className="text-sm">mDNS / Bonjour</span>
-        <Switch checked={config.mdns.enabled} onCheckedChange={(v) => update("mdns.enabled", v)} />
-      </div>
-      <div className="flex items-center justify-between">
-        <span className="text-sm">{t("advertiseSnapcast")}</span>
-        <Switch checked={config.mdns.advertise_snapcast} onCheckedChange={(v) => update("mdns.advertise_snapcast", v)} />
-      </div>
-    </div>
-  );
-}
-
-function ServerSourcesSubTab({ config, setConfig }: { config: ServerConfig; setConfig: (c: ServerConfig) => void }) {
-  const t = useTranslations("server");
-  const subUrlId = useId();
-  const subUserId = useId();
-  const subPassId = useId();
-  const spotNameId = useId();
-  const spotBitrateId = useId();
-  const airPassId = useId();
-
-  const toggleSubsonic = (on: boolean) => {
-    const c = structuredClone(config);
-    c.subsonic = on ? { url: "", username: "", password: "", format: "raw", tls_skip_verify: false, cache: { path: "", max_size_mb: 2048 } } : null;
-    setConfig(c);
-  };
-  const toggleSpotify = (on: boolean) => {
-    const c = structuredClone(config);
-    c.spotify = on ? { name: "SnapDog", bitrate: 320 } : null;
-    setConfig(c);
-  };
-  const toggleAirplay = (on: boolean) => {
-    const c = structuredClone(config);
-    c.airplay = on ? { password: null, mode: "airplay2", bind: [] } : null;
-    setConfig(c);
-  };
-
-  const updateSub = (key: string, value: string) => {
-    const c = structuredClone(config);
-    if (c.subsonic) (c.subsonic as unknown as Record<string, unknown>)[key] = value;
-    setConfig(c);
-  };
-  const updateSpot = (key: string, value: string | number) => {
-    const c = structuredClone(config);
-    if (c.spotify) (c.spotify as Record<string, string | number>)[key] = value;
-    setConfig(c);
-  };
-
-  const addRadio = () => {
-    const c = structuredClone(config);
-    c.radio.push({ source_index: null, name: "", url: "", cover: null });
-    setConfig(c);
-  };
-  const removeRadio = (i: number) => {
-    const c = structuredClone(config);
-    c.radio.splice(i, 1);
-    setConfig(c);
-  };
-  const updateRadio = (i: number, key: string, value: string) => {
-    const c = structuredClone(config);
-    (c.radio[i] as Record<string, string | null>)[key] = key === "cover" ? (value || null) : value;
-    setConfig(c);
-  };
-
-  return (
-    <div className="space-y-4">
-      {/* Subsonic */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-medium">{t("subsonic")}</span>
-          <Switch checked={config.subsonic !== null} onCheckedChange={toggleSubsonic} aria-label={t("subsonic")} />
-        </div>
-        {config.subsonic && (
-          <div className="space-y-2 pl-2 border-l-2 border-border">
-            <Field label={t("url")} htmlFor={subUrlId}><Input id={subUrlId} value={config.subsonic.url} onChange={(e) => updateSub("url", e.target.value)} /></Field>
-            <Field label={t("username")} htmlFor={subUserId}><Input id={subUserId} value={config.subsonic.username} onChange={(e) => updateSub("username", e.target.value)} /></Field>
-            <Field label={t("password")} htmlFor={subPassId}><Input id={subPassId} type="password" value={config.subsonic.password} onChange={(e) => updateSub("password", e.target.value)} /></Field>
-            <Field label={t("streamingFormat")} htmlFor={`${subPassId}-fmt`}>
-              <Select id={`${subPassId}-fmt`} value={config.subsonic.format} onChange={(e) => updateSub("format", e.target.value)}>
-                <option value="raw">{t("originalRaw")}</option>
-                <option value="flac">FLAC</option>
-                <option value="mp3">MP3</option>
-                <option value="opus">Opus</option>
-              </Select>
-            </Field>
-          </div>
-        )}
-      </div>
-      {/* Spotify */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-medium">{t("spotify")}</span>
-          <Switch checked={config.spotify !== null} onCheckedChange={toggleSpotify} aria-label={t("spotify")} />
-        </div>
-        {config.spotify && (
-          <div className="space-y-2 pl-2 border-l-2 border-border">
-            <Field label={t("name")} htmlFor={spotNameId}><Input id={spotNameId} value={config.spotify.name} onChange={(e) => updateSpot("name", e.target.value)} /></Field>
-            <Field label={t("bitrate")} htmlFor={spotBitrateId}>
-              <Select id={spotBitrateId} value={String(config.spotify.bitrate)} onChange={(e) => updateSpot("bitrate", Number(e.target.value))}>
-                <option value="96">96</option><option value="160">160</option><option value="320">320</option>
-              </Select>
-            </Field>
-          </div>
-        )}
-      </div>
-      {/* AirPlay */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-medium">{t("airplay")}</span>
-          <Switch checked={config.airplay !== null} onCheckedChange={toggleAirplay} aria-label={t("airplay")} />
-        </div>
-        {config.airplay && (
-          <div className="space-y-2 pl-2 border-l-2 border-border">
-            <Field label={t("password")} htmlFor={airPassId}><Input id={airPassId} value={config.airplay.password ?? ""} onChange={(e) => { const c = structuredClone(config); c.airplay = { ...c.airplay!, password: e.target.value || null }; setConfig(c); }} placeholder={t("airplayPasswordHint")} /></Field>
-            <Field label={t("airplayMode")} htmlFor={`${airPassId}-mode`}>
-              <Select id={`${airPassId}-mode`} value={config.airplay.mode} onChange={(e) => { const c = structuredClone(config); c.airplay = { ...c.airplay!, mode: e.target.value }; setConfig(c); }}>
-                <option value="airplay2">AirPlay 2</option>
-                <option value="airplay1">AirPlay 1 ({t("legacy")})</option>
-              </Select>
-            </Field>
-          </div>
-        )}
-      </div>
-      {/* Radio */}
-      <div className="space-y-2">
-        <span className="text-sm font-medium">{t("radio")}</span>
-        {config.radio.map((r, i) => (
-          <div key={i} className="flex items-end gap-2">
-            <div className="flex-1 space-y-1">
-              <Input placeholder={t("stationName")} value={r.name} onChange={(e) => updateRadio(i, "name", e.target.value)} aria-label={`${t("stationName")} ${i + 1}`} />
-              <Input placeholder={t("stationUrl")} value={r.url} onChange={(e) => updateRadio(i, "url", e.target.value)} aria-label={`${t("stationUrl")} ${i + 1}`} />
-              <Input placeholder={t("stationCover")} value={r.cover ?? ""} onChange={(e) => updateRadio(i, "cover", e.target.value)} aria-label={`${t("stationCover")} ${i + 1}`} />
-            </div>
-            <Button variant="outline" size="icon-xs" onClick={() => removeRadio(i)} aria-label={t("remove")}>×</Button>
-          </div>
-        ))}
-        <Button variant="outline" size="xs" onClick={addRadio}>{t("addStation")}</Button>
-      </div>
-    </div>
-  );
-}
-
-function ServerZonesSubTab({ config, setConfig }: { config: ServerConfig; setConfig: (c: ServerConfig) => void }) {
-  const t = useTranslations("server");
-
-  const addZone = () => { const c = structuredClone(config); c.zones.push({ source_index: null, name: "", icon: "🔊", sink: null, airplay_name: null, spotify_name: null, group_volume_mode: null, knx: null }); setConfig(c); };
-  const removeZone = (i: number) => { const c = structuredClone(config); c.zones.splice(i, 1); setConfig(c); };
-  const updateZone = (i: number, key: "name" | "icon", value: string) => { const c = structuredClone(config); c.zones[i][key] = value; setConfig(c); };
-
-  const addClient = () => { const c = structuredClone(config); c.clients.push({ source_index: null, name: "", mac: "", zone: config.zones[0]?.name ?? "", icon: "🔊", max_volume: 100, default_volume: 50, default_latency: 0, knx: null }); setConfig(c); };
-  const removeClient = (i: number) => { const c = structuredClone(config); c.clients.splice(i, 1); setConfig(c); };
-  const updateClient = (i: number, key: "name" | "mac" | "zone" | "icon" | "max_volume", value: string | number) => {
-    const c = structuredClone(config);
-    if (key === "max_volume") c.clients[i].max_volume = Number(value);
-    else c.clients[i][key] = String(value);
-    setConfig(c);
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="space-y-2">
-        <span className="text-sm font-medium">{t("zones")}</span>
-        {config.zones.map((z, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <Input className="flex-1" placeholder={t("zoneName")} value={z.name} onChange={(e) => updateZone(i, "name", e.target.value)} aria-label={`${t("zoneName")} ${i + 1}`} />
-            <Input className="w-16" placeholder={t("icon")} value={z.icon} onChange={(e) => updateZone(i, "icon", e.target.value)} aria-label={`${t("icon")} ${i + 1}`} />
-            <Button variant="outline" size="icon-xs" onClick={() => removeZone(i)} aria-label={t("remove")}>×</Button>
-          </div>
-        ))}
-        <Button variant="outline" size="xs" onClick={addZone}>{t("addZone")}</Button>
-      </div>
-      <div className="space-y-2">
-        <span className="text-sm font-medium">{t("clients")}</span>
-        {config.clients.map((cl, i) => (
-          <div key={i} className="space-y-1">
-            <div className="flex items-center gap-2">
-              <EmojiPicker value={cl.icon} onChange={(v) => updateClient(i, "icon", v)} />
-              <Input className="flex-1" placeholder={t("clientName")} value={cl.name} onChange={(e) => updateClient(i, "name", e.target.value)} aria-label={`${t("clientName")} ${i + 1}`} />
-              <Input className="w-32" placeholder={t("mac")} value={cl.mac} onChange={(e) => updateClient(i, "mac", e.target.value)} aria-label={`${t("mac")} ${i + 1}`} />
-              <Select className="w-28" value={cl.zone} onChange={(e) => updateClient(i, "zone", e.target.value)} aria-label={`${t("zone")} ${i + 1}`}>
-                {config.zones.map((z) => <option key={z.name} value={z.name}>{z.name}</option>)}
-              </Select>
-              <Button variant="outline" size="icon-xs" onClick={() => removeClient(i)} aria-label={t("remove")}>×</Button>
-            </div>
-            <div className="flex items-center gap-2 pl-8">
-              <span className="text-xs text-muted-foreground w-16">{t("maxVolumeShort")}</span>
-              <input type="range" min={1} max={100} value={cl.max_volume} onChange={(e) => updateClient(i, "max_volume", Number(e.target.value))} className="flex-1 h-1.5 accent-primary" aria-label={`${t("maxVolume")} ${i + 1}`} />
-              <span className="text-xs w-8 text-right">{cl.max_volume}%</span>
-            </div>
-          </div>
-        ))}
-        <Button variant="outline" size="xs" onClick={addClient}>{t("addClient")}</Button>
-      </div>
-    </div>
-  );
-}
-
-function getConfiguredKnxCount(values: object | null) {
-  if (!values) return 0;
-  return Object.values(values as Record<string, string | null | undefined>).filter((value) => typeof value === "string" && value.trim() !== "").length;
-}
-
-function KnxAddressInput({ field, value, onChange }: { field: KnxField; value: string; onChange: (value: string | null) => void }) {
-  const t = useTranslations("server");
-  const id = useId();
-  const invalid = !isValidKnxGroupAddress(value);
-
-  return (
-    <div className="rounded-2xl bg-background/70 p-2.5 ring-1 ring-border/60">
-      <label htmlFor={id} className="mb-1.5 flex min-w-0 items-start justify-between gap-2">
-        <span className="min-w-0">
-          <span className="block truncate text-xs font-medium">{field.label}</span>
-          <span className="block truncate font-mono text-[10px] text-muted-foreground">{field.key}</span>
-        </span>
-        <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-          {field.direction} · DPT {field.dpt}
-        </span>
-      </label>
-      <Input
-        id={id}
-        className="h-8 rounded-2xl font-mono text-xs"
-        placeholder="1/2/3"
-        value={value}
-        onChange={(event) => onChange(normalizeKnxValue(event.target.value))}
-        aria-invalid={invalid}
-        aria-describedby={invalid ? `${id}-error` : undefined}
-      />
-      {invalid && (
-        <p id={`${id}-error`} className="mt-1 text-[11px] text-destructive" role="alert">
-          {t("knxInvalidGa")}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function KnxAddressGrid({ fields, values, onChange }: { fields: readonly KnxField[]; values: object | null; onChange: (key: string, value: string | null) => void }) {
-  const valueBag = (values ?? {}) as Record<string, string | null | undefined>;
-
-  return (
-    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-      {fields.map((field) => (
-        <KnxAddressInput
-          key={field.key}
-          field={field}
-          value={valueBag[field.key] ?? ""}
-          onChange={(value) => onChange(field.key, value)}
-        />
-      ))}
-    </div>
-  );
-}
-
-function KnxObjectSection({
-  title,
-  configured,
-  total,
-  defaultOpen,
-  children,
-}: {
-  title: string;
-  configured: number;
-  total: number;
-  defaultOpen?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <details open={defaultOpen || undefined} className="group rounded-2xl border border-border/70 bg-muted/25">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl px-3 py-2 text-sm font-medium [&::-webkit-details-marker]:hidden">
-        <span className="truncate">{title}</span>
-        <span className="flex shrink-0 items-center gap-2">
-          <span className="rounded-full bg-background/80 px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
-            {configured}/{total}
-          </span>
-          <span className="text-muted-foreground transition-transform group-open:rotate-180" aria-hidden="true">⌄</span>
-        </span>
-      </summary>
-      <div className="px-3 pb-3">
-        {children}
-      </div>
-    </details>
-  );
-}
-
-function ServerIntegrationsSubTab({ config, setConfig }: { config: ServerConfig; setConfig: (c: ServerConfig) => void }) {
-  const t = useTranslations("server");
-  const mqttBrokerId = useId();
-  const mqttUserId = useId();
-  const mqttPassId = useId();
-  const mqttTopicId = useId();
-  const knxModeId = useId();
-  const knxUrlId = useId();
-
-  const toggleMqtt = (on: boolean) => {
-    const c = structuredClone(config);
-    c.mqtt = on ? { broker: "", client_id: "snapdog", username: null, password: null, base_topic: "snapdog/" } : null;
-    setConfig(c);
-  };
-  const updateMqtt = (key: string, value: string | null) => {
-    const c = structuredClone(config);
-    if (c.mqtt) (c.mqtt as Record<string, string | null>)[key] = value;
-    setConfig(c);
-  };
-
-  const toggleKnx = (on: boolean) => {
-    const c = structuredClone(config);
-    c.knx = on ? { role: "client", url: null, individual_address: null, persist_ets_config: null, restart_after_ets: null, start_prog_mode: false, server_online: null, all_stop: null, all_mute: null, all_mute_status: null, system_fault: null, knx_time: null, heartbeat_minutes: 5, sync_system_clock: false } : null;
-    setConfig(c);
-  };
-  const updateKnx = (key: string, value: string | null) => {
-    const c = structuredClone(config);
-    if (c.knx) (c.knx as Record<string, unknown>)[key] = value;
-    setConfig(c);
-  };
-
-  const updateZoneKnx = (index: number, key: ZoneKnxKey, value: string | null) => {
-    const c = structuredClone(config);
-    const zone = c.zones[index];
-    const knx = { ...(zone.knx ?? {}) };
-    (knx as Record<string, string | null>)[key] = value;
-    zone.knx = compactKnxValues(knx);
-    setConfig(c);
-  };
-  const updateClientKnx = (index: number, key: ClientKnxKey, value: string | null) => {
-    const c = structuredClone(config);
-    const client = c.clients[index];
-    const knx = { ...(client.knx ?? {}) };
-    (knx as Record<string, string | null>)[key] = value;
-    client.knx = compactKnxValues(knx);
-    setConfig(c);
-  };
-  const gatewayInvalid = config.knx?.role === "client" && !(config.knx.url ?? "").trim();
-
-  return (
-    <div className="space-y-4">
-      {/* API Keys */}
-      <div className="space-y-2">
-        <span className="text-sm font-medium">{t("apiKeys")}</span>
-        <p className="text-xs text-muted-foreground">{t("apiKeysDescription")}</p>
-        {config.http.api_keys.map((key, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <Input className="flex-1 font-mono text-xs" value={key} onChange={(e) => {
-              const c = structuredClone(config);
-              c.http.api_keys[i] = e.target.value;
-              setConfig(c);
-            }} aria-label={`API Key ${i + 1}`} />
-            <Button variant="ghost" size="sm" onClick={() => {
-              const c = structuredClone(config);
-              c.http.api_keys.splice(i, 1);
-              setConfig(c);
-            }} aria-label={t("removeKey")}>✕</Button>
-          </div>
-        ))}
-        <Button variant="outline" size="sm" onClick={() => {
-          const c = structuredClone(config);
-          c.http.api_keys.push("");
-          setConfig(c);
-        }}>+ {t("addKey")}</Button>
-      </div>
-
-      {/* MQTT */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-medium">{t("mqtt")}</span>
-          <Switch checked={config.mqtt !== null} onCheckedChange={toggleMqtt} aria-label={t("mqtt")} />
-        </div>
-        {config.mqtt && (
-          <div className="space-y-2 pl-2 border-l-2 border-border">
-            <Field label={t("broker")} htmlFor={mqttBrokerId}><Input id={mqttBrokerId} value={config.mqtt.broker} onChange={(e) => updateMqtt("broker", e.target.value)} /></Field>
-            <Field label={t("username")} htmlFor={mqttUserId}><Input id={mqttUserId} value={config.mqtt.username ?? ""} onChange={(e) => updateMqtt("username", e.target.value || null)} /></Field>
-            <Field label={t("password")} htmlFor={mqttPassId}><Input id={mqttPassId} type="password" value={config.mqtt.password ?? ""} onChange={(e) => updateMqtt("password", e.target.value || null)} /></Field>
-            <Field label={t("baseTopic")} htmlFor={mqttTopicId}><Input id={mqttTopicId} value={config.mqtt.base_topic} onChange={(e) => updateMqtt("base_topic", e.target.value)} /></Field>
-          </div>
-        )}
-      </div>
-      {/* KNX */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-medium">{t("knx")}</span>
-          <Switch checked={config.knx !== null} onCheckedChange={toggleKnx} aria-label={t("knx")} />
-        </div>
-        {config.knx && (
-          <div className="space-y-4 pl-2 border-l-2 border-border">
-            <div className="grid gap-2 sm:grid-cols-2">
-              <Field label={t("knxMode")} htmlFor={knxModeId}>
-                <Select id={knxModeId} value={config.knx.role} onChange={(e) => {
-                  const role = e.target.value as "client" | "device";
-                  const c = structuredClone(config);
-                  if (c.knx) {
-                    c.knx.role = role;
-                    if (role === "device") c.knx.url = null;
-                  }
-                  setConfig(c);
-                }}>
-                  <option value="client">{t("knxClient")}</option>
-                  <option value="device">{t("knxDevice")}</option>
-                </Select>
-              </Field>
-              {config.knx.role === "client" && (
-                <Field label={t("gatewayUrl")} htmlFor={knxUrlId}>
-                  <Input
-                    id={knxUrlId}
-                    value={config.knx.url ?? ""}
-                    onChange={(e) => updateKnx("url", e.target.value || null)}
-                    aria-invalid={gatewayInvalid}
-                    aria-describedby={gatewayInvalid ? `${knxUrlId}-error` : undefined}
-                  />
-                  {gatewayInvalid && <p id={`${knxUrlId}-error`} className="text-xs text-destructive" role="alert">{t("knxGatewayRequired")}</p>}
-                </Field>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <span className="text-xs font-medium text-muted-foreground">{t("knxZoneObjects")}</span>
-              {config.zones.length === 0 && <p className="text-xs text-muted-foreground">{t("knxNoZones")}</p>}
-              {config.zones.map((zone, index) => (
-                <KnxObjectSection
-                  key={`${zone.name}-${index}`}
-                  title={`${zone.icon || "🔊"} ${zone.name || t("zoneName")}`}
-                  configured={getConfiguredKnxCount(zone.knx)}
-                  total={ZONE_KNX_FIELDS.length}
-                  defaultOpen={index === 0}
-                >
-                  <KnxAddressGrid
-                    fields={ZONE_KNX_FIELDS}
-                    values={zone.knx}
-                    onChange={(key, value) => updateZoneKnx(index, key as ZoneKnxKey, value)}
-                  />
-                </KnxObjectSection>
-              ))}
-            </div>
-
-            <div className="space-y-2">
-              <span className="text-xs font-medium text-muted-foreground">{t("knxClientObjects")}</span>
-              {config.clients.length === 0 && <p className="text-xs text-muted-foreground">{t("knxNoClients")}</p>}
-              {config.clients.map((client, index) => (
-                <KnxObjectSection
-                  key={`${client.mac}-${client.name}-${index}`}
-                  title={`${client.icon || "🔊"} ${client.name || t("clientName")}`}
-                  configured={getConfiguredKnxCount(client.knx)}
-                  total={CLIENT_KNX_FIELDS.length}
-                >
-                  <KnxAddressGrid
-                    fields={CLIENT_KNX_FIELDS}
-                    values={client.knx}
-                    onChange={(key, value) => updateClientKnx(index, key as ClientKnxKey, value)}
-                  />
-                </KnxObjectSection>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ── Main Page ─────────────────────────────────────────────────
 
 const TABS: Tab[] = ["dashboard", "network", "audio", "client", "server", "ssh", "update", "system"];
@@ -4277,10 +3361,22 @@ function HealthBanner() {
 function SetupPage() {
   const t = useTranslations("tabs");
   const systemT = useTranslations("system");
+  const serverT = useTranslations("server");
   const [tab, setTab] = useState<Tab>("dashboard");
+  const [serverDirty, setServerDirty] = useState(false);
   const { locale, setLocale } = useI18n();
   const [isConnected, setIsConnected] = useState(true);
   const [clientEnabled, setClientEnabled] = useState(false);
+
+  const requestTab = useCallback((next: Tab) => {
+    if (next === tab) return;
+    setTab(next);
+  }, [tab]);
+
+  const requestTabAndFocus = useCallback((next: Tab) => {
+    requestTab(next);
+    window.setTimeout(() => document.getElementById(`tab-${next}`)?.focus(), 0);
+  }, [requestTab]);
 
   useEffect(() => {
     api.getClient().then((c) => setClientEnabled(c.server_url !== "__disabled__")).catch(() => {});
@@ -4359,32 +3455,34 @@ function SetupPage() {
                     ? "bg-background text-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
-                onClick={() => setTab(id)}
+                onClick={() => requestTab(id)}
                 onKeyDown={(e) => {
                   const idx = TABS.indexOf(id);
                   if (e.key === "ArrowRight") {
                     e.preventDefault();
                     const next = TABS[(idx + 1) % TABS.length];
-                    setTab(next);
-                    document.getElementById(`tab-${next}`)?.focus();
+                    requestTabAndFocus(next);
                   } else if (e.key === "ArrowLeft") {
                     e.preventDefault();
                     const prev = TABS[(idx - 1 + TABS.length) % TABS.length];
-                    setTab(prev);
-                    document.getElementById(`tab-${prev}`)?.focus();
+                    requestTabAndFocus(prev);
                   } else if (e.key === "Home") {
                     e.preventDefault();
-                    setTab(TABS[0]);
-                    document.getElementById(`tab-${TABS[0]}`)?.focus();
+                    requestTabAndFocus(TABS[0]);
                   } else if (e.key === "End") {
                     e.preventDefault();
                     const last = TABS[TABS.length - 1];
-                    setTab(last);
-                    document.getElementById(`tab-${last}`)?.focus();
+                    requestTabAndFocus(last);
                   }
                 }}
               >
                 {t(id)}
+                {id === "server" && serverDirty && (
+                  <>
+                    <span className="ml-1.5 inline-block size-1.5 rounded-full bg-primary align-middle" aria-hidden="true" />
+                    <span className="sr-only"> — {serverT("changesPending")}</span>
+                  </>
+                )}
               </button>
             ))}
           </div>
@@ -4399,7 +3497,9 @@ function SetupPage() {
           {tab === "network" && <NetworkTab />}
           {tab === "audio" && <AudioTab />}
           {tab === "client" && <ClientTab />}
-          {tab === "server" && <ServerTab />}
+          <div hidden={tab !== "server"} aria-hidden={tab !== "server"}>
+            <ServerSetup onDirtyChange={setServerDirty} />
+          </div>
           {tab === "ssh" && <SshTab />}
           {tab === "update" && <UpdateTab />}
           {tab === "system" && <SystemTab />}

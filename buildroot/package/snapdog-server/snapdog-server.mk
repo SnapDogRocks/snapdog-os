@@ -11,6 +11,12 @@ SNAPDOG_SERVER_SOURCE = snapdog-v$(SNAPDOG_SERVER_VERSION)-aarch64-unknown-linux
 SNAPDOG_SERVER_SITE = https://github.com/SnapDogRocks/snapdog/releases/download/v$(SNAPDOG_SERVER_VERSION)
 SNAPDOG_SERVER_LICENSE = GPL-3.0-only
 
+# Keep this GID stable: it owns files on the persistent /data partition across
+# rootfs/RAUC upgrades. The service itself remains a systemd DynamicUser.
+define SNAPDOG_SERVER_USERS
+	- - snapdog-state 2002 * - - - SnapDog server persistent state
+endef
+
 define SNAPDOG_SERVER_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/snapdog \
 		$(TARGET_DIR)/usr/bin/snapdog
@@ -18,6 +24,8 @@ define SNAPDOG_SERVER_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/etc/snapdog/snapdog.toml.default
 	$(INSTALL) -D -m 0755 $(BR2_EXTERNAL_SNAPDOG_PATH)/package/snapdog-server/snapdog-data-init \
 		$(TARGET_DIR)/usr/bin/snapdog-data-init
+	$(INSTALL) -D -m 0755 $(BR2_EXTERNAL_SNAPDOG_PATH)/package/snapdog-server/snapdog-run \
+		$(TARGET_DIR)/usr/libexec/snapdog-run
 endef
 
 define SNAPDOG_SERVER_INSTALL_INIT_SYSTEMD

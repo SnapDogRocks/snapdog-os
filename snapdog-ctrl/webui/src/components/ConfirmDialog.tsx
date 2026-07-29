@@ -1,7 +1,7 @@
 "use client";
 
 import { useId } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { useFocusTrap } from "@/hooks/useFocusTrap";
 import { Button } from "@/components/ui/button";
 
@@ -14,6 +14,8 @@ interface ConfirmDialogProps {
   cancelLabel: string;
   onConfirm: () => void;
   onCancel: () => void;
+  /** Called after the exit animation has removed the dialog. */
+  onAfterClose?: () => void;
   /** Style the confirm action as destructive (red). Defaults to true. */
   destructive?: boolean;
 }
@@ -27,7 +29,7 @@ interface ConfirmDialogProps {
  */
 export function ConfirmDialog(props: ConfirmDialogProps) {
   return (
-    <AnimatePresence>{props.open && <ConfirmOverlay {...props} />}</AnimatePresence>
+    <AnimatePresence onExitComplete={props.onAfterClose}>{props.open && <ConfirmOverlay {...props} />}</AnimatePresence>
   );
 }
 
@@ -41,6 +43,7 @@ function ConfirmOverlay({
   destructive = true,
 }: ConfirmDialogProps) {
   const trapRef = useFocusTrap<HTMLDivElement>();
+  const reduceMotion = useReducedMotion();
   const titleId = useId();
   const descId = useId();
 
@@ -57,10 +60,10 @@ function ConfirmOverlay({
     >
       {/* Backdrop — click to cancel (the safe default). */}
       <motion.div
-        initial={{ opacity: 0 }}
+        initial={reduceMotion ? false : { opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        transition={{ duration: 0.2 }}
+        transition={{ duration: reduceMotion ? 0 : 0.2 }}
         className="absolute inset-0 bg-background/80 backdrop-blur-md cursor-pointer"
         onClick={onCancel}
         role="presentation"
@@ -69,10 +72,10 @@ function ConfirmOverlay({
       {/* Card */}
       <motion.div
         ref={trapRef}
-        initial={{ y: 480, opacity: 0, scale: 0.98 }}
+        initial={reduceMotion ? false : { y: 480, opacity: 0, scale: 0.98 }}
         animate={{ y: 0, opacity: 1, scale: 1 }}
-        exit={{ y: 480, opacity: 0, scale: 0.98 }}
-        transition={{ type: "spring", damping: 30, stiffness: 300 }}
+        exit={reduceMotion ? { opacity: 0 } : { y: 480, opacity: 0, scale: 0.98 }}
+        transition={reduceMotion ? { duration: 0 } : { type: "spring", damping: 30, stiffness: 300 }}
         className="relative z-10 w-full max-w-none sm:max-w-[398px] mx-0 sm:mx-4 rounded-t-3xl sm:rounded-2xl border-t border-x sm:border border-border bg-card p-5 sm:p-6 shadow-2xl flex flex-col items-center gap-4 text-center"
       >
         {/* Warning glyph */}
@@ -96,13 +99,12 @@ function ConfirmOverlay({
           </p>
         </div>
 
-        {/* Actions: Cancel is the default focus + Enter target. */}
+        {/* The focus trap selects Cancel first, making it the safe default. */}
         <div className="mt-1 flex w-full flex-col-reverse gap-2 sm:flex-row">
           <Button
             variant="outline"
             size="lg"
             className="w-full sm:flex-1"
-            autoFocus
             onClick={onCancel}
           >
             {cancelLabel}

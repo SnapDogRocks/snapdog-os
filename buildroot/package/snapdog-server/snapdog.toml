@@ -3,11 +3,9 @@
 
 [system]
 log_level = "info"
-# /var/lib is tmpfs on this OS (wiped every boot) and DynamicUser=yes's implied
-# ProtectSystem=strict only excludes it from the read-only sandbox via
-# StateDirectory=, which for a dynamic user re-creates it fresh under
-# /var/lib/private on every start anyway — no persistence either way. Use the
-# real, persistent /data partition directly instead.
+# SnapDog OS keeps runtime state on the persistent data partition. The service
+# can write this directory, while the parent configuration directory stays
+# read-only inside the service sandbox.
 state_dir = "/data/snapdog/state"
 
 [audio]
@@ -17,6 +15,11 @@ channels = 2
 source_conflict = "last_wins"
 zone_switch_fade_ms = 300
 source_switch_fade_ms = 300
+
+# AirPlay is a built-in SnapDog source. It is always available; optional
+# password and bind-address overrides can be added through SnapDog Control.
+[airplay]
+mode = "airplay2"
 
 [snapcast]
 streaming_port = 1704

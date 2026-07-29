@@ -13,17 +13,91 @@ rm -f "$DATA/pending-flash.img.gz" "$DATA/pending-flash.img.gz.part"
 
 # Create directory structure
 mkdir -p "$DATA/default"
-mkdir -p "$DATA/snapdog"
+SNAPDOG_DIR="$DATA/snapdog"
+if [ -L "$SNAPDOG_DIR" ]; then
+  echo "snapdog-data-init: refusing symlinked data directory: $SNAPDOG_DIR" >&2
+  exit 1
+fi
+mkdir -p "$SNAPDOG_DIR"
+# Keep configuration and recovery artifacts private while still allowing the
+# DynamicUser service to traverse the directory and read the active 0640 TOML.
+# The setgid bit makes every root-created atomic temp file inherit the stable
+# service group before it is renamed into place.
+chown root:snapdog-state "$SNAPDOG_DIR"
+chmod 2750 "$SNAPDOG_DIR"
+
+# A ctrl crash while the installed `snapdog --check-config` child is running can
+# leave its root-only import-validation copy behind. Delete only the exact
+# numeric pid/sequence pattern, and only a single-link root-owned regular file;
+# never follow or unlink a crafted symlink/hardlink.
+VALIDATION_OWNER_UID=0
+for validation_file in "$SNAPDOG_DIR"/.settings-import-validation.*.*.toml; do
+  [ -f "$validation_file" ] && [ ! -L "$validation_file" ] || continue
+  validation_name=${validation_file##*/}
+  validation_ids=${validation_name#.settings-import-validation.}
+  validation_ids=${validation_ids%.toml}
+  validation_pid=${validation_ids%%.*}
+  validation_sequence=${validation_ids#*.}
+  [ "$validation_pid" != "$validation_ids" ] || continue
+  case "$validation_pid$validation_sequence" in
+    ''|*[!0-9]*) continue ;;
+  esac
+  [ "$(stat -c %u "$validation_file")" = "$VALIDATION_OWNER_UID" ] || continue
+  [ "$(stat -c %h "$validation_file")" = 1 ] || continue
+  rm -f "$validation_file"
+done
+
+# Normalize controller/server configuration artifacts on every boot. Older
+# images and imported settings may have left ctrl.toml world-readable, while a
+# crafted symlink here would make the privileged controller follow a target
+# outside the managed data directory. Only regular files are accepted.
+normalize_managed_file() {
+  managed_file=$1
+  managed_owner=$2
+  managed_mode=$3
+  if [ -L "$managed_file" ]; then
+    echo "snapdog-data-init: refusing symlinked managed file: $managed_file" >&2
+    exit 1
+  fi
+  if [ -e "$managed_file" ] && [ ! -f "$managed_file" ]; then
+    echo "snapdog-data-init: refusing non-regular managed file: $managed_file" >&2
+    exit 1
+  fi
+  if [ -f "$managed_file" ]; then
+    chown "$managed_owner" "$managed_file"
+    chmod "$managed_mode" "$managed_file"
+  fi
+}
+
+normalize_managed_file "$SNAPDOG_DIR/ctrl.toml" root:root 0600
+normalize_managed_file "$SNAPDOG_DIR/snapdog.toml" root:snapdog-state 0640
+normalize_managed_file "$SNAPDOG_DIR/.snapdog.toml.candidate" root:snapdog-state 0640
+normalize_managed_file "$SNAPDOG_DIR/.snapdog.toml.previous" root:root 0600
+normalize_managed_file "$SNAPDOG_DIR/snapdog.toml.last-good" root:root 0600
+normalize_managed_file "$SNAPDOG_DIR/server-operation.json" root:root 0600
+normalize_managed_file "$SNAPDOG_DIR/server-last-issue.json" root:root 0600
+
 # snapdog.service's persistent state (zone/group Store, EQ settings, AirPlay
 # pairing, server_id) lives in its own subdirectory, not directly under
-# $DATA/snapdog, so widening its permissions below doesn't also affect
-# snapdog.toml (which sits next to it and is written by root via snapdog-ctrl).
-mkdir -p "$DATA/snapdog/state"
-# snapdog.service runs as DynamicUser (a fresh, unpredictable UID each start),
-# so a fixed-owner directory can't grant it write access — world-writable is
-# the pragmatic tradeoff on a single-purpose device with no untrusted local
-# users.
-chmod 0777 "$DATA/snapdog/state"
+# $DATA/snapdog, so its write access doesn't also cover snapdog.toml (which sits
+# next to it and is written by root via snapdog-ctrl).
+STATE_DIR="$SNAPDOG_DIR/state"
+if [ -L "$STATE_DIR" ]; then
+  echo "snapdog-data-init: refusing symlinked state directory: $STATE_DIR" >&2
+  exit 1
+fi
+mkdir -p "$STATE_DIR"
+
+# snapdog.service receives a fresh DynamicUser UID on each start. A stable,
+# service-only group carries access across those UID changes without leaving
+# persistent state world-writable. Re-apply it on every boot to migrate images
+# that used the old 0777 contract and to survive a rootfs upgrade. find does not
+# follow symlinks, so this never changes targets outside the state tree.
+chown root:snapdog-state "$STATE_DIR"
+find "$STATE_DIR" -type d -exec chgrp snapdog-state {} \;
+find "$STATE_DIR" -type d -exec chmod 2770 {} \;
+find "$STATE_DIR" -type f -exec chgrp snapdog-state {} \;
+find "$STATE_DIR" -type f -exec chmod 0660 {} \;
 mkdir -p "$DATA/wpa_supplicant"
 mkdir -p "$DATA/hostapd"
 mkdir -p "$DATA/systemd/network"

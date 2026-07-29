@@ -7,10 +7,13 @@ SNAPDOG_ROOT_DEV ?= /dev/mmcblk0p
 BRDIR := ../buildroot-$(BOARD)
 BRSRC := ../buildroot
 
-.PHONY: setup prepare-ctrl build config clean all check-release-manifest
+.PHONY: setup prepare-ctrl build config clean all check-release-manifest check-server-service
 
 check-release-manifest: ## Test the release manifest v2 contract locally
 	@python3 -m unittest discover -s scripts/tests -p 'test_release_manifest.py'
+
+check-server-service: ## Test the SnapDog server systemd/persistence contract
+	@python3 -m unittest discover -s scripts/tests -p 'test_snapdog_server_contract.py'
 
 setup: ## Download and prepare buildroot
 	@git config core.hooksPath .githooks

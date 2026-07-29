@@ -126,6 +126,7 @@ fn sanitize_country(country: &str) -> String {
 
 /// Start temporary AP mode for initial setup.
 pub async fn start_ap(password: &str, country: &str) -> Result<()> {
+    let _settings_guard = crate::settings::lock_settings_mutation().await;
     let iface = detect_wifi_interface().await;
     let country = sanitize_country(country);
     tracing::info!("Starting temporary AP mode on interface {iface} (country {country})");
@@ -169,6 +170,8 @@ pub async fn start_ap(password: &str, country: &str) -> Result<()> {
 /// Stop AP mode and switch to `WiFi` client mode. Idempotent and serialized:
 /// safe to call from both `connect_wifi` and the boot auto-close loop.
 pub async fn stop_ap() -> Result<()> {
+    // Lock order: settings mutation before AP teardown.
+    let _settings_guard = crate::settings::lock_settings_mutation().await;
     let _guard = ap_teardown_lock().lock().await;
     if !is_ap_active().await {
         tracing::debug!("stop_ap: AP already down, nothing to do");
@@ -192,6 +195,7 @@ pub async fn stop_ap() -> Result<()> {
 /// Used at boot when `WiFi` is already configured but AP mode was never entered
 /// (nothing else brings the supplicant up in that path).
 pub async fn start_wifi_client() -> Result<()> {
+    let _settings_guard = crate::settings::lock_settings_mutation().await;
     let iface = detect_wifi_interface().await;
     tracing::info!("Starting WiFi client on interface {iface}");
     ensure_base_wpa_conf(&iface, DEFAULT_COUNTRY).await?;
@@ -263,6 +267,7 @@ pub async fn connect_wifi(
     country: &str,
     static_ip: Option<&StaticConfig>,
 ) -> Result<()> {
+    let _settings_guard = crate::settings::lock_settings_mutation().await;
     let iface = detect_wifi_interface().await;
     tracing::info!("Connecting to WiFi on interface {iface}: {ssid}");
     if let Some(config) = static_ip {
@@ -310,6 +315,7 @@ pub async fn connect_wifi(
 
 /// Disconnect `WiFi` and remove saved credentials.
 pub async fn disconnect_wifi() -> Result<()> {
+    let _settings_guard = crate::settings::lock_settings_mutation().await;
     let iface = detect_wifi_interface().await;
     tracing::info!("Disconnecting WiFi on interface {iface}");
     let wpa =
@@ -341,6 +347,7 @@ pub async fn disconnect_wifi() -> Result<()> {
 /// to a distinct status. Ensures a supplicant with a control socket is up first,
 /// otherwise `wpa_cli` has nothing to talk to.
 pub async fn scan_networks() -> Result<Vec<ScannedNetwork>> {
+    let _settings_guard = crate::settings::lock_settings_mutation().await;
     anyhow::ensure!(
         !is_ap_active().await,
         "cannot scan while the setup access point is active (single radio)"
@@ -460,6 +467,7 @@ async fn ensure_supplicant_running(iface: &str) -> Result<()> {
 
 /// Configure ethernet (DHCP or static).
 pub async fn configure_ethernet(static_ip: Option<&StaticConfig>) -> Result<()> {
+    let _settings_guard = crate::settings::lock_settings_mutation().await;
     if let Some(config) = static_ip {
         validate_static_config(config)?;
     }

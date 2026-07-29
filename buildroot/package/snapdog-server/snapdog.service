@@ -1,18 +1,26 @@
 [Unit]
 Description=SnapDog Server (multiroom audio)
-After=network-online.target sound.target
+Requires=snapdog-data-init.service
+After=network-online.target sound.target snapdog-data-init.service
 Wants=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=4
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/snapdog --config /etc/snapdog/snapdog.toml
+ExecStart=/usr/libexec/snapdog-run
 Restart=on-failure
 RestartSec=5
+# snapdog-run maps only a rejected configuration to EX_CONFIG (78). Runtime
+# failures keep their native status and remain eligible for bounded restarts.
+RestartPreventExitStatus=78
 DynamicUser=yes
-SupplementaryGroups=audio
+SupplementaryGroups=audio snapdog-state
+UMask=0007
+ProtectSystem=strict
 ProtectHome=yes
+NoNewPrivileges=yes
 PrivateTmp=yes
-# ProtectSystem=strict is implied by DynamicUser=yes; carve out the persistent
-# state directory (snapdog-data-init creates it before this unit starts).
+# The rootfs stays read-only; only SnapDog's dedicated persistent state is
+# writable inside the service mount namespace.
 ReadWritePaths=/data/snapdog/state
-

@@ -61,7 +61,7 @@ async fn wait_for_trustworthy_clock() {
 }
 
 async fn tick() -> anyhow::Result<()> {
-    let config = get_auto_update().await;
+    let config = get_auto_update().await?;
     if !config.enabled {
         return Ok(());
     }

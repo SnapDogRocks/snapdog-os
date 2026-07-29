@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::routes::{
@@ -31,6 +32,22 @@ struct State {
     /// When a mock install was last triggered — drives the scripted install
     /// lifecycle in `update_status()` so the dev UI exercises the real polling path.
     install_started: Option<std::time::Instant>,
+    server_scenario: MockServerScenario,
+    server_config: Option<crate::server_config::ServerConfig>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MockServerScenario {
+    Unconfigured,
+    Stopped,
+    Starting,
+    Healthy,
+    InvalidConfig,
+    Failed,
+    RollbackSucceeded,
+    RollbackFailed,
+    Conflict,
 }
 
 impl MockState {
@@ -74,6 +91,8 @@ impl MockState {
                     exclusive_audio_core: false,
                 },
                 install_started: None,
+                server_scenario: MockServerScenario::Unconfigured,
+                server_config: None,
             })),
         }
     }
@@ -300,6 +319,462 @@ impl MockState {
         drop(s);
         Ok(())
     }
+
+    pub async fn set_server_scenario(&self, scenario: MockServerScenario) {
+        let mut state = self.inner.lock().await;
+        state.server_config = if matches!(scenario, MockServerScenario::Unconfigured) {
+            None
+        } else {
+            Some(
+                state
+                    .server_config
+                    .take()
+                    .unwrap_or_else(mock_server_config),
+            )
+        };
+        if matches!(scenario, MockServerScenario::Conflict) {
+            let current = state
+                .server_config
+                .take()
+                .unwrap_or_else(mock_server_config);
+            state.server_config = Some(mock_external_config_change(&current));
+            // Conflict is represented by the changed revision, not by a broken
+            // runtime. A fresh GET followed by rebase/apply must succeed.
+            state.server_scenario = MockServerScenario::Healthy;
+        } else {
+            state.server_scenario = scenario;
+        }
+    }
+
+    pub async fn get_server_legacy(&self) -> crate::server_config::ServerConfig {
+        self.inner
+            .lock()
+            .await
+            .server_config
+            .clone()
+            .unwrap_or_else(crate::server_manager::initial_config)
+    }
+
+    pub async fn server_state(&self) -> crate::server_manager::ServerState {
+        self.server_state_with_scenario().await.0
+    }
+
+    async fn server_state_with_scenario(
+        &self,
+    ) -> (crate::server_manager::ServerState, MockServerScenario) {
+        use crate::server_manager::{
+            ConfigState, DesiredState, HealthState, OperationKind, OperationPhase, RuntimeState,
+            ServerOperation, ServerState, SetupState,
+        };
+
+        let (scenario, revision) = {
+            let state = self.inner.lock().await;
+            (
+                state.server_scenario,
+                state
+                    .server_config
+                    .as_ref()
+                    .map(|config| config.revision.clone()),
+            )
+        };
+        let desired_running = !matches!(
+            scenario,
+            MockServerScenario::Unconfigured | MockServerScenario::Stopped
+        );
+        let running = matches!(
+            scenario,
+            MockServerScenario::Healthy | MockServerScenario::RollbackSucceeded
+        );
+        let healthy = running;
+        let config_state = mock_config_state(scenario);
+        let operation = matches!(scenario, MockServerScenario::Starting).then(|| ServerOperation {
+            id: "mock-start".to_string(),
+            kind: OperationKind::Start,
+            phase: OperationPhase::Verifying,
+            started_at: chrono::Utc::now().to_rfc3339(),
+        });
+        let issue = mock_server_issue(scenario);
+        let state = ServerState {
+            setup_state: match config_state {
+                ConfigState::Missing => SetupState::NeedsSetup,
+                ConfigState::Invalid | ConfigState::Unreadable => SetupState::NeedsRepair,
+                ConfigState::Valid | ConfigState::ValidUnverified => SetupState::Configured,
+            },
+            desired_state: if desired_running {
+                DesiredState::Running
+            } else {
+                DesiredState::Stopped
+            },
+            runtime_state: match scenario {
+                MockServerScenario::Unconfigured | MockServerScenario::Stopped => {
+                    RuntimeState::Stopped
+                }
+                MockServerScenario::Starting => RuntimeState::Starting,
+                MockServerScenario::Healthy | MockServerScenario::RollbackSucceeded => {
+                    RuntimeState::Running
+                }
+                _ => RuntimeState::Failed,
+            },
+            health_state: if healthy {
+                HealthState::Healthy
+            } else if matches!(scenario, MockServerScenario::Starting) {
+                HealthState::Checking
+            } else if desired_running {
+                HealthState::Unhealthy
+            } else {
+                HealthState::Unknown
+            },
+            config_state,
+            active_revision: healthy.then(|| revision.clone()).flatten(),
+            last_good_revision: matches!(
+                scenario,
+                MockServerScenario::Healthy | MockServerScenario::RollbackSucceeded
+            )
+            .then(|| revision.clone())
+            .flatten(),
+            endpoint: healthy.then_some("http://localhost:5555".to_string()),
+            operation,
+            issue,
+            enabled: desired_running,
+            running,
+        };
+        (state, scenario)
+    }
+
+    pub async fn server_config_envelope(&self) -> crate::server_manager::ServerConfigEnvelope {
+        use crate::server_manager::{ConfigState, ServerConfigEnvelope};
+
+        let (scenario, config) = {
+            let state = self.inner.lock().await;
+            (state.server_scenario, state.server_config.clone())
+        };
+        let config_state = mock_config_state(scenario);
+        // `GET /server/config` inspects the configuration file only. Runtime
+        // failures belong to server state and diagnostics, not to this envelope.
+        let issues = if matches!(scenario, MockServerScenario::InvalidConfig) {
+            mock_server_issue(scenario).into_iter().collect()
+        } else {
+            Vec::new()
+        };
+        if let Some(config) = config {
+            ServerConfigEnvelope {
+                state: config_state,
+                revision: config.revision.clone(),
+                raw_toml: config.raw_toml.clone(),
+                config: Some(config),
+                issues,
+            }
+        } else {
+            let initial = crate::server_manager::initial_config();
+            ServerConfigEnvelope {
+                state: ConfigState::Missing,
+                revision: initial.revision.clone(),
+                raw_toml: String::new(),
+                config: Some(initial),
+                issues: Vec::new(),
+            }
+        }
+    }
+
+    #[allow(clippy::result_large_err, clippy::unused_async)]
+    pub async fn validate_server(
+        &self,
+        payload: crate::server_manager::ConfigPayload,
+    ) -> std::result::Result<
+        crate::server_manager::ValidationResponse,
+        crate::server_manager::ManagerError,
+    > {
+        let config = payload.into_config();
+        Ok(match validate_mock_server_config(&config) {
+            Ok(()) => crate::server_manager::ValidationResponse {
+                valid: true,
+                issues: Vec::new(),
+                config: None,
+            },
+            Err(issue) => crate::server_manager::ValidationResponse {
+                valid: false,
+                issues: vec![issue],
+                config: None,
+            },
+        })
+    }
+
+    pub async fn apply_server(
+        &self,
+        payload: crate::server_manager::ConfigPayload,
+    ) -> std::result::Result<crate::server_manager::ServerState, crate::server_manager::ManagerError>
+    {
+        let config = payload.into_config();
+        let mut state = self.inner.lock().await;
+        let baseline = state.server_config.as_ref().map_or_else(
+            || crate::server_config::config_revision(""),
+            |current| current.revision.clone(),
+        );
+        if config.revision != baseline {
+            return Err(mock_manager_error(
+                crate::server_manager::ManagerErrorKind::Conflict,
+                "config_revision_conflict",
+                "The configuration changed while it was being edited",
+                "Reload the mock configuration and try again",
+                None,
+            ));
+        }
+        let parsed = build_mock_candidate(state.server_config.as_ref(), &config)?;
+        let desired_running = !matches!(
+            state.server_scenario,
+            MockServerScenario::Unconfigured | MockServerScenario::Stopped
+        );
+        state.server_config = Some(parsed);
+        state.server_scenario = if desired_running {
+            MockServerScenario::Healthy
+        } else {
+            MockServerScenario::Stopped
+        };
+        drop(state);
+        Ok(self.server_state().await)
+    }
+
+    pub async fn setup_server(
+        &self,
+        payload: crate::server_manager::SetupPayload,
+    ) -> std::result::Result<crate::server_manager::ServerState, crate::server_manager::ManagerError>
+    {
+        let (config, start) = payload.into_parts();
+        let mut state = self.inner.lock().await;
+        let parsed = build_mock_candidate(state.server_config.as_ref(), &config)?;
+        state.server_config = Some(parsed);
+        state.server_scenario = if start {
+            MockServerScenario::Healthy
+        } else {
+            MockServerScenario::Stopped
+        };
+        drop(state);
+        Ok(self.server_state().await)
+    }
+
+    pub async fn server_action(
+        &self,
+        action: &str,
+    ) -> std::result::Result<crate::server_manager::ServerState, crate::server_manager::ManagerError>
+    {
+        let mut state = self.inner.lock().await;
+        if action == "stop" {
+            state.server_scenario = if state.server_config.is_some() {
+                MockServerScenario::Stopped
+            } else {
+                MockServerScenario::Unconfigured
+            };
+        } else if state.server_config.is_none() {
+            return Err(crate::server_manager::setup_required_error());
+        } else if matches!(state.server_scenario, MockServerScenario::InvalidConfig) {
+            return Err(mock_manager_error(
+                crate::server_manager::ManagerErrorKind::Invalid,
+                "config_invalid",
+                "The mock configuration is invalid",
+                "Repair the highlighted field before starting",
+                Some("audio.sample_rate"),
+            ));
+        } else {
+            state.server_scenario = MockServerScenario::Healthy;
+        }
+        drop(state);
+        Ok(self.server_state().await)
+    }
+
+    pub async fn server_diagnostics(&self) -> crate::server_manager::ServerDiagnostics {
+        let (state, scenario) = self.server_state_with_scenario().await;
+        let issue_line = state.issue.as_ref().map_or_else(
+            || "Mock SnapDog server is healthy".to_string(),
+            |issue| issue.detail.clone(),
+        );
+        crate::server_manager::ServerDiagnostics {
+            generated_at: chrono::Utc::now().to_rfc3339(),
+            state,
+            systemd: mock_service_snapshot(scenario),
+            journal: vec![format!("[mock] {issue_line}")],
+        }
+    }
+}
+
+const fn mock_config_state(scenario: MockServerScenario) -> crate::server_manager::ConfigState {
+    use crate::server_manager::ConfigState;
+
+    match scenario {
+        MockServerScenario::Unconfigured => ConfigState::Missing,
+        MockServerScenario::InvalidConfig => ConfigState::Invalid,
+        MockServerScenario::Stopped | MockServerScenario::Starting => ConfigState::ValidUnverified,
+        // Runtime and rollback failures do not make a parseable, validated
+        // configuration invalid.
+        _ => ConfigState::Valid,
+    }
+}
+
+fn mock_service_snapshot(scenario: MockServerScenario) -> crate::server_manager::ServiceSnapshot {
+    let (active_state, sub_state, result, exec_main_code, exec_main_status) = match scenario {
+        MockServerScenario::Unconfigured | MockServerScenario::Stopped => {
+            ("inactive", "dead", "success", Some(0), Some(0))
+        }
+        MockServerScenario::Starting => ("activating", "start", "", None, None),
+        MockServerScenario::Healthy
+        | MockServerScenario::RollbackSucceeded
+        | MockServerScenario::Conflict => ("active", "running", "success", Some(0), Some(0)),
+        MockServerScenario::InvalidConfig | MockServerScenario::Failed => {
+            ("failed", "failed", "exit-code", Some(1), Some(78))
+        }
+        MockServerScenario::RollbackFailed => ("failed", "failed", "exit-code", Some(1), Some(1)),
+    };
+
+    crate::server_manager::ServiceSnapshot {
+        load_state: "loaded".into(),
+        active_state: active_state.into(),
+        sub_state: sub_state.into(),
+        result: result.into(),
+        exec_main_code,
+        exec_main_status,
+        restart_count: Some(0),
+        invocation_id: "mock-invocation".into(),
+    }
+}
+
+fn mock_server_config() -> crate::server_config::ServerConfig {
+    crate::server_config::default_server_config()
+}
+
+fn mock_external_config_change(
+    current: &crate::server_config::ServerConfig,
+) -> crate::server_config::ServerConfig {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static EXTERNAL_EDIT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+    let sequence = EXTERNAL_EDIT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let source = format!(
+        "{}\n# mock external edit {sequence}\n",
+        current.raw_toml.trim_end()
+    );
+    crate::server_config::parse_config_toml(&source)
+        .unwrap_or_else(|_| crate::server_config::default_server_config())
+}
+
+#[allow(clippy::result_large_err)]
+fn build_mock_candidate(
+    current: Option<&crate::server_config::ServerConfig>,
+    config: &crate::server_config::ServerConfig,
+) -> std::result::Result<crate::server_config::ServerConfig, crate::server_manager::ManagerError> {
+    validate_mock_server_config(config).map_err(|issue| crate::server_manager::ManagerError {
+        kind: crate::server_manager::ManagerErrorKind::Invalid,
+        issue,
+    })?;
+    let source = current.map_or("", |current| current.raw_toml.as_str());
+    let candidate = crate::server_config::render_candidate(source, config).map_err(|error| {
+        mock_manager_error(
+            crate::server_manager::ManagerErrorKind::Invalid,
+            "config_invalid",
+            "The mock configuration is invalid",
+            &error.to_string(),
+            None,
+        )
+    })?;
+    crate::server_config::parse_config_toml(&candidate).map_err(|error| {
+        mock_manager_error(
+            crate::server_manager::ManagerErrorKind::Invalid,
+            "config_invalid",
+            "The mock configuration is invalid",
+            &error.to_string(),
+            None,
+        )
+    })
+}
+
+#[allow(clippy::result_large_err)]
+fn validate_mock_server_config(
+    config: &crate::server_config::ServerConfig,
+) -> std::result::Result<(), crate::server_manager::ServerIssue> {
+    crate::server_config::validate(config).map_err(|error| {
+        let detail = error.to_string();
+        crate::server_manager::ServerIssue {
+            code: "config_invalid".into(),
+            stage: "validation".into(),
+            summary: "The mock configuration is invalid".into(),
+            detail,
+            field_path: None,
+            line: None,
+            column: None,
+            exit_code: None,
+            systemd_result: None,
+            rollback_succeeded: None,
+        }
+    })
+}
+
+fn mock_manager_error(
+    kind: crate::server_manager::ManagerErrorKind,
+    code: &str,
+    summary: &str,
+    detail: &str,
+    field_path: Option<&str>,
+) -> crate::server_manager::ManagerError {
+    crate::server_manager::ManagerError {
+        kind,
+        issue: crate::server_manager::ServerIssue {
+            code: code.into(),
+            stage: "mock".into(),
+            summary: summary.into(),
+            detail: detail.into(),
+            field_path: field_path.map(str::to_string),
+            line: None,
+            column: None,
+            exit_code: None,
+            systemd_result: None,
+            rollback_succeeded: None,
+        },
+    }
+}
+
+fn mock_server_issue(scenario: MockServerScenario) -> Option<crate::server_manager::ServerIssue> {
+    let (code, summary, detail, rollback_succeeded, exit_code) = match scenario {
+        MockServerScenario::InvalidConfig => (
+            "config_invalid",
+            "The mock configuration is invalid",
+            "audio.sample_rate must be one of the supported values",
+            None,
+            None,
+        ),
+        MockServerScenario::Failed => (
+            "service_failed",
+            "SnapDog could not start",
+            "mock systemd result exit-code",
+            None,
+            Some(78),
+        ),
+        MockServerScenario::RollbackSucceeded => (
+            "readiness_timeout",
+            "The new configuration failed and was rolled back",
+            "mock readiness endpoint did not become healthy",
+            Some(true),
+            None,
+        ),
+        MockServerScenario::RollbackFailed => (
+            "rollback_failed",
+            "SnapDog and its recovery configuration both failed",
+            "mock rollback verification failed",
+            Some(false),
+            Some(1),
+        ),
+        _ => return None,
+    };
+    Some(crate::server_manager::ServerIssue {
+        code: code.into(),
+        stage: "mock".into(),
+        summary: summary.into(),
+        detail: detail.into(),
+        field_path: matches!(scenario, MockServerScenario::InvalidConfig)
+            .then_some("audio.sample_rate".into()),
+        line: None,
+        column: None,
+        exit_code,
+        systemd_result: exit_code.map(|_| "exit-code".into()),
+        rollback_succeeded,
+    })
 }
 
 const MOCK_DOWNLOAD_END: std::time::Duration = std::time::Duration::from_secs(4);
@@ -384,6 +859,183 @@ fn mock_update_progress(elapsed: Option<std::time::Duration>) -> crate::update::
 mod tests {
     use super::*;
     use crate::update::UpdatePhase;
+
+    #[tokio::test]
+    async fn server_config_envelope_reports_only_configuration_issues() {
+        use crate::server_manager::ConfigState;
+
+        let cases = [
+            (MockServerScenario::Unconfigured, ConfigState::Missing, None),
+            (
+                MockServerScenario::Stopped,
+                ConfigState::ValidUnverified,
+                None,
+            ),
+            (
+                MockServerScenario::Starting,
+                ConfigState::ValidUnverified,
+                None,
+            ),
+            (MockServerScenario::Healthy, ConfigState::Valid, None),
+            (
+                MockServerScenario::InvalidConfig,
+                ConfigState::Invalid,
+                Some("config_invalid"),
+            ),
+            (MockServerScenario::Failed, ConfigState::Valid, None),
+            (
+                MockServerScenario::RollbackSucceeded,
+                ConfigState::Valid,
+                None,
+            ),
+            (MockServerScenario::RollbackFailed, ConfigState::Valid, None),
+            (MockServerScenario::Conflict, ConfigState::Valid, None),
+        ];
+
+        let mock = MockState::new();
+        for (scenario, expected_state, expected_issue) in cases {
+            mock.set_server_scenario(scenario).await;
+            let envelope = mock.server_config_envelope().await;
+
+            assert_eq!(envelope.state, expected_state, "scenario {scenario:?}");
+            assert_eq!(
+                envelope.issues.first().map(|issue| issue.code.as_str()),
+                expected_issue,
+                "scenario {scenario:?}"
+            );
+            assert_eq!(
+                envelope.issues.len(),
+                usize::from(expected_issue.is_some()),
+                "scenario {scenario:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn server_diagnostics_projects_truthful_systemd_outcomes() {
+        let cases = [
+            (
+                MockServerScenario::Unconfigured,
+                "inactive",
+                "dead",
+                "success",
+                Some(0),
+                Some(0),
+            ),
+            (
+                MockServerScenario::Stopped,
+                "inactive",
+                "dead",
+                "success",
+                Some(0),
+                Some(0),
+            ),
+            (
+                MockServerScenario::Starting,
+                "activating",
+                "start",
+                "",
+                None,
+                None,
+            ),
+            (
+                MockServerScenario::Healthy,
+                "active",
+                "running",
+                "success",
+                Some(0),
+                Some(0),
+            ),
+            (
+                MockServerScenario::InvalidConfig,
+                "failed",
+                "failed",
+                "exit-code",
+                Some(1),
+                Some(78),
+            ),
+            (
+                MockServerScenario::Failed,
+                "failed",
+                "failed",
+                "exit-code",
+                Some(1),
+                Some(78),
+            ),
+            (
+                MockServerScenario::RollbackSucceeded,
+                "active",
+                "running",
+                "success",
+                Some(0),
+                Some(0),
+            ),
+            (
+                MockServerScenario::RollbackFailed,
+                "failed",
+                "failed",
+                "exit-code",
+                Some(1),
+                Some(1),
+            ),
+            (
+                MockServerScenario::Conflict,
+                "active",
+                "running",
+                "success",
+                Some(0),
+                Some(0),
+            ),
+        ];
+
+        let mock = MockState::new();
+        for (scenario, active, sub, result, code, status) in cases {
+            mock.set_server_scenario(scenario).await;
+            let diagnostics = mock.server_diagnostics().await;
+
+            assert_eq!(diagnostics.systemd.active_state, active, "{scenario:?}");
+            assert_eq!(diagnostics.systemd.sub_state, sub, "{scenario:?}");
+            assert_eq!(diagnostics.systemd.result, result, "{scenario:?}");
+            assert_eq!(diagnostics.systemd.exec_main_code, code, "{scenario:?}");
+            assert_eq!(diagnostics.systemd.exec_main_status, status, "{scenario:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn conflict_scenario_is_a_rebasable_external_edit() {
+        let mock = MockState::new();
+        mock.set_server_scenario(MockServerScenario::Healthy).await;
+        let baseline_draft = mock.get_server_legacy().await;
+
+        mock.set_server_scenario(MockServerScenario::Conflict).await;
+        let fresh = mock.get_server_legacy().await;
+        let runtime = mock.server_state().await;
+        assert_ne!(baseline_draft.revision, fresh.revision);
+        assert_eq!(
+            runtime.runtime_state,
+            crate::server_manager::RuntimeState::Running
+        );
+        assert!(runtime.issue.is_none());
+
+        let Err(conflict) = mock
+            .apply_server(crate::server_manager::ConfigPayload::Direct(baseline_draft))
+            .await
+        else {
+            panic!("stale mock draft unexpectedly applied");
+        };
+        assert_eq!(
+            conflict.kind,
+            crate::server_manager::ManagerErrorKind::Conflict
+        );
+        let applied = mock
+            .apply_server(crate::server_manager::ConfigPayload::Direct(fresh))
+            .await
+            .unwrap();
+        assert_eq!(
+            applied.runtime_state,
+            crate::server_manager::RuntimeState::Running
+        );
+    }
 
     #[test]
     fn update_mock_is_idle_before_an_install_starts() {

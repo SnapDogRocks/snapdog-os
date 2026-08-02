@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.1](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.14.0...snapdog-ctrl-v0.14.1) (2026-07-26)
+
+
+### Bug Fixes
+
+* **deps:** bump postcss to patch a path-traversal CVE (GHSA-r28c-9q8g-f849) ([#140](https://github.com/SnapDogRocks/snapdog-os/issues/140)) ([b83a732](https://github.com/SnapDogRocks/snapdog-os/commit/b83a732c2d136107faa53f5db319676268dcd60e))
+
 ## [0.14.0](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.13.1...snapdog-ctrl-v0.14.0) (2026-07-22)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.3](https://github.com/SnapDogRocks/snapdog-os/compare/v0.16.2...v0.16.3) (2026-08-02)
+
+
+### Bug Fixes
+
+* **os:** correct DAC-overlay qstrip bug, brand the config.txt header ([#139](https://github.com/SnapDogRocks/snapdog-os/issues/139)) ([058bc2c](https://github.com/SnapDogRocks/snapdog-os/commit/058bc2c9e0569c9f3c3ac7ce3df65d429c691cb0))
+
 ## [0.16.2](https://github.com/SnapDogRocks/snapdog-os/compare/v0.16.1...v0.16.2) (2026-07-26)
 
 

@@ -7,6 +7,22 @@
 SNAPDOG_ROOT_DEV ?= /dev/mmcblk0p
 CONFIGTXT_DEPENDENCIES = rpi-firmware
 
+# Buildroot's rpi-firmware package ships config.txt from its own upstream
+# "sample" template (identical boilerplate across every RPi board variant).
+# Swap that header for our own provenance instead of leaving the stock
+# disclaimer + buildroot.org links in a SnapDog OS image.
+define CONFIGTXT_HEADER
+	sed -i '/^# Please note that this is only a sample/,/^# and http:\/\/elinux\.org\/RPiconfig for a description of config\.txt syntax$$/d' \
+		$(BINARIES_DIR)/rpi-firmware/config.txt
+	{ \
+		echo '# SnapDog OS - https://github.com/SnapDogRocks/snapdog-os'; \
+		echo '# SPDX-License-Identifier: GPL-3.0-only'; \
+		echo '# Copyright (C) 2026 Fabian Schmieder'; \
+		cat $(BINARIES_DIR)/rpi-firmware/config.txt; \
+	} > $(BINARIES_DIR)/rpi-firmware/config.txt.new
+	mv $(BINARIES_DIR)/rpi-firmware/config.txt.new $(BINARIES_DIR)/rpi-firmware/config.txt
+endef
+
 define CONFIGTXT_INSTALL_TARGET_CMDS
 	sed -i '/dtparam=i2c/d' $(BINARIES_DIR)/rpi-firmware/config.txt
 	sed -i '/dtparam=spi/d' $(BINARIES_DIR)/rpi-firmware/config.txt
@@ -44,10 +60,11 @@ define CONFIGTXT_ENABLE_EEPROM_I2C
 endef
 
 define CONFIGTXT_DAC_OVERLAY
-	$(if $(BR2_PACKAGE_CONFIGTXT_DAC_OVERLAY),\
-		echo "dtoverlay=$(BR2_PACKAGE_CONFIGTXT_DAC_OVERLAY)" >> $(BINARIES_DIR)/rpi-firmware/config.txt)
+	$(if $(call qstrip,$(BR2_PACKAGE_CONFIGTXT_DAC_OVERLAY)),\
+		echo "dtoverlay=$(call qstrip,$(BR2_PACKAGE_CONFIGTXT_DAC_OVERLAY))" >> $(BINARIES_DIR)/rpi-firmware/config.txt)
 endef
 
+CONFIGTXT_POST_INSTALL_TARGET_HOOKS += CONFIGTXT_HEADER
 CONFIGTXT_POST_INSTALL_TARGET_HOOKS += CONFIGTXT_REMOVESTUFF CONFIGTXT_BASE
 
 ifeq ($(BR2_PACKAGE_CONFIGTXT_QUIET),y)

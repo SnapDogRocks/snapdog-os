@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.2](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.14.1...snapdog-ctrl-v0.14.2) (2026-08-17)
+
+
+### Bug Fixes
+
+* **webui:** resolve nanoid high-severity audit finding ([#160](https://github.com/SnapDogRocks/snapdog-os/issues/160)) ([a40839c](https://github.com/SnapDogRocks/snapdog-os/commit/a40839ce95d77945a2106e3cff2e6d7eae7c05c8))
+
 ## [0.14.1](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.14.0...snapdog-ctrl-v0.14.1) (2026-07-26)
 
 

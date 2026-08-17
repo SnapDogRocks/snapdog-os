@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.4](https://github.com/SnapDogRocks/snapdog-os/compare/v0.16.3...v0.16.4) (2026-08-17)
+
+
+### Bug Fixes
+
+* **webui:** resolve nanoid high-severity audit finding ([#160](https://github.com/SnapDogRocks/snapdog-os/issues/160)) ([a40839c](https://github.com/SnapDogRocks/snapdog-os/commit/a40839ce95d77945a2106e3cff2e6d7eae7c05c8))
+
 ## [0.16.3](https://github.com/SnapDogRocks/snapdog-os/compare/v0.16.2...v0.16.3) (2026-08-02)
 
 

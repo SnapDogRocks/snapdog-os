@@ -524,7 +524,14 @@ fn command_error(output: &std::process::Output) -> String {
 }
 
 fn config_revision(content: &str) -> String {
-    format!("{:x}", Sha256::digest(content.as_bytes()))
+    use std::fmt::Write;
+
+    Sha256::digest(content.as_bytes())
+        .iter()
+        .fold(String::with_capacity(64), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
 }
 
 fn ensure_current_revision(config: &ServerConfig, source: &str) -> Result<()> {

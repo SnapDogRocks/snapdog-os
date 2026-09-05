@@ -12,7 +12,8 @@ existing SnapDog client binary and Homebrew tap pattern.
 
 ## Workflow Shape
 
-1. Release Please manages the `snapdog-update` package version and changelog.
+1. Release Please manages the `snapdog-update` package version and changelog,
+   creating a draft release and its tag before the build starts.
 2. Stable binary releases are triggered by tags in the form
    `snapdog-update-v<version>`.
 3. `.github/workflows/release-snapdog-update.yml` builds a Rust-only matrix for:
@@ -25,7 +26,7 @@ existing SnapDog client binary and Homebrew tap pattern.
    - `snapdog-update-${TAG}-${TARGET}.tar.gz.sha256`
 5. Each archive contains `snapdog-update`, `README.md`, and `LICENSE`.
 6. The workflow attaches archives, per-archive checksums, and aggregate `SHA256SUMS` to the
-   GitHub Release.
+   draft GitHub Release, verifies all nine required assets, then publishes it.
 7. GitHub artifact attestations are generated for the release assets.
 8. For **stable** tags only, the workflow updates `SnapDogRocks/homebrew-tap`
    with `Formula/snapdog-update.rb`. Prerelease tags (a semver hyphen suffix,
@@ -36,6 +37,7 @@ existing SnapDog client binary and Homebrew tap pattern.
 
 The release job sets `SNAPDOG_UPDATE_VERSION=<version>` during the build so the
 binary reports the package release version instead of the root OS image tag.
+See [GitHub release publication](release-publication.md) for immutability and retry behavior.
 
 ## Homebrew Formula
 

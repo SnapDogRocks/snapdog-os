@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
+import shutil
+# Invoke the trusted GitHub CLI without a shell.
+import subprocess  # nosec B404
 import sys
 
 BOARDS = ("pi3", "pi4", "pi5", "zero2w")
@@ -62,8 +64,15 @@ def validate_release(release: dict, expected: set[str], tag: str) -> None:
 
 def finalize_release(kind: str, tag: str, repo: str) -> None:
     expected = expected_assets(kind, tag)
-    result = subprocess.run(
-        ["gh", "release", "view", tag, "--repo", repo, "--json", "tagName,isDraft,assets"],
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        raise ValueError(f"Invalid GitHub repository: {repo}")
+    gh_path = shutil.which("gh")
+    if gh_path is None:
+        raise ValueError("GitHub CLI (gh) is not installed")
+    # The executable is resolved from the runner's PATH; tag and repo are
+    # validated above and passed as separate arguments, never shell commands.
+    result = subprocess.run(  # nosec B603
+        [gh_path, "release", "view", tag, "--repo", repo, "--json", "tagName,isDraft,assets"],
         check=True, capture_output=True, text=True,
     )
     release = json.loads(result.stdout)
@@ -72,9 +81,10 @@ def finalize_release(kind: str, tag: str, repo: str) -> None:
         print(f"{tag} is already published with all {len(expected)} required assets")
         return
     prerelease = "-" in tag.removeprefix("snapdog-update-v").removeprefix("v").split("+", 1)[0]
-    subprocess.run(
+    # Use the same trusted executable and validated arguments for publication.
+    subprocess.run(  # nosec B603
         [
-            "gh", "release", "edit", tag, "--repo", repo, "--draft=false",
+            gh_path, "release", "edit", tag, "--repo", repo, "--draft=false",
             "--verify-tag", f"--prerelease={str(prerelease).lower()}",
             f"--latest={str(kind == 'os' and not prerelease).lower()}",
         ],

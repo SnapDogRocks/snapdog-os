@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-import subprocess
+# Only exception/response fixtures; all subprocess calls are mocked.
+import subprocess  # nosec B404
 import sys
 import unittest
 from copy import deepcopy
@@ -28,6 +29,11 @@ def release_fixture(kind="os", tag=OS_TAG, draft=True):
 
 
 class ReleasePublicationTests(unittest.TestCase):
+    def setUp(self):
+        cli_path = patch("finalize_release.shutil.which", return_value="/usr/bin/gh")
+        cli_path.start()
+        self.addCleanup(cli_path.stop)
+
     def finalize(self, release, kind="os", tag=OS_TAG):
         with patch("finalize_release.subprocess.run") as gh:
             gh.return_value.stdout = json.dumps(release)
@@ -38,9 +44,9 @@ class ReleasePublicationTests(unittest.TestCase):
         release = release_fixture()
         self.assertEqual(len(release["assets"]), 28)
         commands = self.finalize(release)
-        self.assertEqual(commands[0][:4], ["gh", "release", "view", OS_TAG])
+        self.assertEqual(commands[0][:4], ["/usr/bin/gh", "release", "view", OS_TAG])
         self.assertEqual(commands[1], [
-            "gh", "release", "edit", OS_TAG, "--repo", REPO,
+            "/usr/bin/gh", "release", "edit", OS_TAG, "--repo", REPO,
             "--draft=false", "--verify-tag", "--prerelease=false", "--latest=true",
         ])
 
@@ -114,6 +120,17 @@ class ReleasePublicationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Invalid os release tag"):
                 finalize_release("os", "snapdog-ctrl-v0.14.3", REPO)
             gh.assert_not_called()
+
+    def test_invalid_repository_fails_before_contacting_github(self):
+        with patch("finalize_release.subprocess.run") as gh:
+            with self.assertRaisesRegex(ValueError, "Invalid GitHub repository"):
+                finalize_release("os", OS_TAG, "owner/repo; command")
+            gh.assert_not_called()
+
+    def test_missing_github_cli_fails_before_publication(self):
+        with patch("finalize_release.shutil.which", return_value=None):
+            with self.assertRaisesRegex(ValueError, "GitHub CLI .* is not installed"):
+                finalize_release("os", OS_TAG, REPO)
 
     def test_github_read_failure_never_publishes(self):
         with patch("finalize_release.subprocess.run") as gh:

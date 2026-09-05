@@ -169,22 +169,22 @@ struct LoginResponse {
 async fn post_auth_login(
     Extension(auth): Extension<crate::auth::AuthState>,
     Json(body): Json<LoginRequest>,
-) -> Result<Json<LoginResponse>, Response> {
+) -> Response {
     if !auth.is_enabled().await {
-        return Err(StatusCode::BAD_REQUEST.into_response());
+        return StatusCode::BAD_REQUEST.into_response();
     }
     // Reject outright while locked out, without even checking the password —
     // keeps a hammering client from probing during its own timeout.
     if let Some(retry_after) = auth.lockout_remaining().await {
-        return Err(too_many_login_attempts(retry_after));
+        return too_many_login_attempts(retry_after);
     }
     if auth.verify_password(&body.password).await {
         auth.record_successful_login().await;
         let token = auth.create_token().await;
-        Ok(Json(LoginResponse { token }))
+        Json(LoginResponse { token }).into_response()
     } else {
         auth.record_failed_login().await;
-        Err(StatusCode::UNAUTHORIZED.into_response())
+        StatusCode::UNAUTHORIZED.into_response()
     }
 }
 

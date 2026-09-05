@@ -1,13 +1,10 @@
-"""Publish an immutable GitHub release only after every expected asset exists."""
+"""Validate release JSON from stdin; emit its state only when assets are complete."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import re
-import shutil
-# Invoke the trusted GitHub CLI without a shell.
-import subprocess  # nosec B404
 import sys
 
 BOARDS = ("pi3", "pi4", "pi5", "zero2w")
@@ -62,49 +59,23 @@ def validate_release(release: dict, expected: set[str], tag: str) -> None:
         raise ValueError("Empty or incomplete release assets: " + ", ".join(sorted(invalid)))
 
 
-def finalize_release(kind: str, tag: str, repo: str) -> None:
+def publication_state(kind: str, tag: str, release: dict) -> str:
     expected = expected_assets(kind, tag)
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
-        raise ValueError(f"Invalid GitHub repository: {repo}")
-    gh_path = shutil.which("gh")
-    if gh_path is None:
-        raise ValueError("GitHub CLI (gh) is not installed")
-    # The executable is resolved from the runner's PATH; tag and repo are
-    # validated above and passed as separate arguments, never shell commands.
-    result = subprocess.run(  # nosec B603
-        [gh_path, "release", "view", tag, "--repo", repo, "--json", "tagName,isDraft,assets"],
-        check=True, capture_output=True, text=True,
-    )
-    release = json.loads(result.stdout)
     validate_release(release, expected, tag)
-    if not release["isDraft"]:
-        print(f"{tag} is already published with all {len(expected)} required assets")
-        return
-    prerelease = "-" in tag.removeprefix("snapdog-update-v").removeprefix("v").split("+", 1)[0]
-    # Use the same trusted executable and validated arguments for publication.
-    subprocess.run(  # nosec B603
-        [
-            gh_path, "release", "edit", tag, "--repo", repo, "--draft=false",
-            "--verify-tag", f"--prerelease={str(prerelease).lower()}",
-            f"--latest={str(kind == 'os' and not prerelease).lower()}",
-        ],
-        check=True,
-    )
-    print(f"Published {tag} with all {len(expected)} required assets")
+    if not isinstance(release.get("isDraft"), bool):
+        raise ValueError("Missing or invalid release draft state")
+    return "draft" if release["isDraft"] else "published"
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--kind", choices=("os", "updater"), required=True)
     parser.add_argument("--tag", required=True)
-    parser.add_argument("--repo", required=True)
     args = parser.parse_args()
     try:
-        finalize_release(args.kind, args.tag, args.repo)
-    except (ValueError, subprocess.CalledProcessError) as error:
+        print(publication_state(args.kind, args.tag, json.load(sys.stdin)))
+    except (ValueError, KeyError, TypeError, AttributeError) as error:
         print(f"Release publication refused: {error}", file=sys.stderr)
-        if isinstance(error, subprocess.CalledProcessError) and error.stderr:
-            print(error.stderr, file=sys.stderr)
         return 1
     return 0
 

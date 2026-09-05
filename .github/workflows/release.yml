@@ -737,7 +737,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.release-please.outputs.tag_name }}
-        run: python3 scripts/finalize_release.py --kind os --tag "$TAG" --repo "$GITHUB_REPOSITORY"
+        run: |
+          set -euo pipefail
+          RELEASE_STATE=$(
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,assets |
+              python3 scripts/finalize_release.py --kind os --tag "$TAG"
+          )
+          if [ "$RELEASE_STATE" = draft ]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --draft=false --prerelease=false --latest
+          fi
 
   update-homebrew:
     name: Update Homebrew tap

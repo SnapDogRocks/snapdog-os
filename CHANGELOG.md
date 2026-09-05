@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.5](https://github.com/SnapDogRocks/snapdog-os/compare/v0.16.4...v0.16.5) (2026-09-05)
+
+
+### Bug Fixes
+
+* **ci:** upload all assets before publishing immutable releases ([#172](https://github.com/SnapDogRocks/snapdog-os/issues/172)) ([55020be](https://github.com/SnapDogRocks/snapdog-os/commit/55020be6b35de966d2830e5ae6ffc40ceedc13a8))
+
 ## [0.16.4](https://github.com/SnapDogRocks/snapdog-os/compare/v0.16.3...v0.16.4) (2026-08-17)
 
 

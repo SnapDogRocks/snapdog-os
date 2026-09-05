@@ -32,6 +32,9 @@ jobs:
       - name: Test release manifest contract
         run: make check-release-manifest
 
+      - name: Test release publication guard
+        run: make check-release-publication
+
       - name: Install Rust toolchain
         run: |
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt --component clippy

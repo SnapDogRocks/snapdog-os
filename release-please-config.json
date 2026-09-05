@@ -3,6 +3,8 @@
   "packages": {
     ".": {
       "release-type": "simple",
+      "draft": true,
+      "force-tag-creation": true,
       "changelog-path": "CHANGELOG.md",
       "bump-minor-pre-major": true
     },
@@ -13,6 +15,8 @@
     },
     "snapdog-update": {
       "release-type": "rust",
+      "draft": true,
+      "force-tag-creation": true,
       "component": "snapdog-update",
       "changelog-path": "snapdog-update/CHANGELOG.md",
       "bump-minor-pre-major": true

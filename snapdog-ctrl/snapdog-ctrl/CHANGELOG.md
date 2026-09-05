@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.3](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.14.2...snapdog-ctrl-v0.14.3) (2026-09-05)
+
+
+### Bug Fixes
+
+* **ci:** upload all assets before publishing immutable releases ([#172](https://github.com/SnapDogRocks/snapdog-os/issues/172)) ([55020be](https://github.com/SnapDogRocks/snapdog-os/commit/55020be6b35de966d2830e5ae6ffc40ceedc13a8))
+
 ## [0.14.2](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.14.1...snapdog-ctrl-v0.14.2) (2026-08-17)
 
 

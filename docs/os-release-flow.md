@@ -8,10 +8,11 @@ automatic beta build immediately followed by the same stable build.
 
 1. A push to `main` runs `.github/workflows/release-please.yml` only.
 2. Release Please updates its shared release PR and enables squash auto-merge.
-3. Merging that PR creates protected component tags and draft releases with
-   `TAP_TOKEN`. The PAT is intentional: tags created by `GITHUB_TOKEN` do not
-   start another workflow. Drafts keep incomplete releases out of the public
-   feed while their artifacts build.
+3. Merging that PR creates protected component tags and draft releases with a
+   GitHub App installation token from the `release` environment. Not
+   `GITHUB_TOKEN`: GitHub suppresses workflow runs for events it creates, so a
+   tag written with it would start nothing. Drafts keep incomplete releases out
+   of the public feed while their artifacts build.
 4. An exact root tag `vX.Y.Z` starts `.github/workflows/release.yml` and publishes
    the stable OS artifacts once. Component tags such as `snapdog-update-vX.Y.Z`
    do not match this trigger.
@@ -92,10 +93,11 @@ the independent recovery path for a hard runner loss that prevents the release
 job's `always()` recovery step from running; it never treats an alias as a
 source of truth.
 
-GitHub uses separate release-tag rulesets: organization administrators (including
-the Release Please PAT owner) may create `v*`, `snapdog-ctrl-v*`, and
-`snapdog-update-v*`, but nobody—including administrators—may move or delete an
-existing release tag. Repository release immutability additionally locks every
+GitHub uses separate release-tag rulesets: organization administrators and the
+Release Please app may create `v*`, `snapdog-ctrl-v*` and `snapdog-update-v*`,
+but nobody, administrators included, may move or delete an existing release tag.
+The app is on that ruleset's bypass list by app id; everyone else with write
+access is refused. Repository release immutability additionally locks every
 future release and its assets when its draft is published. Stable, beta, and
 updater release environments accept only their exact branch/tag patterns. The
 R2 maintenance environment accepts only `main`, so a manually dispatched

@@ -28,16 +28,35 @@ jobs:
   release-please:
     name: Release Please
     runs-on: ubuntu-24.04
+    environment: release
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     steps:
-      # A PAT is intentional: tags created with GITHUB_TOKEN do not trigger the
-      # tag-driven artifact workflows.
+      # Not GITHUB_TOKEN: GitHub suppresses workflow runs for events it creates,
+      # so a tag written with it would never start the tag-driven artifact
+      # builds. A GitHub App installation token is a real actor and does start
+      # them; that is what this token is, and it replaces the personal access
+      # token this job used to carry.
+      #
+      # Creating `v*`, `snapdog-ctrl-v*` and `snapdog-update-v*` is restricted by
+      # a repository ruleset, which is why the app appears on that ruleset's
+      # bypass list. The circle of actors allowed to create a release tag is
+      # therefore organization admins plus this one app, not everyone with write
+      # access.
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          # The client id is public, so it is a variable and not a secret. A
+          # secret cannot appear in an error message and makes every check blind.
+          # `client-id`, not the deprecated `app-id`; the two carry different
+          # values rather than two names for one thing.
+          client-id: ${{ vars.RELEASE_PLEASE_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: rp
         with:
-          token: ${{ secrets.TAP_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
@@ -45,7 +64,7 @@ jobs:
         if: ${{ steps.rp.outputs.pr }}
         env:
           PR_JSON: ${{ steps.rp.outputs.pr }}
-          GH_TOKEN: ${{ secrets.TAP_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
           # release-please-action's `pr` output is a PullRequest object with

@@ -59,9 +59,9 @@ existing SnapDog client binary and Homebrew tap pattern.
 
 Release jobs use the protected `updater-release` environment, which accepts only
 `snapdog-update-v*` tags and owns the Homebrew credential. One repository
-ruleset permits organization administrators (including the Release Please PAT
-owner) to create release tags; a second ruleset prevents everyone, including
-administrators, from moving or deleting one after creation. Metadata additionally
+ruleset permits organization administrators and the Release Please app to create
+release tags; a second ruleset prevents everyone, administrators included, from
+moving or deleting one after creation. Metadata additionally
 requires the tagged commit to be an ancestor of protected `main`, and the tag is
 re-resolved immediately before draft mutation and publication.
 

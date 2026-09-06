@@ -263,7 +263,9 @@ Required secrets for releases:
 - `R2_SECRET_ACCESS_KEY` — Cloudflare R2 secret
 - `R2_ENDPOINT_URL` — Cloudflare R2 endpoint
 - `RAUC_CA_KEY_PEM` — X.509 private key for signing RAUC bundles
-- `TAP_TOKEN` — repository PAT used by Release Please so created tags trigger artifact workflows
+- `release` environment: variable `RELEASE_PLEASE_CLIENT_ID` and secret
+  `RELEASE_PLEASE_APP_PRIVATE_KEY` — the Release Please app, whose tags start the
+  artifact workflows
 - `HOMEBREW_TAP_TOKEN` — token with write access to `SnapDogRocks/homebrew-tap`
 - `VERCEL_SNAPDOG_WEB_DEPLOY_HOOK` — rebuild hook after a stable OS release
 

@@ -15,6 +15,19 @@ class ReleaseRoutingContractTests(unittest.TestCase):
         os_release = (WORKFLOWS / "release.yml").read_text()
 
         self.assertIn("branches: [main]", release_please)
+        # The tags this job creates have to start the artifact workflows, which
+        # rules out GITHUB_TOKEN. It used to be a personal access token; it is an
+        # app installation token now, and the app is on the tag ruleset's bypass
+        # list. A silent fall back to either would be invisible until a release.
+        self.assertNotIn("TAP_TOKEN", release_please)
+        self.assertIn("environment: release", release_please)
+        self.assertIn("client-id: ${{ vars.RELEASE_PLEASE_CLIENT_ID }}", release_please)
+        self.assertIn(
+            "private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}", release_please
+        )
+        self.assertEqual(
+            release_please.count("${{ steps.app-token.outputs.token }}"), 2
+        )
         self.assertNotIn("branches: [main]", os_release)
         self.assertIn('tags: ["v*"]', os_release)
         self.assertIn("workflow_dispatch:", os_release)

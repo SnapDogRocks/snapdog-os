@@ -266,7 +266,9 @@ Required secrets for releases:
 - `release` environment: variable `RELEASE_PLEASE_CLIENT_ID` and secret
   `RELEASE_PLEASE_APP_PRIVATE_KEY` — the Release Please app, whose tags start the
   artifact workflows
-- `HOMEBREW_TAP_TOKEN` — token with write access to `SnapDogRocks/homebrew-tap`
+- `updater-release` environment: variable `HOMEBREW_APP_CLIENT_ID` and secret
+  `HOMEBREW_APP_PRIVATE_KEY` — the app installed on
+  `SnapDogRocks/homebrew-tap` alone, used to propose and merge the formula
 - `VERCEL_SNAPDOG_WEB_DEPLOY_HOOK` — rebuild hook after a stable OS release
 
 See [OS release flow](docs/os-release-flow.md) and

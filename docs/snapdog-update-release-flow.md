@@ -43,19 +43,14 @@ existing SnapDog client binary and Homebrew tap pattern.
    13-asset set immediately before publishing the draft with `latest=false`.
    Publishing activates GitHub release immutability for its tag and assets.
 8. GitHub artifact attestations are generated for the release assets.
-9. For **stable** tags only, the workflow updates `SnapDogRocks/homebrew-tap`
-   with `Formula/snapdog-update.rb`. Prerelease tags (a semver hyphen suffix,
-   e.g. `snapdog-update-v0.1.0-beta.1` or `-rc.1`) still publish GitHub Release
-   assets, are marked as GitHub prereleases, and skip the tap, so
-   `brew install snapdogrocks/tap/snapdog-update` always resolves to the latest
-   stable. The gate is the `meta.prerelease` output driving `if:` on the
-   `update-homebrew` job.
-10. Homebrew publication is guarded by a SemVer comparison and optimistic Git
-    push retries. Jobs may run concurrently without a GitHub concurrency queue
-    silently dropping one of them: every retry starts from the latest tap
-    revision and re-checks its version. An older release can never downgrade the
-    formula. Equal versions are left untouched as well, preserving any tap
-    `revision` hotfix instead of silently erasing it.
+9. For **stable** tags only, the workflow proposes `Formula/snapdog-update.rb`
+   to `SnapDogRocks/homebrew-tap` as a pull request, waits for that tap's own
+   `Formula qualification`, rechecks the head and the branch guard, and merges
+   only then. Prerelease tags (a semver hyphen suffix, e.g.
+   `snapdog-update-v0.1.0-beta.1`) still publish GitHub Release assets but skip
+   the tap, so `brew install snapdogrocks/tap/snapdog-update` always resolves to
+   the latest stable. The gate is the `meta.prerelease` output driving `if:` on
+   the `update-homebrew` job.
 
 Release jobs use the protected `updater-release` environment, which accepts only
 `snapdog-update-v*` tags and owns the Homebrew credential. One repository
@@ -110,5 +105,9 @@ verify the checksum, and install the binary into their preferred tool path.
 
 ## Required Secrets
 
-- `updater-release` environment secret `HOMEBREW_TAP_TOKEN`: token with write
-  access to `SnapDogRocks/homebrew-tap`.
+- `updater-release` environment variable `HOMEBREW_APP_CLIENT_ID` and secret
+  `HOMEBREW_APP_PRIVATE_KEY`: the GitHub App installed on
+  `SnapDogRocks/homebrew-tap` alone. The job mints a token scoped to that one
+  repository, opens a pull request, waits for the tap's own `Formula
+  qualification` and merges only then. Nothing pushes onto the tap's default
+  branch, and no long-lived credential is stored for it.

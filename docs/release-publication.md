@@ -12,17 +12,22 @@ version discovery and the standalone updater's tag-triggered build still work.
 ## OS releases
 
 1. Release Please creates the tag and draft release.
-2. The firmware and updater build matrices run.
-3. The `publish` job uploads firmware to R2 and the draft GitHub release;
-   `publish-update-tool` uploads the six updater archives and their checksums.
-4. `finalize-release` waits for both upload jobs and verifies all 28 required
-   assets by name, uploaded state, and nonzero size before publishing the draft.
-5. The Homebrew update and website redeploy run after successful publication.
+2. The firmware build matrix runs.
+3. The `publish` job uploads firmware to R2 and the draft GitHub release.
+4. `finalize-release` verifies all 16 required assets by name, uploaded state,
+   and nonzero size before publishing the draft.
+5. The website redeploy runs after successful publication.
 
-The 28 assets comprise images, RAUC bundles, SBOMs, and checksum files for four
-boards, plus archives and checksums for six updater targets. When a target or
-asset format changes, update `scripts/finalize_release.py` alongside the matrix.
-Beta builds keep using R2 without creating or finalizing a GitHub OS release.
+The 16 assets comprise images, RAUC bundles, SBOMs, and checksum files for four
+boards. When a target or asset format changes, update
+`scripts/finalize_release.py` alongside the matrix. Beta builds keep using R2
+without creating or finalizing a GitHub OS release.
+
+An OS release carries no `snapdog-update` archive. The updater is a package of
+its own with its own version, and it is built, released and published to the
+Homebrew tap by its own tag-triggered workflow. Building it a second time here
+attached binaries reporting the updater's version under an asset name carrying
+the OS version, and that mismatch reached the tap.
 
 ## Standalone updater releases
 

@@ -34,6 +34,7 @@ consumers must require `schema_version == 2` before relying on v2 fields.
       "image": "snapdog-os-pi4-release.img.gz",
       "sha256": "<sha256-of-compressed-image>",
       "url": "https://updates.snapdog.cc/os/images/snapdog-os-pi4-1.2.3.img.gz",
+      "bundle_url": "https://updates.snapdog.cc/os/bundles/snapdog-os-pi4-1.2.3.raucb",
       "compressed_size": 612345678,
       "uncompressed_size": 2550137344,
       "raw_sha256": "<sha256-of-uncompressed-image>"
@@ -48,6 +49,7 @@ Production manifests contain exactly the supported board keys: `pi3`, `pi4`,
 | Field | Meaning |
 | --- | --- |
 | `url` | Immutable HTTPS URL containing the concrete OS version, never a channel alias |
+| `bundle_url` | Immutable HTTPS URL of the signed RAUC bundle for this exact board and version |
 | `compressed_size` | Exact `.img.gz` size in bytes |
 | `uncompressed_size` | Exact raw `.img` size in bytes and minimum image payload capacity |
 | `raw_sha256` | SHA-256 digest of the uncompressed `.img` byte stream |
@@ -55,6 +57,10 @@ Production manifests contain exactly the supported board keys: `pi3`, `pi4`,
 The beta pointer may be advanced to a stable release. In that case its
 `channel` and rolling `image` alias change to `beta`, while `url` still points to
 the same immutable, versioned release image.
+
+Release-channel manifests require an exact stable `X.Y.Z` version. Explicitly
+dispatched beta builds use `X.Y.Z-beta.N`; a beta-channel manifest may also carry
+stable `X.Y.Z` when the stable-plus pointer mirrors the latest release.
 
 ## Installer Verification Order
 
@@ -71,6 +77,17 @@ An installer should:
 
 The OS image itself is not a substitute for a signed application update. RAUC
 continues to authenticate OTA bundles separately with the device X.509 keyring.
+OTA clients read `bundle_url` from the same manifest as `version`, preventing a
+rolling bundle alias from changing between the update check and download. For
+schema-v2 manifests published before `bundle_url` was added, SnapDog Ctrl derives
+the identical versioned URL from the validated channel, board, and version; it
+never falls back to a rolling alias.
+
+Versioned beta manifests are cached for one day. Retention first removes a
+superseded manifest, records its observed `max-age`, and keeps the referenced
+payloads for that entire cache horizon plus a 24-hour download grace. Legacy
+manifests without trustworthy cache metadata are conservatively treated as
+cacheable for one year.
 
 ## Generation and Validation
 

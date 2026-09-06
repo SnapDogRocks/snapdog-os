@@ -23,10 +23,12 @@ from release_manifest import (  # noqa: E402
     validate_manifest,
 )
 
-VERSION = "1.2.3-beta.45"
+RELEASE_VERSION = "1.2.3"
+BETA_VERSION = "1.2.4-beta.45"
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 DATE = "2026-07-19T12:34:56Z"
 BASE_URL = "https://updates.snapdog.cc/os/images"
+BUNDLE_BASE_URL = "https://updates.snapdog.cc/os/bundles"
 
 
 class ReleaseManifestTests(unittest.TestCase):
@@ -38,12 +40,16 @@ class ReleaseManifestTests(unittest.TestCase):
         self.temporary_directory.cleanup()
 
     def _write_image_pair(
-        self, board: str, payload: bytes | None = None
+        self,
+        board: str,
+        payload: bytes | None = None,
+        *,
+        version: str = RELEASE_VERSION,
     ) -> tuple[Path, Path]:
         board_directory = self.root / board
         board_directory.mkdir(parents=True, exist_ok=True)
-        raw_image = board_directory / f"snapdog-os-{board}-{VERSION}.img"
-        compressed_image = board_directory / f"snapdog-os-{board}-{VERSION}.img.gz"
+        raw_image = board_directory / f"snapdog-os-{board}-{version}.img"
+        compressed_image = board_directory / f"snapdog-os-{board}-{version}.img.gz"
         raw_payload = (
             payload if payload is not None else (f"{board}-image\n".encode() * 128)
         )
@@ -55,13 +61,15 @@ class ReleaseManifestTests(unittest.TestCase):
                 archive.write(raw_payload)
         return raw_image, compressed_image
 
-    def _metadata_paths(self) -> list[Path]:
+    def _metadata_paths(self, *, version: str = RELEASE_VERSION) -> list[Path]:
         paths = []
         for board in BOARDS:
-            raw_image, compressed_image = self._write_image_pair(board)
+            raw_image, compressed_image = self._write_image_pair(
+                board, version=version
+            )
             metadata = create_board_metadata(
                 board=board,
-                version=VERSION,
+                version=version,
                 raw_image=raw_image,
                 compressed_image=compressed_image,
             )
@@ -70,14 +78,17 @@ class ReleaseManifestTests(unittest.TestCase):
             paths.append(metadata_path)
         return paths
 
-    def _manifest(self, channel: str = "release") -> dict[str, object]:
+    def _manifest(
+        self, channel: str = "release", *, version: str = RELEASE_VERSION
+    ) -> dict[str, object]:
         return create_manifest(
             channel=channel,
-            version=VERSION,
+            version=version,
             commit=COMMIT,
             date=DATE,
             base_url=BASE_URL,
-            metadata_paths=self._metadata_paths(),
+            bundle_base_url=BUNDLE_BASE_URL,
+            metadata_paths=self._metadata_paths(version=version),
         )
 
     def test_board_metadata_describes_and_verifies_both_representations(self) -> None:
@@ -86,7 +97,7 @@ class ReleaseManifestTests(unittest.TestCase):
 
         metadata = create_board_metadata(
             board="pi4",
-            version=VERSION,
+            version=RELEASE_VERSION,
             raw_image=raw_image,
             compressed_image=compressed_image,
         )
@@ -113,7 +124,7 @@ class ReleaseManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ManifestError, "does not expand"):
             create_board_metadata(
                 board="pi4",
-                version=VERSION,
+                version=RELEASE_VERSION,
                 raw_image=raw_image,
                 compressed_image=compressed_image,
             )
@@ -125,7 +136,7 @@ class ReleaseManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ManifestError, "cannot decompress"):
             create_board_metadata(
                 board="pi4",
-                version=VERSION,
+                version=RELEASE_VERSION,
                 raw_image=raw_image,
                 compressed_image=compressed_image,
             )
@@ -141,18 +152,19 @@ class ReleaseManifestTests(unittest.TestCase):
             self.assertRegex(entry["sha256"], r"^[0-9a-f]{64}$")
             self.assertEqual(
                 entry["url"],
-                f"{BASE_URL}/snapdog-os-{board}-{VERSION}.img.gz",
+                f"{BASE_URL}/snapdog-os-{board}-{RELEASE_VERSION}.img.gz",
+            )
+            self.assertEqual(
+                entry["bundle_url"],
+                f"{BUNDLE_BASE_URL}/snapdog-os-{board}-{RELEASE_VERSION}.raucb",
             )
             self.assertGreater(entry["compressed_size"], 0)
             self.assertGreater(entry["uncompressed_size"], 0)
             self.assertRegex(entry["raw_sha256"], r"^[0-9a-f]{64}$")
 
-    def test_beta_manifest_only_changes_the_rolling_image_alias(self) -> None:
+    def test_beta_manifest_allows_mirrored_stable_release(self) -> None:
         release = self._manifest("release")
-        beta = deepcopy(release)
-        beta["channel"] = "beta"
-        for entry in beta["boards"].values():
-            entry["image"] = entry["image"].replace("-release.", "-beta.")
+        beta = self._manifest("beta")
 
         validate_manifest(beta)
         for board in BOARDS:
@@ -160,15 +172,55 @@ class ReleaseManifestTests(unittest.TestCase):
                 beta["boards"][board]["url"],
                 release["boards"][board]["url"],
             )
+            self.assertEqual(
+                beta["boards"][board]["bundle_url"],
+                release["boards"][board]["bundle_url"],
+            )
+
+    def test_release_manifest_rejects_prerelease_and_build_versions(self) -> None:
+        for version in (BETA_VERSION, "1.2.3+build.1"):
+            with self.subTest(version=version):
+                with self.assertRaisesRegex(
+                    ManifestError, "release channel requires stable X.Y.Z"
+                ):
+                    self._manifest("release", version=version)
+
+    def test_beta_manifest_accepts_only_beta_prerelease_or_stable_mirror(self) -> None:
+        beta = self._manifest("beta", version=BETA_VERSION)
+
+        validate_manifest(beta)
+        self.assertEqual(beta["version"], BETA_VERSION)
+        for board in BOARDS:
+            self.assertEqual(
+                beta["boards"][board]["url"],
+                f"{BASE_URL}/snapdog-os-{board}-{BETA_VERSION}.img.gz",
+            )
+
+        for version in ("1.2.4-rc.1", "1.2.4-beta.01", "1.2.4+build.1"):
+            with self.subTest(version=version):
+                with self.assertRaisesRegex(
+                    ManifestError, "beta channel requires X.Y.Z-beta.N"
+                ):
+                    self._manifest("beta", version=version)
+
+    def test_validator_enforces_the_channel_version_contract(self) -> None:
+        manifest = self._manifest("release")
+        manifest["version"] = BETA_VERSION
+
+        with self.assertRaisesRegex(
+            ManifestError, "release channel requires stable X.Y.Z"
+        ):
+            validate_manifest(manifest)
 
     def test_manifest_rejects_missing_or_duplicate_board_metadata(self) -> None:
         metadata_paths = self._metadata_paths()
         common = {
             "channel": "release",
-            "version": VERSION,
+            "version": RELEASE_VERSION,
             "commit": COMMIT,
             "date": DATE,
             "base_url": BASE_URL,
+            "bundle_base_url": BUNDLE_BASE_URL,
         }
         with self.assertRaisesRegex(ManifestError, "cover exactly"):
             create_manifest(metadata_paths=metadata_paths[:-1], **common)
@@ -185,10 +237,11 @@ class ReleaseManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ManifestError, "SHA-256 mismatch"):
             create_manifest(
                 channel="release",
-                version=VERSION,
+                version=RELEASE_VERSION,
                 commit=COMMIT,
                 date=DATE,
                 base_url=BASE_URL,
+                bundle_base_url=BUNDLE_BASE_URL,
                 metadata_paths=metadata_paths,
             )
 
@@ -210,6 +263,13 @@ class ReleaseManifestTests(unittest.TestCase):
             validate_manifest(manifest)
 
         manifest = self._manifest()
+        manifest["boards"]["pi3"]["bundle_url"] = manifest["boards"]["pi3"][
+            "bundle_url"
+        ].replace("https://", "http://")
+        with self.assertRaisesRegex(ManifestError, "bundle_url must use HTTPS"):
+            validate_manifest(manifest)
+
+        manifest = self._manifest()
         manifest["date"] = "2026-07-19T12:34:56"
         with self.assertRaisesRegex(ManifestError, "include a timezone"):
             validate_manifest(manifest)
@@ -220,6 +280,50 @@ class ReleaseManifestTests(unittest.TestCase):
         manifest["boards"]["pi5"]["future_board_field"] = "value"
 
         validate_manifest(manifest)
+
+    def test_validator_accepts_legacy_v2_without_bundle_url(self) -> None:
+        manifest = self._manifest()
+        for entry in manifest["boards"].values():
+            del entry["bundle_url"]
+
+        validate_manifest(manifest)
+
+    def test_manifest_rejects_rolling_bundle_alias(self) -> None:
+        manifest = self._manifest()
+        manifest["boards"]["pi4"]["bundle_url"] = (
+            f"{BUNDLE_BASE_URL}/snapdog-os-pi4-release.raucb"
+        )
+
+        with self.assertRaisesRegex(ManifestError, "immutable bundle"):
+            validate_manifest(manifest)
+
+        manifest = self._manifest()
+        manifest["boards"]["pi4"]["bundle_url"] = None
+        with self.assertRaisesRegex(ManifestError, "bundle_url must be a string"):
+            validate_manifest(manifest)
+
+    def test_manifest_rejects_foreign_or_wrong_path_bundle_urls(self) -> None:
+        for url in (
+            "https://evil.invalid/os/bundles/snapdog-os-pi4-1.2.3.raucb",
+            "https://updates.snapdog.cc/wrong/snapdog-os-pi4-1.2.3.raucb",
+        ):
+            with self.subTest(url=url):
+                manifest = self._manifest()
+                manifest["boards"]["pi4"]["bundle_url"] = url
+                with self.assertRaisesRegex(ManifestError, "canonical URL"):
+                    validate_manifest(manifest)
+
+    def test_generator_requires_canonical_bundle_origin(self) -> None:
+        with self.assertRaisesRegex(ManifestError, "bundle base URL"):
+            create_manifest(
+                channel="release",
+                version=RELEASE_VERSION,
+                commit=COMMIT,
+                date=DATE,
+                base_url=BASE_URL,
+                bundle_base_url="https://evil.invalid/os/bundles",
+                metadata_paths=self._metadata_paths(),
+            )
 
     def test_v1_manifest_is_not_misidentified_as_v2(self) -> None:
         manifest = self._manifest()
@@ -240,13 +344,15 @@ class ReleaseManifestTests(unittest.TestCase):
                 "--channel",
                 "release",
                 "--version",
-                VERSION,
+                RELEASE_VERSION,
                 "--commit",
                 COMMIT,
                 "--date",
                 DATE,
                 "--base-url",
                 BASE_URL,
+                "--bundle-base-url",
+                BUNDLE_BASE_URL,
                 "--metadata",
                 *(str(path) for path in metadata_paths),
                 "--output",
@@ -267,6 +373,9 @@ class ReleaseManifestTests(unittest.TestCase):
         older["date"] = "2026-07-18T12:34:56Z"
         for board, entry in older["boards"].items():
             entry["url"] = f"{BASE_URL}/snapdog-os-{board}-1.2.2.img.gz"
+            entry["bundle_url"] = (
+                f"{BUNDLE_BASE_URL}/snapdog-os-{board}-1.2.2.raucb"
+            )
 
         catalog = create_catalog(channel="release", manifest=older)
         catalog = create_catalog(
@@ -274,7 +383,7 @@ class ReleaseManifestTests(unittest.TestCase):
         )
         self.assertEqual(
             [release["version"] for release in catalog["releases"]],
-            [VERSION, "1.2.2"],
+            [RELEASE_VERSION, "1.2.2"],
         )
 
         replacement = deepcopy(current)
@@ -304,6 +413,9 @@ class ReleaseManifestTests(unittest.TestCase):
         newer["version"] = "1.2.4"
         for board, entry in newer["boards"].items():
             entry["url"] = f"{BASE_URL}/snapdog-os-{board}-1.2.4.img.gz"
+            entry["bundle_url"] = (
+                f"{BUNDLE_BASE_URL}/snapdog-os-{board}-1.2.4.raucb"
+            )
         unsorted = deepcopy(catalog)
         unsorted["releases"].append(newer)
         with self.assertRaisesRegex(ManifestError, "descending SemVer"):

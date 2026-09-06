@@ -1,124 +1,156 @@
-# Release pipeline
-name: Release
+# SnapDog OS artifact pipeline. Stable builds are rooted in an immutable
+# Release Please tag; beta builds are an explicit operator action.
+name: Release OS
 
 on:
   push:
-    branches: [main]
-    paths-ignore:
-      - "README.md"
-      - "LICENSE"
-      - "docs/**"
-      - "assets/**"
-      - ".githooks/**"
-      - ".github/dependabot.yml"
+    tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  # Per-commit group so a later push NEVER cancels an in-flight build. The old
-  # shared `release-<ref>` group + cancel-in-progress silently killed several
-  # release builds mid-flight (a push landing during the ~90-min image build
-  # aborted the release → nothing published). Each commit now runs to completion.
-  group: release-${{ github.sha }}
-  cancel-in-progress: false
-
 env:
   R2_BUCKET: snapdog-updates
   BUILDROOT_VERSION: "2025.02.16"
-  RUST_TOOLCHAIN: "stable"
+  RUST_TOOLCHAIN: "1.88.0"
   NODE_VERSION: "26.5.0"
+  BOTO3_VERSION: "1.43.54"
 
 jobs:
-  release-please:
-    name: Release Please
+  release-meta:
+    name: Release metadata
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-      pull-requests: write
     outputs:
-      release_created: ${{ steps.rp.outputs.release_created }}
-      tag_name: ${{ steps.rp.outputs.tag_name }}
-      version: ${{ steps.ver.outputs.version }}
-      channel: ${{ steps.ver.outputs.channel }}
+      tag_name: ${{ steps.meta.outputs.tag_name }}
+      version: ${{ steps.meta.outputs.version }}
+      channel: ${{ steps.meta.outputs.channel }}
+      source_sha: ${{ steps.meta.outputs.source_sha }}
     steps:
-      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
-        id: rp
-        # Asset-bearing releases stay drafts until their publish jobs finish.
-        # force-tag-creation preserves tag-triggered component builds.
-        with:
-          token: ${{ secrets.TAP_TOKEN }}
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
-
-      - name: Enable auto-merge for release PR
-        if: ${{ steps.rp.outputs.pr }}
-        env:
-          PR_JSON: ${{ steps.rp.outputs.pr }}
-          GH_TOKEN: ${{ secrets.TAP_TOKEN }}
-        run: |
-          set -euo pipefail
-          # release-please-action's `pr` output is a PullRequest object with
-          # `.number` — it has NO `.html_url`. The old `.html_url` lookup returned
-          # "null", so this block was silently skipped (step stayed green) and
-          # auto-merge was never enabled → release PRs lingered until merged by hand.
-          # No `gh pr review --approve`: main requires no approval, and the release
-          # PR is bot-authored so a bot self-approve would error and fail the step.
-          PR_NUMBER=$(echo "$PR_JSON" | jq -r .number)
-          if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ]; then
-            echo "Enabling auto-merge for release PR #${PR_NUMBER}"
-            # No --delete-branch: this job has no actions/checkout, and gh's
-            # branch cleanup needs a local git repo, so --delete-branch fails the
-            # step with "fatal: not a git repository". GitHub merges server-side;
-            # release-please recreates its branch anyway.
-            gh pr merge --auto --squash "$PR_NUMBER" --repo "$GITHUB_REPOSITORY"
-          fi
-
-      # Single point where version + channel are decided (consumed by build-image
-      # and publish). On a release: the exact release-please version. On a beta:
-      # the version of the NEXT release, so a beta always sorts ABOVE the latest
-      # stable (beta = "stable-plus"). Prefer the pending version from the open
-      # release-please branch (the real next release); with nothing pending,
-      # patch-bump the shipped version — after 0.9.4 ships betas become
-      # 0.9.5-beta.N, and 0.9.4 < 0.9.5-beta.N < 0.9.5 (SemVer-correct).
-      # (The release publish also advances the beta pointer to the release when
-      # it outranks the current beta — see "Advance beta pointer" below.)
-      - name: Compute version and channel
-        id: ver
+      - name: Resolve version and channel
+        id: meta
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [ "${{ steps.rp.outputs.release_created }}" = "true" ]; then
-            echo "version=${{ steps.rp.outputs.version }}" >> "$GITHUB_OUTPUT"
-            echo "channel=release" >> "$GITHUB_OUTPUT"
-          else
-            repo="${{ github.repository }}"
-            file=".release-please-manifest.json"
-            # Latest shipped version (release-type simple bumps this on release).
-            stable=$(gh api "repos/${repo}/contents/${file}" \
+          repo="${GITHUB_REPOSITORY}"
+          file=".release-please-manifest.json"
+
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            tag="$GITHUB_REF_NAME"
+            if [[ ! "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+              echo "Expected stable root tag vX.Y.Z, got '$tag'" >&2
+              exit 1
+            fi
+            version="${BASH_REMATCH[1]}"
+            source_sha="$GITHUB_SHA"
+            if [[ ! "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "Tag event did not provide an immutable commit SHA" >&2
+              exit 1
+            fi
+            encoded_tag=$(jq -rn --arg ref "$tag" '$ref | @uri')
+            resolved_sha=$(gh api "repos/${repo}/commits/${encoded_tag}" --jq '.sha')
+            if [[ ! "$resolved_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "Could not resolve stable tag '$tag' to an immutable commit" >&2
+              exit 1
+            fi
+            if [ "$resolved_sha" != "$source_sha" ]; then
+              echo "Tag $tag moved or does not match the triggering commit: $resolved_sha != $source_sha" >&2
+              exit 1
+            fi
+
+            # The immutable tag and the root Release Please manifest must agree.
+            # This rejects hand-made/mistyped tags before expensive image builds.
+            manifest_version=$(gh api "repos/${repo}/contents/${file}?ref=${source_sha}" \
               -H "Accept: application/vnd.github.raw" | jq -r '."."')
-            # Pending version from the open release-please branch, if any.
-            pending=$(gh api "repos/${repo}/contents/${file}?ref=release-please--branches--main" \
-              -H "Accept: application/vnd.github.raw" 2>/dev/null | jq -r '."."' 2>/dev/null || true)
+            if [ "$manifest_version" != "$version" ]; then
+              echo "Tag $tag does not match root manifest version $manifest_version" >&2
+              exit 1
+            fi
+
+            {
+              echo "tag_name=${tag}"
+              echo "version=${version}"
+              echo "channel=release"
+              echo "source_sha=${source_sha}"
+            } >> "$GITHUB_OUTPUT"
+          else
+            # Betas always build reviewed code from the current main branch. Do
+            # not feed an arbitrary dispatch ref into jobs that hold signing keys.
+            if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+              echo "Beta releases must be dispatched from main, got '$GITHUB_REF'" >&2
+              exit 1
+            fi
+            source_sha="$GITHUB_SHA"
+            if [[ ! "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "Dispatch event did not provide an immutable main commit" >&2
+              exit 1
+            fi
+
+            # Explicit beta builds preview the next release. Prefer the pending
+            # Release Please version; otherwise preview the next patch.
+            stable=$(gh api "repos/${repo}/contents/${file}?ref=${source_sha}" \
+              -H "Accept: application/vnd.github.raw" | jq -r '."."')
+            pending_error=$(mktemp)
+            if pending_document=$(gh api \
+                "repos/${repo}/contents/${file}?ref=release-please--branches--main" \
+                -H "Accept: application/vnd.github.raw" 2>"$pending_error"); then
+              pending=$(jq -er '."." | strings' <<< "$pending_document")
+            elif grep -q 'HTTP 404' "$pending_error"; then
+              pending=""
+            else
+              cat "$pending_error" >&2
+              rm -f "$pending_error"
+              echo "Could not determine the pending Release Please version" >&2
+              exit 1
+            fi
+            rm -f "$pending_error"
             if [ -n "$pending" ] && [ "$pending" != "null" ] && [ "$pending" != "$stable" ]; then
-              next="$pending"           # the real next release (always > stable)
+              next="$pending"
             else
               IFS=. read -r MA MI PA <<< "$stable"
-              next="${MA}.${MI}.$((PA + 1))"   # no pending → preview next patch
+              next="${MA}.${MI}.$((PA + 1))"
             fi
-            echo "version=${next}-beta.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-            echo "channel=beta" >> "$GITHUB_OUTPUT"
+
+            if [[ ! "$stable" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
+               [[ ! "$next" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Release Please returned invalid versions: stable=$stable next=$next" >&2
+              exit 1
+            fi
+
+            python3 - "$stable" "$next" <<'PY'
+          import sys
+
+          stable = tuple(int(part) for part in sys.argv[1].split("."))
+          upcoming = tuple(int(part) for part in sys.argv[2].split("."))
+          if upcoming <= stable:
+              raise SystemExit(
+                  f"beta base {sys.argv[2]} must outrank stable {sys.argv[1]}"
+              )
+          PY
+
+            {
+              echo "tag_name="
+              echo "version=${next}-beta.${GITHUB_RUN_NUMBER}"
+              echo "channel=beta"
+              echo "source_sha=${source_sha}"
+            } >> "$GITHUB_OUTPUT"
           fi
 
   build-ctrl:
     name: Build snapdog-ctrl
     runs-on: ubuntu-24.04
-    needs: release-please
+    needs: release-meta
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          # Identical value, different provenance. `release-meta` sets
+          # source_sha to GITHUB_SHA on both paths and, for a tag, additionally
+          # proves the tag resolves to it. Taking the checkout ref straight from
+          # github.sha keeps that immutability while leaving no job output in the
+          # position of deciding which code a privileged job builds.
+          ref: ${{ github.sha }}
 
       - name: Install Rust toolchain
         run: |
@@ -131,10 +163,18 @@ jobs:
           cache: npm
           cache-dependency-path: snapdog-ctrl/webui/package-lock.json
 
+      # Restoring is unconditional; writing is not. Only a run on main fills a
+      # cache that a later default-branch run reads. A release runs from a tag,
+      # so it restores what the betas on main have warmed and adds nothing of its
+      # own; that costs a release nothing measurable and removes the whole
+      # question of what a tag points at. `release-meta` rejects any dispatch ref
+      # other than main as well, but that check lives in a script and no static
+      # analysis can see it, so the boundary is stated here too.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: snapdog-ctrl
           key: aarch64-release
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install aarch64 linker
         run: |
@@ -167,12 +207,15 @@ jobs:
           name: snapdog-ctrl-binary
           path: snapdog-ctrl-binary
           if-no-files-found: error
+          overwrite: true
           retention-days: 7
 
   build-image:
     name: Build image (${{ matrix.board }})
     runs-on: ubuntu-24.04
-    needs: [release-please, build-ctrl]
+    needs: [release-meta, build-ctrl]
+    environment:
+      name: ${{ needs.release-meta.outputs.channel == 'release' && 'stable' || 'beta' }}
     timeout-minutes: 360
     strategy:
       fail-fast: false
@@ -186,6 +229,13 @@ jobs:
       CCACHE_MAXSIZE: 4G
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Identical value, different provenance. `release-meta` sets
+          # source_sha to GITHUB_SHA on both paths and, for a tag, additionally
+          # proves the tag resolves to it. Taking the checkout ref straight from
+          # github.sha keeps that immutability while leaving no job output in the
+          # position of deciding which code a privileged job builds.
+          ref: ${{ github.sha }}
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -235,7 +285,7 @@ jobs:
 
       - name: Restore Buildroot source cache
         id: cache-buildroot-src
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ../buildroot-src
           key: buildroot-src-${{ runner.os }}-${{ env.BUILDROOT_VERSION }}-${{ hashFiles('buildroot/scripts/patch-buildroot') }}
@@ -271,8 +321,8 @@ jobs:
         run: |
           set -euo pipefail
           chmod 755 snapdog-ctrl-binary
-          make BOARD=${{ matrix.board }} VERSION="${{ needs.release-please.outputs.version }}" config
-          make BOARD=${{ matrix.board }} VERSION="${{ needs.release-please.outputs.version }}" build
+          make BOARD=${{ matrix.board }} VERSION="${{ needs.release-meta.outputs.version }}" config
+          make BOARD=${{ matrix.board }} VERSION="${{ needs.release-meta.outputs.version }}" build
 
       - name: Generate Buildroot legal manifest
         run: |
@@ -297,7 +347,7 @@ jobs:
         run: |
           set -euo pipefail
           test -n "${{ secrets.RAUC_CA_KEY_PEM }}" || { echo "Missing RAUC_CA_KEY_PEM secret" >&2; exit 1; }
-          VERSION="${{ needs.release-please.outputs.version }}"
+          VERSION="${{ needs.release-meta.outputs.version }}"
           IMG="../buildroot-${{ matrix.board }}/images/sdcard.img"
           OUT="snapdog-os-${{ matrix.board }}-${VERSION}.img.gz"
           BUNDLE="snapdog-os-${{ matrix.board }}-${VERSION}.raucb"
@@ -350,15 +400,22 @@ jobs:
             "../buildroot-${{ matrix.board }}/host/bin/ccache" -c || true
           fi
 
+      - name: Save Buildroot source cache
+        if: success() && steps.cache-buildroot-src.outputs.cache-hit != 'true' && (github.ref == 'refs/heads/main')
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ../buildroot-src
+          key: ${{ steps.cache-buildroot-src.outputs.cache-primary-key }}
+
       - name: Save Buildroot download cache
-        if: success() && steps.cache-buildroot-dl.outputs.cache-primary-key != ''
+        if: success() && steps.cache-buildroot-dl.outputs.cache-primary-key != '' && (github.ref == 'refs/heads/main')
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.BR2_DL_DIR }}
           key: ${{ steps.cache-buildroot-dl.outputs.cache-primary-key }}
 
       - name: Save Buildroot compiler cache
-        if: success() && steps.cache-buildroot-ccache.outputs.cache-primary-key != ''
+        if: success() && steps.cache-buildroot-ccache.outputs.cache-primary-key != '' && (github.ref == 'refs/heads/main')
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.BR2_CCACHE_DIR }}
@@ -374,62 +431,269 @@ jobs:
             ${{ steps.package.outputs.checksums }}
             ${{ steps.package.outputs.image_metadata }}
           if-no-files-found: error
+          overwrite: true
           retention-days: 14
 
   publish:
     name: Publish
     runs-on: ubuntu-24.04
-    needs: [release-please, build-image]
-    # Serialize R2 mutations with the retention cron (see retention.yml). Queue,
-    # don't cancel — a publish upload must never be interrupted mid-flight.
-    concurrency:
-      group: r2-maintenance
-      cancel-in-progress: false
+    needs: [release-meta, build-image]
+    outputs:
+      channel_advanced: ${{ steps.freshness.outputs.advance }}
+      redeploy: ${{ steps.freshness.outputs.redeploy }}
+      release_published: ${{ steps.github_release.outputs.published }}
     environment:
-      name: ${{ needs.release-please.outputs.release_created == 'true' && 'stable' || 'beta' }}
+      name: ${{ needs.release-meta.outputs.channel == 'release' && 'stable' || 'beta' }}
     permissions:
       contents: write
       id-token: write
       attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Identical value, different provenance. `release-meta` sets
+          # source_sha to GITHUB_SHA on both paths and, for a tag, additionally
+          # proves the tag resolves to it. Taking the checkout ref straight from
+          # github.sha keeps that immutability while leaving no job output in the
+          # position of deciding which code a privileged job builds.
+          ref: ${{ github.sha }}
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: image-*
           path: artifacts
-
-      - name: Attest artifacts
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: artifacts/**/*
 
       - name: Install publish tools
         run: |
+          set -euo pipefail
           if ! aws --version 2>/dev/null; then
             curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscli.zip
             unzip -q /tmp/awscli.zip -d /tmp && sudo /tmp/aws/install
           fi
+          python3 -m venv /tmp/r2venv
+          /tmp/r2venv/bin/pip install --quiet "boto3==${BOTO3_VERSION}"
 
-      - name: Upload to Cloudflare R2
+      # GitHub concurrency groups are not FIFO: a third run replaces an older
+      # pending run. R2's conditional-write lease queues every mutator without
+      # silently dropping releases.
+      - name: Acquire R2 mutation lock
+        timeout-minutes: 300
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+        run: |
+          set -euo pipefail
+          test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "Missing R2_ACCESS_KEY_ID" >&2; exit 1; }
+          test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "Missing R2_SECRET_ACCESS_KEY" >&2; exit 1; }
+          test -n "${AWS_ENDPOINT_URL:-}" || { echo "Missing R2_ENDPOINT_URL" >&2; exit 1; }
+          owner="${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${GITHUB_JOB}:${RANDOM}:$(date +%s%N)"
+          printf '%s\n' "$owner" > /tmp/r2-lock-owner
+          /tmp/r2venv/bin/python tools/r2_lock.py acquire \
+            --owner "$owner" --ttl-seconds 7200 --wait-seconds 18000
+
+      # A stable and a manually requested beta can finish in either order. This
+      # check runs inside the serialized R2 publish job and makes the beta pointer
+      # monotonic: an older preview can never overwrite a newer beta or release.
+      - name: Check channel freshness
+        id: freshness
+        timeout-minutes: 10
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
           AWS_DEFAULT_REGION: auto
+          CANDIDATE_VERSION: ${{ needs.release-meta.outputs.version }}
+          CHANNEL: ${{ needs.release-meta.outputs.channel }}
+          SOURCE_SHA: ${{ needs.release-meta.outputs.source_sha }}
         run: |
           set -euo pipefail
+          source scripts/r2_helpers.sh
+
+          CURRENT_RELEASE=""
+          CURRENT_RELEASE_COMMIT=""
+          if r2_get_optional \
+              "s3://${R2_BUCKET}/os/images/latest-release.json" current-release.json; then
+            CURRENT_RELEASE=$(jq -r '.version // ""' current-release.json)
+            CURRENT_RELEASE_COMMIT=$(jq -r '.commit // ""' current-release.json)
+          else
+            status=$?
+            [ "$status" -eq "$R2_OPTIONAL_MISSING" ] || exit "$status"
+          fi
+          CURRENT_BETA=""
+          CURRENT_BETA_COMMIT=""
+          if r2_get_optional \
+              "s3://${R2_BUCKET}/os/images/latest-beta.json" current-beta.json; then
+            CURRENT_BETA=$(jq -r '.version // ""' current-beta.json)
+            CURRENT_BETA_COMMIT=$(jq -r '.commit // ""' current-beta.json)
+          else
+            status=$?
+            [ "$status" -eq "$R2_OPTIONAL_MISSING" ] || exit "$status"
+          fi
+
+          VERSION_EXISTS=false
+          if r2_get_optional \
+              "s3://${R2_BUCKET}/os/images/manifests/${CHANNEL}/${CANDIDATE_VERSION}.json" \
+              candidate-manifest.json; then
+            python3 scripts/release_manifest.py validate \
+              --manifest candidate-manifest.json
+            test "$(jq -r '.channel' candidate-manifest.json)" = "$CHANNEL"
+            test "$(jq -r '.version' candidate-manifest.json)" = "$CANDIDATE_VERSION"
+            test "$(jq -r '.commit' candidate-manifest.json)" = "$SOURCE_SHA"
+            VERSION_EXISTS=true
+          else
+            status=$?
+            [ "$status" -eq "$R2_OPTIONAL_MISSING" ] || exit "$status"
+          fi
+
+          POINTER_EXISTS=false
+          if [ "$VERSION_EXISTS" != "true" ]; then
+            if [ "$CHANNEL" = "release" ] && \
+               [ "$CURRENT_RELEASE" = "$CANDIDATE_VERSION" ] && \
+               [ "$CURRENT_RELEASE_COMMIT" = "$SOURCE_SHA" ]; then
+              cp current-release.json candidate-manifest.json
+              POINTER_EXISTS=true
+            elif [ "$CHANNEL" = "beta" ] && \
+                 [ "$CURRENT_BETA" = "$CANDIDATE_VERSION" ] && \
+                 [ "$CURRENT_BETA_COMMIT" = "$SOURCE_SHA" ]; then
+              cp current-beta.json candidate-manifest.json
+              POINTER_EXISTS=true
+            fi
+          fi
+
+          mapfile -t DECISION < <(python3 - \
+            "$CANDIDATE_VERSION" "$CHANNEL" "$SOURCE_SHA" \
+            "$CURRENT_RELEASE" "$CURRENT_RELEASE_COMMIT" \
+            "$CURRENT_BETA" "$CURRENT_BETA_COMMIT" <<'PY'
+          import re
+          import sys
+
+          pattern = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$")
+
+          def semver_key(value: str) -> tuple[int, int, int, int, int]:
+              match = pattern.fullmatch(value)
+              if not match:
+                  raise SystemExit(f"invalid channel version: {value!r}")
+              major, minor, patch = (int(part) for part in match.group(1, 2, 3))
+              beta = match.group(4)
+              # A stable release sorts after every prerelease of the same core.
+              return (major, minor, patch, 1 if beta is None else 0, int(beta or 0))
+
+          candidate, channel, source, release, release_commit, beta, beta_commit = sys.argv[1:]
+          candidate_key = semver_key(candidate)
+          if release and "-" in release:
+              raise SystemExit(f"release channel is not stable: {release!r}")
+
+          if channel == "release":
+              if "-" in candidate:
+                  raise SystemExit(f"stable candidate is not stable: {candidate!r}")
+              repair_beta = (
+                  "true"
+                  if not beta or candidate_key >= semver_key(beta)
+                  else "false"
+              )
+              if not release or candidate_key > semver_key(release):
+                  decision = (
+                      "true", "true", "true", repair_beta, "true",
+                      "new stable release"
+                  )
+              elif candidate_key < semver_key(release):
+                  # Finish immutable/history assets without moving rolling aliases.
+                  decision = (
+                      "true", "false", "false", "false", "false",
+                      "historical stable release"
+                  )
+              else:
+                  if release_commit != source:
+                      raise SystemExit(
+                          "stable version already points at a different commit: "
+                          f"{release_commit!r} != {source!r}"
+                      )
+                  # A retry may need to repair beta stable-plus or the web hook
+                  # after latest-release.json was already committed.
+                  decision = (
+                      "true", "false", "true", repair_beta, "true",
+                      "repair current stable release"
+                  )
+          elif channel == "beta":
+              if "-beta." not in candidate:
+                  raise SystemExit(f"beta candidate is not a beta: {candidate!r}")
+              current = max(
+                  (semver_key(value) for value in (release, beta) if value),
+                  default=(-1, -1, -1, -1, -1),
+              )
+              if beta and candidate_key == semver_key(beta):
+                  if beta_commit != source:
+                      raise SystemExit(
+                          "beta version already points at a different commit: "
+                          f"{beta_commit!r} != {source!r}"
+                      )
+                  decision = (
+                      "true", "false", "false", "false", "true",
+                      "repair current beta"
+                  )
+              elif candidate_key > current:
+                  decision = (
+                      "true", "true", "false", "false", "true", "new beta"
+                  )
+              else:
+                  decision = (
+                      "false", "false", "false", "false", "false",
+                      "beta already superseded"
+                  )
+          else:
+              raise SystemExit(f"unsupported channel: {channel!r}")
+
+          print(*decision, sep="\n")
+          PY
+          )
+          PUBLISH=${DECISION[0]}
+          ADVANCE=${DECISION[1]}
+          REDEPLOY=${DECISION[2]}
+          REPAIR_BETA=${DECISION[3]}
+          CUTOVER_ACTIVE=${DECISION[4]}
+          REASON=${DECISION[5]}
+          {
+            echo "publish=$PUBLISH"
+            echo "advance=$ADVANCE"
+            echo "redeploy=$REDEPLOY"
+            echo "repair_beta=$REPAIR_BETA"
+            echo "cutover_active=$CUTOVER_ACTIVE"
+            echo "version_exists=$VERSION_EXISTS"
+            echo "pointer_exists=$POINTER_EXISTS"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$PUBLISH" = "true" ]; then
+            echo "Publishing $CHANNEL $CANDIDATE_VERSION: $REASON"
+          else
+            echo "Skipping R2 mutation for $CHANNEL $CANDIDATE_VERSION: $REASON"
+          fi
+
+      - name: Stage canonical artifacts in Cloudflare R2
+        if: steps.freshness.outputs.publish == 'true'
+        timeout-minutes: 90
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          AWS_DEFAULT_REGION: auto
+          VERSION_EXISTS: ${{ steps.freshness.outputs.version_exists }}
+          POINTER_EXISTS: ${{ steps.freshness.outputs.pointer_exists }}
+        run: |
+          set -euo pipefail
+          source scripts/r2_helpers.sh
+          owner=$(cat /tmp/r2-lock-owner)
+          /tmp/r2venv/bin/python tools/r2_lock.py renew \
+            --owner "$owner" --ttl-seconds 7200
 
           test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "Missing R2_ACCESS_KEY_ID"; exit 1; }
           test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "Missing R2_SECRET_ACCESS_KEY"; exit 1; }
           test -n "${AWS_ENDPOINT_URL:-}" || { echo "Missing R2_ENDPOINT_URL"; exit 1; }
 
-          # Version + channel are decided once in the release-please job (SSOT).
+          # Version + channel are decided once in the metadata job (SSOT).
           # This step publishes the ACTIVE channel; a release additionally advances
           # the beta pointer (see "Advance beta pointer to release" below) so beta
           # stays "stable-plus" (always >= the latest release).
-          VERSION="${{ needs.release-please.outputs.version }}"
-          CHANNEL="${{ needs.release-please.outputs.channel }}"
+          VERSION="${{ needs.release-meta.outputs.version }}"
+          CHANNEL="${{ needs.release-meta.outputs.channel }}"
 
           IMAGE_METADATA=()
           for board in pi3 pi4 pi5 zero2w; do
@@ -454,36 +718,80 @@ jobs:
           python3 scripts/release_manifest.py manifest \
             --channel "$CHANNEL" \
             --version "$VERSION" \
-            --commit "${GITHUB_SHA}" \
+            --commit "${{ needs.release-meta.outputs.source_sha }}" \
             --date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --base-url "https://updates.snapdog.cc/os/images" \
+            --bundle-base-url "https://updates.snapdog.cc/os/bundles" \
             --metadata "${IMAGE_METADATA[@]}" \
             --output latest.json
           python3 scripts/release_manifest.py validate --manifest latest.json
+
+          REFERENCE_EXISTS=false
+          if [ "$VERSION_EXISTS" = "true" ] || [ "$POINTER_EXISTS" = "true" ]; then
+            REFERENCE_EXISTS=true
+            # The version manifest is the commit marker for all immutable
+            # objects. A legacy/current pointer without that marker is treated
+            # as committed too. Reruns may repair metadata, never replace bytes.
+            python3 scripts/release_manifest.py validate \
+              --manifest candidate-manifest.json
+            cp candidate-manifest.json latest.json
+          fi
+
+          upload_immutable() {
+            local source=$1
+            local destination=$2
+            local status
+            if [ "$REFERENCE_EXISTS" != "true" ]; then
+              # No manifest or public pointer commits this set yet. Replace any
+              # markerless debris left by an interrupted attempt under the lock.
+              aws s3 cp "$source" "$destination" \
+                --cache-control "public, max-age=31536000, immutable" \
+                --endpoint-url "$AWS_ENDPOINT_URL"
+              return
+            fi
+
+            # Once a manifest or channel pointer commits the version, R2 is the
+            # canonical byte source. Adopt it locally so nondeterministic RAUC
+            # signatures cannot split rerun attestations/GitHub assets from R2.
+            if r2_get_optional "$destination" "$source"; then
+              echo "Adopted committed immutable object: $destination"
+              return 0
+            else
+              status=$?
+            fi
+            if [ "$status" -eq "$R2_OPTIONAL_MISSING" ]; then
+              echo "Committed immutable object is missing: $destination" >&2
+              return 1
+            fi
+            return "$status"
+          }
 
           for board in pi3 pi4 pi5 zero2w; do
             IMAGE="artifacts/image-${board}/snapdog-os-${board}-${VERSION}.img.gz"
             BUNDLE="artifacts/image-${board}/snapdog-os-${board}-${VERSION}.raucb"
             SBOM="artifacts/image-${board}/snapdog-os-${board}-${VERSION}-sbom.csv"
 
-            # Versioned archives (immutable)
-            aws s3 cp "$IMAGE" "s3://${R2_BUCKET}/os/images/" \
-              --cache-control "public, max-age=31536000, immutable" \
-              --endpoint-url "$AWS_ENDPOINT_URL"
-            aws s3 cp "$BUNDLE" "s3://${R2_BUCKET}/os/bundles/" \
-              --cache-control "public, max-age=31536000, immutable" \
-              --endpoint-url "$AWS_ENDPOINT_URL"
-            aws s3 cp "$SBOM" "s3://${R2_BUCKET}/os/sbom/" \
-              --cache-control "public, max-age=31536000, immutable" \
-              --endpoint-url "$AWS_ENDPOINT_URL"
+            upload_immutable "$IMAGE" \
+              "s3://${R2_BUCKET}/os/images/snapdog-os-${board}-${VERSION}.img.gz"
+            upload_immutable "$BUNDLE" \
+              "s3://${R2_BUCKET}/os/bundles/snapdog-os-${board}-${VERSION}.raucb"
+            upload_immutable "$SBOM" \
+              "s3://${R2_BUCKET}/os/sbom/snapdog-os-${board}-${VERSION}-sbom.csv"
 
-            # Rolling channel pointer (overwritten each build, short cache)
-            aws s3 cp "$BUNDLE" "s3://${R2_BUCKET}/os/bundles/snapdog-os-${board}-${CHANNEL}.raucb" \
-              --cache-control "public, max-age=300" \
-              --endpoint-url "$AWS_ENDPOINT_URL"
-            aws s3 cp "$IMAGE" "s3://${R2_BUCKET}/os/images/snapdog-os-${board}-${CHANNEL}.img.gz" \
-              --cache-control "public, max-age=300" \
-              --endpoint-url "$AWS_ENDPOINT_URL"
+            if [ "$REFERENCE_EXISTS" = "true" ]; then
+              expected_sha=$(jq -r --arg board "$board" \
+                '.boards[$board].sha256' latest.json)
+              expected_size=$(jq -r --arg board "$board" \
+                '.boards[$board].compressed_size' latest.json)
+              test "$(sha256sum "$IMAGE" | cut -d' ' -f1)" = "$expected_sha"
+              test "$(stat -c '%s' "$IMAGE")" = "$expected_size"
+              (cd "artifacts/image-${board}" && \
+                sha256sum \
+                  "snapdog-os-${board}-${VERSION}.img.gz" \
+                  "snapdog-os-${board}-${VERSION}.raucb" \
+                  "snapdog-os-${board}-${VERSION}-sbom.csv" \
+                  > "snapdog-os-${board}-${VERSION}.sha256")
+            fi
           done
 
           # Preserve the complete validated manifest under an immutable key and
@@ -491,10 +799,17 @@ jobs:
           # therefore offer real version selection without scraping GitHub tags
           # or guessing integrity metadata from filenames.
           CATALOG="catalog-${CHANNEL}.json"
+          VERSION_MANIFEST_CACHE="public, max-age=31536000, immutable"
+          if [ "$CHANNEL" = "beta" ]; then
+            VERSION_MANIFEST_CACHE="public, max-age=86400, immutable"
+          fi
           PREVIOUS_ARGS=()
-          if aws s3 cp "s3://${R2_BUCKET}/os/images/${CATALOG}" previous-catalog.json \
-               --endpoint-url "$AWS_ENDPOINT_URL" 2>/dev/null; then
+          if r2_get_optional \
+              "s3://${R2_BUCKET}/os/images/${CATALOG}" previous-catalog.json; then
             PREVIOUS_ARGS=(--previous previous-catalog.json)
+          else
+            status=$?
+            [ "$status" -eq "$R2_OPTIONAL_MISSING" ] || exit "$status"
           fi
           python3 scripts/release_manifest.py catalog \
             --channel "$CHANNEL" \
@@ -502,33 +817,21 @@ jobs:
             "${PREVIOUS_ARGS[@]}" \
             --output "$CATALOG"
           python3 scripts/release_manifest.py validate-catalog --catalog "$CATALOG"
-          aws s3 cp latest.json \
-            "s3://${R2_BUCKET}/os/images/manifests/${CHANNEL}/${VERSION}.json" \
-            --cache-control "public, max-age=31536000, immutable" \
-            --content-type "application/json" \
-            --endpoint-url "$AWS_ENDPOINT_URL"
-          aws s3 cp "$CATALOG" "s3://${R2_BUCKET}/os/images/${CATALOG}" \
-            --cache-control "public, max-age=60" \
-            --content-type "application/json" \
-            --endpoint-url "$AWS_ENDPOINT_URL"
+          if [ "$VERSION_EXISTS" != "true" ]; then
+            # Commit marker is written only after all immutable objects exist.
+            aws s3 cp latest.json \
+              "s3://${R2_BUCKET}/os/images/manifests/${CHANNEL}/${VERSION}.json" \
+              --cache-control "$VERSION_MANIFEST_CACHE" \
+              --content-type "application/json" \
+              --endpoint-url "$AWS_ENDPOINT_URL"
+          fi
+          echo "Staged immutable $CHANNEL $VERSION; public pointers are unchanged."
 
-          # Channel manifest v2. Existing `image` and `sha256` fields retain
-          # their v1 semantics; publish it last so every referenced image,
-          # catalog entry, and channel alias exists when consumers observe it.
-          cat latest.json
-          aws s3 cp latest.json "s3://${R2_BUCKET}/os/images/latest-${CHANNEL}.json" \
-            --cache-control "public, max-age=60" \
-            --content-type "application/json" \
-            --endpoint-url "$AWS_ENDPOINT_URL"
-
-      # Stable-plus beta: a beta subscriber must always be >= stable. Betas preview
-      # the NEXT release, so the instant that release ships the beta pointer would
-      # fall behind — advance it to the release (reusing the just-built images, no
-      # rebuild) whenever the release outranks the current beta. The channel-alias
-      # objects + latest-beta.json are prune-exempt (tools/r2_maintenance.py keeps
-      # `…-beta` aliases and `latest-*.json`), so this never fights retention.
-      - name: Advance beta pointer to release (stable-plus)
-        if: needs.release-please.outputs.release_created == 'true'
+      # Prepare stable-plus metadata without exposing it. The critical cutover
+      # below publishes beta before release so beta subscribers are never behind.
+      - name: Stage stable-plus beta metadata
+        if: needs.release-meta.outputs.channel == 'release' && steps.freshness.outputs.repair_beta == 'true'
+        timeout-minutes: 20
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -536,51 +839,17 @@ jobs:
           AWS_DEFAULT_REGION: auto
         run: |
           set -euo pipefail
-          REL="${{ needs.release-please.outputs.version }}"
+          source scripts/r2_helpers.sh
+          owner=$(cat /tmp/r2-lock-owner)
+          /tmp/r2venv/bin/python tools/r2_lock.py renew \
+            --owner "$owner" --ttl-seconds 7200
+          REL="${{ needs.release-meta.outputs.version }}"
 
-          # Current beta pointer (empty if the beta channel was never published).
-          BETA=""
-          if aws s3 cp "s3://${R2_BUCKET}/os/images/latest-beta.json" beta-current.json \
-               --endpoint-url "$AWS_ENDPOINT_URL" 2>/dev/null; then
-            BETA=$(jq -r '.version // ""' beta-current.json)
+          if [ ! -f latest.json ]; then
+            test -s candidate-manifest.json
+            cp candidate-manifest.json latest.json
           fi
-
-          # Advance iff the release outranks the current beta in SemVer, where a
-          # final release beats a same-core prerelease (0.9.5 > 0.9.5-beta.7).
-          advance=yes
-          if [ -n "$BETA" ]; then
-            BETA_CORE="${BETA%%-*}"
-            if [ "$REL" != "$BETA_CORE" ]; then
-              HI=$(printf '%s\n%s\n' "$REL" "$BETA_CORE" | sort -V | tail -1)
-              [ "$HI" = "$REL" ] && advance=yes || advance=no
-            fi
-          fi
-
-          if [ "$advance" != "yes" ]; then
-            echo "beta ($BETA) already ahead of release ($REL); leaving beta pointer."
-            exit 0
-          fi
-          echo "Advancing beta pointer: '${BETA:-<none>}' -> release $REL"
-
-          # Copy the release channel aliases onto the beta aliases (server-side,
-          # same bucket → no re-upload; identical bytes → identical sha256).
-          # --copy-props none: R2 does not implement GetObjectTagging, which the
-          # aws-cli calls by default to preserve tags on a copy — skipping props
-          # avoids that (NotImplemented) error and does a plain CopyObject.
-          for board in pi3 pi4 pi5 zero2w; do
-            aws s3 cp \
-              "s3://${R2_BUCKET}/os/bundles/snapdog-os-${board}-release.raucb" \
-              "s3://${R2_BUCKET}/os/bundles/snapdog-os-${board}-beta.raucb" \
-              --copy-props none \
-              --cache-control "public, max-age=300" \
-              --endpoint-url "$AWS_ENDPOINT_URL"
-            aws s3 cp \
-              "s3://${R2_BUCKET}/os/images/snapdog-os-${board}-release.img.gz" \
-              "s3://${R2_BUCKET}/os/images/snapdog-os-${board}-beta.img.gz" \
-              --copy-props none \
-              --cache-control "public, max-age=300" \
-              --endpoint-url "$AWS_ENDPOINT_URL"
-          done
+          python3 scripts/release_manifest.py validate --manifest latest.json
 
           # Beta manifest mirrors the release manifest (written by the previous
           # step as latest.json), with channel + image filenames rewritten to the
@@ -589,231 +858,407 @@ jobs:
               | .boards |= with_entries(.value.image |= sub("-release\\."; "-beta."))' \
             latest.json > latest-beta.json
           python3 scripts/release_manifest.py validate --manifest latest-beta.json
+
+          BETA_VERSION_EXISTS=false
+          if r2_get_optional \
+              "s3://${R2_BUCKET}/os/images/manifests/beta/${REL}.json" \
+              beta-version.json; then
+            python3 scripts/release_manifest.py validate --manifest beta-version.json
+            jq -S 'del(.date)' latest-beta.json > local-beta-semantic.json
+            jq -S 'del(.date)' beta-version.json > remote-beta-semantic.json
+            if ! cmp -s local-beta-semantic.json remote-beta-semantic.json; then
+              diff -u remote-beta-semantic.json local-beta-semantic.json || true
+              echo "Immutable beta manifest for release $REL already differs" >&2
+              exit 1
+            fi
+            cp beta-version.json latest-beta.json
+            BETA_VERSION_EXISTS=true
+          else
+            status=$?
+            [ "$status" -eq "$R2_OPTIONAL_MISSING" ] || exit "$status"
+          fi
           # Shipping a stable version supersedes every prerelease of that same
-          # version. Reset the beta catalog to the released image so it cannot
-          # retain entries whose images the retention job is about to prune.
+          # version. Preserve any already-staged future beta; retention removes
+          # only entries whose payloads became obsolete with this stable.
+          PREVIOUS_BETA_ARGS=()
+          if r2_get_optional \
+              "s3://${R2_BUCKET}/os/images/catalog-beta.json" \
+              previous-beta-catalog.json; then
+            PREVIOUS_BETA_ARGS=(--previous previous-beta-catalog.json)
+          else
+            status=$?
+            [ "$status" -eq "$R2_OPTIONAL_MISSING" ] || exit "$status"
+          fi
           python3 scripts/release_manifest.py catalog \
             --channel beta \
             --manifest latest-beta.json \
+            "${PREVIOUS_BETA_ARGS[@]}" \
             --output catalog-beta.json
           python3 scripts/release_manifest.py validate-catalog \
             --catalog catalog-beta.json
-          aws s3 cp latest-beta.json \
-            "s3://${R2_BUCKET}/os/images/manifests/beta/${REL}.json" \
-            --cache-control "public, max-age=31536000, immutable" \
-            --content-type "application/json" \
-            --endpoint-url "$AWS_ENDPOINT_URL"
-          aws s3 cp catalog-beta.json \
-            "s3://${R2_BUCKET}/os/images/catalog-beta.json" \
-            --cache-control "public, max-age=60" \
-            --content-type "application/json" \
-            --endpoint-url "$AWS_ENDPOINT_URL"
-          cat latest-beta.json
-          aws s3 cp latest-beta.json "s3://${R2_BUCKET}/os/images/latest-beta.json" \
-            --cache-control "public, max-age=60" \
-            --content-type "application/json" \
-            --endpoint-url "$AWS_ENDPOINT_URL"
+          if [ "$BETA_VERSION_EXISTS" != "true" ]; then
+            aws s3 cp latest-beta.json \
+              "s3://${R2_BUCKET}/os/images/manifests/beta/${REL}.json" \
+              --cache-control "public, max-age=86400, immutable" \
+              --content-type "application/json" \
+              --endpoint-url "$AWS_ENDPOINT_URL"
+          fi
+          echo "Staged stable-plus beta metadata for $REL; pointers are unchanged."
 
-      - name: Prune superseded betas from R2
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
-        run: |
-          set -euo pipefail
-          python3 -m venv /tmp/r2venv
-          /tmp/r2venv/bin/pip install --quiet boto3
-          /tmp/r2venv/bin/python tools/r2_maintenance.py --apply
+      - name: Attest verified artifacts
+        if: steps.freshness.outputs.publish == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            artifacts/**/*.img.gz
+            artifacts/**/*.raucb
+            artifacts/**/*-sbom.csv
+            artifacts/**/*.sha256
 
-      - name: Attach artifacts to GitHub Release
-        if: needs.release-please.outputs.release_created == 'true'
+      - name: Prepare and verify GitHub release draft
+        if: needs.release-meta.outputs.channel == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.release-please.outputs.tag_name }}
+          SOURCE_SHA: ${{ needs.release-meta.outputs.source_sha }}
+          TAG: ${{ needs.release-meta.outputs.tag_name }}
         run: |
           set -euo pipefail
+          encoded_tag=$(jq -rn --arg ref "$TAG" '$ref | @uri')
+          resolved_sha=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/commits/${encoded_tag}" --jq '.sha')
+          test "$resolved_sha" = "$SOURCE_SHA"
+
           mapfile -t release_files < <(find artifacts -type f \( \
             -name '*.img.gz' -o \
             -name '*.raucb' -o \
             -name '*-sbom.csv' -o \
             -name '*.sha256' \
           \) | sort)
-          test "${#release_files[@]}" -gt 0
-          gh release upload "$TAG" "${release_files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          test "${#release_files[@]}" -eq 16
 
-  build-update-tool:
-    name: Build snapdog-update (${{ matrix.target }})
-    needs: release-please
-    if: needs.release-please.outputs.release_created == 'true'
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - target: x86_64-apple-darwin
-            os: macos-latest
-          - target: aarch64-apple-darwin
-            os: macos-latest
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-          - target: aarch64-pc-windows-msvc
-            os: windows-11-arm
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
-        with:
-          workspaces: snapdog-update
-      - name: Install cross-linker
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
-      - name: Build
-        run: cargo build --locked --release --manifest-path snapdog-update/Cargo.toml --target ${{ matrix.target }}
-      - name: Package
-        shell: bash
-        env:
-          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
-          TARGET: ${{ matrix.target }}
-        run: |
-          set -euo pipefail
-          ARCHIVE="snapdog-update-${TAG_NAME}-${TARGET}"
-          mkdir "$ARCHIVE"
-          if [[ "$TARGET" == *"windows"* ]]; then
-            cp "snapdog-update/target/${TARGET}/release/snapdog-update.exe" "$ARCHIVE/"
-            7z a "${ARCHIVE}.zip" "$ARCHIVE"
-            sha256sum "${ARCHIVE}.zip" > "${ARCHIVE}.zip.sha256"
-          else
-            cp "snapdog-update/target/${TARGET}/release/snapdog-update" "$ARCHIVE/"
-            tar czf "${ARCHIVE}.tar.gz" "$ARCHIVE"
-            sha256sum "${ARCHIVE}.tar.gz" > "${ARCHIVE}.tar.gz.sha256"
-          fi
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: snapdog-update-${{ matrix.target }}
-          path: |
-            snapdog-update-*.tar.gz
-            snapdog-update-*.tar.gz.sha256
-            snapdog-update-*.zip
-            snapdog-update-*.zip.sha256
+          printf '%s\n' "${release_files[@]##*/}" | sort > expected-os-assets.txt
+          test "$(sort -u expected-os-assets.txt | wc -l)" -eq 16
 
-  publish-update-tool:
-    name: Upload snapdog-update assets
-    needs: [release-please, build-update-tool]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: snapdog-update-*
-          path: artifacts
-          merge-multiple: true
-      - name: Upload to GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.release-please.outputs.tag_name }}
-        run: |
-          set -euo pipefail
-          gh release upload "$TAG" artifacts/*.tar.gz artifacts/*.sha256 artifacts/*.zip \
-            --repo "$GITHUB_REPOSITORY" --clobber
-
-  finalize-release:
-    name: Publish complete OS release
-    needs: [release-please, publish, publish-update-tool]
-    if: needs.release-please.outputs.release_created == 'true'
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Verify assets and publish draft
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.release-please.outputs.tag_name }}
-        run: |
-          set -euo pipefail
-          RELEASE_STATE=$(
-            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,assets |
-              python3 scripts/finalize_release.py --kind os --tag "$TAG"
+          # The release-by-tag REST endpoint excludes drafts. Enumerate the
+          # authenticated release collection so Release Please's draft is found,
+          # while transport/auth failures still fail closed via pipefail.
+          release_json=$(
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              | jq -sc --arg tag "$TAG" '
+                  [.[] | .[] | select(.tag_name == $tag)]
+                  | if length == 0 then empty
+                    elif length == 1 then .[0]
+                    else error("duplicate releases for tag " + $tag)
+                    end'
           )
-          if [ "$RELEASE_STATE" = draft ]; then
-            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
-              --draft=false --prerelease=false --latest
+          if [ -z "$release_json" ]; then
+            echo "Release Please draft for $TAG is missing; refusing split ownership." >&2
+            exit 1
           fi
 
-  update-homebrew:
-    name: Update Homebrew tap
-    needs: [release-please, finalize-release]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: snapdog-update-*
-          path: artifacts
-          merge-multiple: true
-      - name: Update Homebrew tap
+          mapfile -t existing_assets < <(
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --json assets --jq '.assets[].name'
+          )
+          mkdir -p existing-release-assets
+          for release_file in "${release_files[@]}"; do
+            name=$(basename "$release_file")
+            if printf '%s\n' "${existing_assets[@]}" | grep -Fxq "$name"; then
+              gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+                --pattern "$name" --dir existing-release-assets
+              if ! cmp -s "$release_file" "existing-release-assets/$name"; then
+                echo "GitHub release asset $name already exists with different bytes" >&2
+                exit 1
+              fi
+              echo "GitHub release asset already identical: $name"
+            else
+              gh release upload "$TAG" "$release_file" --repo "$GITHUB_REPOSITORY"
+            fi
+          done
+
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '.assets[].name' | sort > remote-os-assets.txt
+          diff -u expected-os-assets.txt remote-os-assets.txt
+          rm -rf verified-release-assets
+          mkdir verified-release-assets
+          while IFS= read -r name; do
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --pattern "$name" --dir verified-release-assets
+            local_path=$(find artifacts -type f -name "$name" -print -quit)
+            test -n "$local_path"
+            cmp "$local_path" "verified-release-assets/$name"
+          done < expected-os-assets.txt
+
+      # Object stores cannot atomically replace a cached manifest and eight
+      # compatibility aliases. Neutralize aliases first, exhaust their old
+      # cache lifetime, publish beta before release, then restore aliases only
+      # after old manifest caches have expired. Legacy clients may retry during
+      # this bounded window, but can never install bytes for the wrong version.
+      - name: Commit public R2 metadata and aliases
+        id: cutover
+        if: steps.freshness.outputs.publish == 'true'
+        timeout-minutes: 30
         env:
-          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+          ACTIVE_CUTOVER: ${{ steps.freshness.outputs.cutover_active }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          AWS_DEFAULT_REGION: auto
+          CHANNEL: ${{ needs.release-meta.outputs.channel }}
+          REPAIR_BETA: ${{ steps.freshness.outputs.repair_beta }}
+          VERSION: ${{ needs.release-meta.outputs.version }}
         run: |
-          VERSION=${{ needs.release-please.outputs.version }}
-          TAG=${{ needs.release-please.outputs.tag_name }}
+          set -euo pipefail
+          owner=$(cat /tmp/r2-lock-owner)
+          /tmp/r2venv/bin/python tools/r2_lock.py renew \
+            --owner "$owner" --ttl-seconds 7200
 
-          X64_SHA=$(sha256sum artifacts/snapdog-update-${TAG}-x86_64-apple-darwin.tar.gz | cut -d' ' -f1)
-          ARM_SHA=$(sha256sum artifacts/snapdog-update-${TAG}-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)
+          python3 scripts/release_manifest.py validate --manifest latest.json
+          python3 scripts/release_manifest.py validate-catalog \
+            --catalog "catalog-${CHANNEL}.json"
+          aws s3 cp "catalog-${CHANNEL}.json" \
+            "s3://${R2_BUCKET}/os/images/catalog-${CHANNEL}.json" \
+            --cache-control "public, max-age=60" \
+            --content-type "application/json" \
+            --endpoint-url "$AWS_ENDPOINT_URL"
 
-          git clone "https://x-access-token:${TAP_TOKEN}@github.com/SnapDogRocks/homebrew-tap.git"
-          cd homebrew-tap
-          mkdir -p Formula
+          if [ "$REPAIR_BETA" = "true" ]; then
+            python3 scripts/release_manifest.py validate --manifest latest-beta.json
+            python3 scripts/release_manifest.py validate-catalog \
+              --catalog catalog-beta.json
+            aws s3 cp catalog-beta.json \
+              "s3://${R2_BUCKET}/os/images/catalog-beta.json" \
+              --cache-control "public, max-age=60" \
+              --content-type "application/json" \
+              --endpoint-url "$AWS_ENDPOINT_URL"
+          fi
 
-          cat > Formula/snapdog-update.rb << EOF
-          class SnapdogUpdate < Formula
-            desc "Firmware update tool for SnapDog OS"
-            homepage "https://github.com/SnapDogRocks/snapdog-os"
-            license "GPL-3.0-only"
-            version "${VERSION}"
+          cutover_channels=()
+          if [ "$ACTIVE_CUTOVER" = "true" ]; then
+            cutover_channels+=("$CHANNEL")
+          fi
+          if [ "$REPAIR_BETA" = "true" ] && [ "$CHANNEL" != "beta" ]; then
+            cutover_channels+=(beta)
+          fi
+          if [ "${#cutover_channels[@]}" -eq 0 ]; then
+            echo "Published historical $CHANNEL $VERSION without moving its pointer."
+            exit 0
+          fi
 
-            on_macos do
-              if Hardware::CPU.intel?
-                url "https://github.com/SnapDogRocks/snapdog-os/releases/download/${TAG}/snapdog-update-${TAG}-x86_64-apple-darwin.tar.gz"
-                sha256 "${X64_SHA}"
-              else
-                url "https://github.com/SnapDogRocks/snapdog-os/releases/download/${TAG}/snapdog-update-${TAG}-aarch64-apple-darwin.tar.gz"
-                sha256 "${ARM_SHA}"
-              end
-            end
+          printf '%s\n' \
+            "SnapDog update alias temporarily unavailable during an atomic cutover." \
+            > /tmp/snapdog-alias-transition
+          for target_channel in "${cutover_channels[@]}"; do
+            for board in pi3 pi4 pi5 zero2w; do
+              for destination in \
+                "os/bundles/snapdog-os-${board}-${target_channel}.raucb" \
+                "os/images/snapdog-os-${board}-${target_channel}.img.gz"; do
+                aws s3 cp /tmp/snapdog-alias-transition \
+                  "s3://${R2_BUCKET}/${destination}" \
+                  --cache-control "no-store, max-age=0" \
+                  --content-type "application/octet-stream" \
+                  --endpoint-url "$AWS_ENDPOINT_URL"
+              done
+            done
+          done
 
-            def install
-              bin.install "snapdog-update"
-            end
+          echo "Waiting for every previously cacheable legacy alias to expire…"
+          sleep 310
+          /tmp/r2venv/bin/python tools/r2_lock.py renew \
+            --owner "$owner" --ttl-seconds 7200
 
-            test do
-              assert_match version.to_s, shell_output("#{bin}/snapdog-update --version")
-            end
-          end
-          EOF
+          # Stable-plus is committed first. During a stable rollout this keeps
+          # latest-beta >= latest-release at every externally visible instant.
+          if [ "$REPAIR_BETA" = "true" ]; then
+            aws s3 cp latest-beta.json \
+              "s3://${R2_BUCKET}/os/images/latest-beta.json" \
+              --cache-control "public, max-age=60" \
+              --content-type "application/json" \
+              --endpoint-url "$AWS_ENDPOINT_URL"
+            echo "Waiting until the stable-plus beta pointer is visible everywhere…"
+            sleep 70
+            /tmp/r2venv/bin/python tools/r2_lock.py renew \
+              --owner "$owner" --ttl-seconds 7200
+          fi
+          if [ "$ACTIVE_CUTOVER" = "true" ]; then
+            aws s3 cp latest.json \
+              "s3://${R2_BUCKET}/os/images/latest-${CHANNEL}.json" \
+              --cache-control "public, max-age=60" \
+              --content-type "application/json" \
+              --endpoint-url "$AWS_ENDPOINT_URL"
+          fi
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/snapdog-update.rb
-          git diff --cached --quiet || git commit -m "Update snapdog-update to ${VERSION}"
-          git push
+          echo "Waiting for old channel-manifest caches to expire…"
+          sleep 70
+          /tmp/r2venv/bin/python tools/r2_lock.py renew \
+            --owner "$owner" --ttl-seconds 7200
+
+          alias_args=()
+          for target_channel in "${cutover_channels[@]}"; do
+            alias_args+=(--channel "$target_channel")
+          done
+          # One implementation owns normal publication and recovery. It
+          # exact-matches each committed manifest, preflights every source, and
+          # verifies every completed alias copy before the release can publish.
+          /tmp/r2venv/bin/python tools/r2_repair_aliases.py \
+            --apply "${alias_args[@]}"
+
+      - name: Recover compatibility aliases after a failed cutover
+        if: ${{ always() && (steps.cutover.outcome == 'failure' || steps.cutover.outcome == 'cancelled') }}
+        timeout-minutes: 10
+        env:
+          ACTIVE_CUTOVER: ${{ steps.freshness.outputs.cutover_active }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          AWS_DEFAULT_REGION: auto
+          CHANNEL: ${{ needs.release-meta.outputs.channel }}
+          REPAIR_BETA: ${{ steps.freshness.outputs.repair_beta }}
+        run: |
+          set -euo pipefail
+          owner=$(cat /tmp/r2-lock-owner)
+          /tmp/r2venv/bin/python tools/r2_lock.py renew \
+            --owner "$owner" --ttl-seconds 7200
+
+          recovery_args=()
+          if [ "$ACTIVE_CUTOVER" = "true" ]; then
+            recovery_args+=(--channel "$CHANNEL")
+          fi
+          if [ "$REPAIR_BETA" = "true" ] && [ "$CHANNEL" != "beta" ]; then
+            recovery_args+=(--channel beta)
+          fi
+          if [ "${#recovery_args[@]}" -gt 0 ]; then
+            # The shared helper requires an exact committed version manifest,
+            # verifies source objects, waits out fresh pointer caches, and then
+            # restores only aliases derived from that authoritative state.
+            /tmp/r2venv/bin/python tools/r2_repair_aliases.py \
+              --apply "${recovery_args[@]}"
+          fi
+
+      - name: Publish verified GitHub releases
+        id: github_release
+        if: needs.release-meta.outputs.channel == 'release'
+        timeout-minutes: 90
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          GH_TOKEN: ${{ github.token }}
+          MAKE_LATEST: ${{ steps.freshness.outputs.redeploy }}
+          SOURCE_SHA: ${{ needs.release-meta.outputs.source_sha }}
+          TAG: ${{ needs.release-meta.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          owner=$(cat /tmp/r2-lock-owner)
+          /tmp/r2venv/bin/python tools/r2_lock.py renew \
+            --owner "$owner" --ttl-seconds 7200
+          encoded_tag=$(jq -rn --arg ref "$TAG" '$ref | @uri')
+          resolved_sha=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/commits/${encoded_tag}" --jq '.sha')
+          test "$resolved_sha" = "$SOURCE_SHA"
+
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '.assets[].name' | sort > final-remote-os-assets.txt
+          diff -u expected-os-assets.txt final-remote-os-assets.txt
+          rm -rf final-release-assets
+          mkdir final-release-assets
+          while IFS= read -r name; do
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --pattern "$name" --dir final-release-assets
+            local_path=$(find artifacts -type f -name "$name" -print -quit)
+            test -n "$local_path"
+            cmp "$local_path" "final-release-assets/$name"
+          done < expected-os-assets.txt
+
+          # Component releases are drafts until their owning artifact flow is
+          # complete. snapdog-ctrl ships inside the OS, so publish its draft now.
+          CTRL_VERSION=$(jq -er '."snapdog-ctrl" | strings' .release-please-manifest.json)
+          CTRL_TAG="snapdog-ctrl-v${CTRL_VERSION}"
+          ctrl_release_json=$(
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              | jq -sc --arg tag "$CTRL_TAG" '
+                  [.[] | .[] | select(.tag_name == $tag)]
+                  | if length == 0 then empty
+                    elif length == 1 then .[0]
+                    else error("duplicate releases for tag " + $tag)
+                    end'
+          )
+          if [ -n "$ctrl_release_json" ] && \
+             [ "$(jq -r '.draft' <<< "$ctrl_release_json")" = "true" ]; then
+            encoded_ctrl_tag=$(jq -rn --arg ref "$CTRL_TAG" '$ref | @uri')
+            ctrl_sha=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/commits/${encoded_ctrl_tag}" --jq '.sha')
+            if [ "$ctrl_sha" = "$SOURCE_SHA" ]; then
+              gh release edit "$CTRL_TAG" --repo "$GITHUB_REPOSITORY" \
+                --draft=false --latest=false
+            else
+              echo "Leaving older snapdog-ctrl draft $CTRL_TAG for its owning run ($ctrl_sha)."
+            fi
+          fi
+
+          # Fence the irreversible publication/Latest edit after the potentially
+          # large verification downloads as well as before them.
+          /tmp/r2venv/bin/python tools/r2_lock.py renew \
+            --owner "$owner" --ttl-seconds 7200
+          latest_arg="--latest=false"
+          if [ "$MAKE_LATEST" = "true" ]; then
+            latest_arg="--latest"
+          fi
+          if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+               --json isDraft --jq '.isDraft')" = "true" ]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --draft=false --prerelease=false "$latest_arg"
+          else
+            test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --json isPrerelease --jq '.isPrerelease')" = "false"
+            if [ "$MAKE_LATEST" = "true" ] && \
+               [ "$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" \
+                    --jq '.tag_name')" != "$TAG" ]; then
+              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --latest
+            fi
+            echo "GitHub release $TAG is already published and immutable."
+          fi
+          if [ "$MAKE_LATEST" = "true" ]; then
+            test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" \
+              --jq '.tag_name')" = "$TAG"
+          fi
+          echo "published=true" >> "$GITHUB_OUTPUT"
+
+      - name: Prune superseded betas from R2
+        if: steps.freshness.outputs.cutover_active == 'true' || steps.freshness.outputs.repair_beta == 'true'
+        timeout-minutes: 20
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+        run: |
+          set -euo pipefail
+          owner=$(cat /tmp/r2-lock-owner)
+          /tmp/r2venv/bin/python tools/r2_lock.py renew \
+            --owner "$owner" --ttl-seconds 7200
+          /tmp/r2venv/bin/python tools/r2_maintenance.py --apply
+
+      - name: Release R2 mutation lock
+        if: always()
+        continue-on-error: true
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+        run: |
+          set -euo pipefail
+          if [ -s /tmp/r2-lock-owner ] && [ -x /tmp/r2venv/bin/python ]; then
+            owner=$(cat /tmp/r2-lock-owner)
+            /tmp/r2venv/bin/python tools/r2_lock.py release --owner "$owner"
+          fi
 
   trigger-web-redeploy:
     name: Redeploy snapdog-web
-    needs: [release-please, finalize-release]
-    # OS-only. In release-please manifest mode the root package (".") exposes
-    # the UNPREFIXED `release_created` output, so this fires only when the OS
-    # distro itself releases — not when snapdog-ctrl / snapdog-update release on
-    # their own (those use `<path>--release_created`; the aggregate would be the
-    # plural `releases_created`, which we deliberately do not use here).
-    if: needs.release-please.outputs.release_created == 'true'
+    needs: [release-meta, publish]
+    # Stable root tags only; explicit beta builds never redeploy the website.
+    if: ${{ always() && needs.release-meta.outputs.channel == 'release' && needs.publish.outputs.redeploy == 'true' && needs.publish.outputs.release_published == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Vercel deploy hook
@@ -828,5 +1273,5 @@ jobs:
           # snapdog-web (static Astro on Vercel) bakes the latest release tag into
           # the landing-page version badge at build time, so it needs a rebuild
           # after each stable release to pick up the new version.
-          echo "Triggering snapdog-web rebuild for ${{ needs.release-please.outputs.tag_name }}…"
+          echo "Triggering snapdog-web rebuild for ${{ needs.release-meta.outputs.tag_name }}…"
           curl -fsS --retry 3 --retry-delay 5 -X POST "$DEPLOY_HOOK"

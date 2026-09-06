@@ -3,23 +3,17 @@ name: Release snapdog-update
 on:
   push:
     tags: ["snapdog-update-v*"]
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Release tag to publish, e.g. snapdog-update-v0.1.0"
-        required: true
-        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: snapdog-update-release-${{ inputs.tag || github.ref_name }}
+  group: snapdog-update-release-${{ github.ref_name }}
   cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_TOOLCHAIN: stable
+  RUST_TOOLCHAIN: "1.88.0"
 
 jobs:
   meta:
@@ -29,22 +23,75 @@ jobs:
       tag: ${{ steps.meta.outputs.tag }}
       version: ${{ steps.meta.outputs.version }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
+      source_sha: ${{ steps.meta.outputs.source_sha }}
+      source_epoch: ${{ steps.meta.outputs.source_epoch }}
     steps:
-      - name: Parse tag
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Validate release source
         id: meta
         env:
-          INPUT_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="${INPUT_TAG:-${GITHUB_REF_NAME}}"
-          VERSION="${TAG#snapdog-update-v}"
-          if [ -z "$VERSION" ] || [ "$VERSION" = "$TAG" ]; then
-            echo "Expected tag format snapdog-update-v<version>, got '${TAG}'" >&2
+          TAG="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_REF_TYPE}" != "tag" ] || [ "${GITHUB_REF}" != "refs/tags/${TAG}" ]; then
+            echo "snapdog-update releases must originate from a tag push" >&2
             exit 1
           fi
-          # Semver prerelease = a hyphen after the version core (e.g. 0.1.0-beta.1, -rc.1).
+
+          VERSION="${TAG#snapdog-update-v}"
+          SEMVER_RE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+          if [ "$VERSION" = "$TAG" ] || [[ ! "$VERSION" =~ $SEMVER_RE ]]; then
+            echo "Expected tag format snapdog-update-v<semver>, got '${TAG}'" >&2
+            exit 1
+          fi
+
+          ENCODED_TAG="$(jq -rn --arg tag "$TAG" '$tag | @uri')"
+          SOURCE_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${ENCODED_TAG}" --jq .sha)"
+          if [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Could not resolve ${TAG} to a commit" >&2
+            exit 1
+          fi
+          if [ "$SOURCE_SHA" != "$GITHUB_SHA" ]; then
+            echo "Tag ${TAG} resolves to ${SOURCE_SHA}, but this event is for ${GITHUB_SHA}" >&2
+            exit 1
+          fi
+          if [ "$(git rev-parse HEAD)" != "$SOURCE_SHA" ]; then
+            echo "Checked-out release source does not match resolved tag commit" >&2
+            exit 1
+          fi
+          SOURCE_STATUS=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/compare/${SOURCE_SHA}...main" --jq '.status')
+          if [ "$SOURCE_STATUS" != "ahead" ] && [ "$SOURCE_STATUS" != "identical" ]; then
+            echo "Tag source ${SOURCE_SHA} is not an ancestor of protected main" >&2
+            exit 1
+          fi
+
+          MANIFEST_VERSION="$(jq -er '.["snapdog-update"] | strings' .release-please-manifest.json)"
+          CARGO_VERSION="$(python3 - <<'PY'
+          import tomllib
+
+          with open("snapdog-update/Cargo.toml", "rb") as cargo_file:
+              print(tomllib.load(cargo_file)["package"]["version"])
+          PY
+          )"
+          if [ "$VERSION" != "$MANIFEST_VERSION" ] || [ "$VERSION" != "$CARGO_VERSION" ]; then
+            printf '%s\n' \
+              "Release version mismatch for ${TAG}:" \
+              "  tag:                    ${VERSION}" \
+              "  release-please manifest: ${MANIFEST_VERSION}" \
+              "  Cargo.toml:              ${CARGO_VERSION}" >&2
+            exit 1
+          fi
+
+          # A hyphen before optional build metadata marks a SemVer prerelease.
           # Prereleases still publish GitHub assets but must NOT overwrite the Homebrew formula.
-          case "$VERSION" in
+          VERSION_WITHOUT_BUILD="${VERSION%%+*}"
+          case "$VERSION_WITHOUT_BUILD" in
             *-*) PRERELEASE=true ;;
             *)   PRERELEASE=false ;;
           esac
@@ -52,6 +99,8 @@ jobs:
             echo "tag=${TAG}"
             echo "version=${VERSION}"
             echo "prerelease=${PRERELEASE}"
+            echo "source_sha=${SOURCE_SHA}"
+            echo "source_epoch=$(git show -s --format=%ct "$SOURCE_SHA")"
           } >> "$GITHUB_OUTPUT"
 
   build:
@@ -64,21 +113,50 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-24.04
+            binary: snapdog-update
+            archive: tar
+            smoke: true
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04
+            binary: snapdog-update
+            archive: tar
+            smoke: false
           - target: x86_64-apple-darwin
-            os: macos-latest
+            os: macos-15-intel
+            binary: snapdog-update
+            archive: tar
+            smoke: true
           - target: aarch64-apple-darwin
-            os: macos-latest
+            os: macos-15
+            binary: snapdog-update
+            archive: tar
+            smoke: true
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            binary: snapdog-update.exe
+            archive: zip
+            smoke: true
+          - target: aarch64-pc-windows-msvc
+            os: windows-11-arm
+            binary: snapdog-update.exe
+            archive: zip
+            smoke: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.meta.outputs.tag }}
+          ref: ${{ needs.meta.outputs.source_sha }}
+          persist-credentials: false
 
       - name: Install Rust toolchain
+        shell: bash
         run: |
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target "${{ matrix.target }}"
           rustup default "$RUST_TOOLCHAIN"
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: snapdog-update
+          key: release-${{ matrix.target }}
 
       - name: Install Linux cross linker
         if: matrix.target == 'aarch64-unknown-linux-gnu'
@@ -99,26 +177,51 @@ jobs:
           SNAPDOG_UPDATE_VERSION: ${{ needs.meta.outputs.version }}
         run: cargo build --locked --release --target "${{ matrix.target }}"
 
-      - name: Package archive
+      - name: Verify release version
+        if: matrix.smoke
         shell: bash
+        env:
+          BINARY_NAME: ${{ matrix.binary }}
+          EXPECTED_VERSION: ${{ needs.meta.outputs.version }}
+          TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
-          TAG="${{ needs.meta.outputs.tag }}"
-          TARGET="${{ matrix.target }}"
-          # The tag already begins with `snapdog-update-`, so prefixing it again
-          # produced `snapdog-update-snapdog-update-v0.4.1-…`.
+          BINARY="snapdog-update/target/${TARGET}/release/${BINARY_NAME}"
+          ACTUAL_VERSION="$("$BINARY" --version)"
+          test "$ACTUAL_VERSION" = "snapdog-update ${EXPECTED_VERSION}"
+
+      - name: Package archive
+        shell: bash
+        env:
+          ARCHIVE_FORMAT: ${{ matrix.archive }}
+          BINARY_NAME: ${{ matrix.binary }}
+          TAG: ${{ needs.meta.outputs.tag }}
+          TARGET: ${{ matrix.target }}
+          SOURCE_EPOCH: ${{ needs.meta.outputs.source_epoch }}
+        run: |
+          set -euo pipefail
           ARCHIVE="${TAG}-${TARGET}"
 
           mkdir "$ARCHIVE"
-          cp "snapdog-update/target/${TARGET}/release/snapdog-update" "$ARCHIVE/"
+          cp "snapdog-update/target/${TARGET}/release/${BINARY_NAME}" "$ARCHIVE/"
           cp snapdog-update/README.md "$ARCHIVE/README.md"
           cp LICENSE "$ARCHIVE/LICENSE"
 
-          tar -czf "${ARCHIVE}.tar.gz" "$ARCHIVE"
-          if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum "${ARCHIVE}.tar.gz" > "${ARCHIVE}.tar.gz.sha256"
+          if [ "$ARCHIVE_FORMAT" = "zip" ]; then
+            ASSET="${ARCHIVE}.zip"
           else
-            shasum -a 256 "${ARCHIVE}.tar.gz" > "${ARCHIVE}.tar.gz.sha256"
+            ASSET="${ARCHIVE}.tar.gz"
+          fi
+          PYTHON=python3
+          command -v "$PYTHON" >/dev/null 2>&1 || PYTHON=python
+          "$PYTHON" scripts/package_updater_release.py \
+            --source "$ARCHIVE" --output "$ASSET" \
+            --format "$ARCHIVE_FORMAT" --epoch "$SOURCE_EPOCH"
+
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$ASSET" > "${ASSET}.sha256"
+          else
+            shasum -a 256 "$ASSET" > "${ASSET}.sha256"
           fi
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -127,20 +230,21 @@ jobs:
           path: |
             snapdog-update-*.tar.gz
             snapdog-update-*.tar.gz.sha256
+            snapdog-update-*.zip*
           if-no-files-found: error
+          overwrite: true
           retention-days: 14
 
   publish:
     name: Publish GitHub release assets
     runs-on: ubuntu-24.04
     needs: [meta, build]
+    environment: updater-release
     permissions:
       contents: write
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: artifacts
@@ -150,50 +254,184 @@ jobs:
         run: |
           set -euo pipefail
           mkdir release-assets
-          find artifacts -type f \( -name '*.tar.gz' -o -name '*.tar.gz.sha256' \) -exec cp {} release-assets/ \;
-          cd release-assets
-          sha256sum ./*.tar.gz > SHA256SUMS
+          find artifacts -type f \( \
+            -name '*.tar.gz' -o \
+            -name '*.tar.gz.sha256' -o \
+            -name '*.zip' -o \
+            -name '*.zip.sha256' \
+          \) -exec cp {} release-assets/ \;
 
-      - name: Attest artifacts
+          mapfile -t archives < <(find release-assets -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) | sort)
+          mapfile -t checksums < <(find release-assets -maxdepth 1 -type f \( -name '*.tar.gz.sha256' -o -name '*.zip.sha256' \) | sort)
+          test "${#archives[@]}" -eq 6
+          test "${#checksums[@]}" -eq 6
+
+          cd release-assets
+          for checksum in ./*.sha256; do
+            sha256sum --check "$checksum"
+          done
+          sha256sum ./*.tar.gz ./*.zip > SHA256SUMS
+
+      - name: Verify existing release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.meta.outputs.source_sha }}
+          TAG: ${{ needs.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          verify_tag_source() {
+            local encoded_tag resolved_sha
+            encoded_tag=$(jq -rn --arg tag "$TAG" '$tag | @uri')
+            resolved_sha=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/commits/${encoded_tag}" --jq .sha)
+            if [[ ! "$resolved_sha" =~ ^[0-9a-f]{40}$ ]] || \
+               [ "$resolved_sha" != "$SOURCE_SHA" ]; then
+              echo "Tag ${TAG} no longer resolves to release source ${SOURCE_SHA} (got ${resolved_sha:-invalid})" >&2
+              exit 1
+            fi
+          }
+
+          # Release Please normally owns the draft. Re-check the protected tag
+          # immediately before the fallback path creates any release state.
+          verify_tag_source
+          # GET /releases/tags/{tag} excludes drafts. Enumerating authenticated
+          # releases finds Release Please's draft and remains fail-closed on API
+          # errors because the shell has pipefail enabled.
+          release_json=$(
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              | jq -sc --arg tag "$TAG" '
+                  [.[] | .[] | select(.tag_name == $tag)]
+                  | if length == 0 then empty
+                    elif length == 1 then .[0]
+                    else error("duplicate releases for tag " + $tag)
+                    end'
+          )
+          if [ -z "$release_json" ]; then
+            echo "Release Please draft for $TAG is missing; refusing split ownership." >&2
+            exit 1
+          fi
+
+          mapfile -t existing_assets < <(
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --json assets --jq '.assets[].name'
+          )
+          mkdir -p existing-release-assets
+          for asset in release-assets/*; do
+            name=$(basename "$asset")
+            if printf '%s\n' "${existing_assets[@]}" | grep -Fxq "$name"; then
+              gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+                --pattern "$name" --dir existing-release-assets
+              if ! cmp -s "$asset" "existing-release-assets/$name"; then
+                echo "Release asset $name already exists with different bytes" >&2
+                exit 1
+              fi
+            fi
+          done
+
+      - name: Attest verified artifacts
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: release-assets/*
 
-      - name: Upload assets to draft release
+      - name: Upload missing assets and publish release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.meta.outputs.tag }}
-          VERSION: ${{ needs.meta.outputs.version }}
           PRERELEASE: ${{ needs.meta.outputs.prerelease }}
+          SOURCE_SHA: ${{ needs.meta.outputs.source_sha }}
+          TAG: ${{ needs.meta.outputs.tag }}
         run: |
           set -euo pipefail
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
-              --draft --verify-tag --latest=false --prerelease="$PRERELEASE" \
-              --title "snapdog-update ${VERSION}" \
-              --notes "snapdog-update ${VERSION}"
-          gh release upload "$TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
 
-      - name: Verify assets and publish draft
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.meta.outputs.tag }}
-          PRERELEASE: ${{ needs.meta.outputs.prerelease }}
-        run: |
-          set -euo pipefail
-          RELEASE_STATE=$(
-            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,assets |
-              python3 scripts/finalize_release.py --kind updater --tag "$TAG"
+          verify_tag_source() {
+            local encoded_tag resolved_sha
+            encoded_tag=$(jq -rn --arg tag "$TAG" '$tag | @uri')
+            resolved_sha=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/commits/${encoded_tag}" --jq .sha)
+            if [[ ! "$resolved_sha" =~ ^[0-9a-f]{40}$ ]] || \
+               [ "$resolved_sha" != "$SOURCE_SHA" ]; then
+              echo "Tag ${TAG} no longer resolves to release source ${SOURCE_SHA} (got ${resolved_sha:-invalid})" >&2
+              exit 1
+            fi
+          }
+
+          # Do not mutate a draft whose protected tag moved while the matrix ran.
+          verify_tag_source
+          mapfile -t existing_assets < <(
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --json assets --jq '.assets[].name'
           )
-          if [ "$RELEASE_STATE" = draft ]; then
-            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+          for asset in release-assets/*; do
+            name=$(basename "$asset")
+            if printf '%s\n' "${existing_assets[@]}" | grep -Fxq "$name"; then
+              echo "Release asset already identical: $name"
+            else
+              gh release upload "$TAG" "$asset" --repo "$GITHUB_REPOSITORY"
+            fi
+          done
+
+          mapfile -t expected_assets < <(
+            find release-assets -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort
+          )
+          mapfile -t remote_assets < <(
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --json assets --jq '.assets[].name' | LC_ALL=C sort
+          )
+          if [ "${#expected_assets[@]}" -ne 13 ] || \
+             [ "${#remote_assets[@]}" -ne 13 ] || \
+             ! cmp -s \
+               <(printf '%s\n' "${expected_assets[@]}") \
+               <(printf '%s\n' "${remote_assets[@]}"); then
+            echo "Draft must contain exactly the 13 expected release assets" >&2
+            diff -u \
+              <(printf '%s\n' "${expected_assets[@]}") \
+              <(printf '%s\n' "${remote_assets[@]}") || true
+            exit 1
+          fi
+
+          mkdir final-release-assets
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --dir final-release-assets
+          mapfile -t downloaded_assets < <(
+            find final-release-assets -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort
+          )
+          if [ "${#downloaded_assets[@]}" -ne 13 ] || \
+             ! cmp -s \
+               <(printf '%s\n' "${expected_assets[@]}") \
+               <(printf '%s\n' "${downloaded_assets[@]}"); then
+            echo "Downloaded draft does not contain the exact expected asset set" >&2
+            diff -u \
+              <(printf '%s\n' "${expected_assets[@]}") \
+              <(printf '%s\n' "${downloaded_assets[@]}") || true
+            exit 1
+          fi
+          for name in "${downloaded_assets[@]}"; do
+            if ! cmp -s "release-assets/$name" "final-release-assets/$name"; then
+              echo "Final draft asset $name differs from the verified build output" >&2
+              exit 1
+            fi
+          done
+
+          # Publishing activates repository-level release immutability. Resolve
+          # the tag one final time immediately before that irreversible boundary.
+          verify_tag_source
+          if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+               --json isDraft --jq '.isDraft')" = "true" ]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
               --draft=false --prerelease="$PRERELEASE" --latest=false
+          else
+            actual_prerelease=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --json isPrerelease --jq '.isPrerelease')
+            test "$actual_prerelease" = "$PRERELEASE"
+            echo "Release $TAG is already published and immutable."
           fi
 
   update-homebrew:
     name: Update Homebrew tap
     runs-on: ubuntu-24.04
     needs: [meta, publish]
+    environment: updater-release
     # Stable releases only — prerelease tags (e.g. -beta/-rc) skip the tap so
     # `brew install snapdogrocks/tap/snapdog-update` always resolves to the latest stable.
     if: needs.meta.outputs.prerelease == 'false'
@@ -205,21 +443,57 @@ jobs:
 
       - name: Update formula
         env:
-          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           TAG: ${{ needs.meta.outputs.tag }}
           VERSION: ${{ needs.meta.outputs.version }}
         run: |
           set -euo pipefail
-          test -n "${TAP_TOKEN:-}" || { echo "Missing HOMEBREW_TAP_TOKEN" >&2; exit 1; }
+          test -n "${GH_TOKEN:-}" || { echo "Missing HOMEBREW_TAP_TOKEN" >&2; exit 1; }
 
           MACOS_X64_SHA="$(sha256sum "artifacts/${TAG}-x86_64-apple-darwin.tar.gz" | cut -d' ' -f1)"
           MACOS_ARM64_SHA="$(sha256sum "artifacts/${TAG}-aarch64-apple-darwin.tar.gz" | cut -d' ' -f1)"
 
-          git clone "https://x-access-token:${TAP_TOKEN}@github.com/SnapDogRocks/homebrew-tap.git"
-          cd homebrew-tap
-          mkdir -p Formula
+          compare_semver() {
+            python3 - "$1" "$2" <<'PY'
+          import re
+          import sys
 
-          cat > Formula/snapdog-update.rb << EOF
+          pattern = re.compile(
+              r"^(0|[1-9][0-9]*)\."
+              r"(0|[1-9][0-9]*)\."
+              r"(0|[1-9][0-9]*)"
+              r"(?:-((?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+              r"(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?"
+              r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+          )
+
+          def parse(value: str):
+              match = pattern.fullmatch(value)
+              if match is None:
+                  raise SystemExit(f"invalid SemVer in Homebrew formula: {value}")
+              major, minor, patch = (int(match.group(i)) for i in range(1, 4))
+              prerelease = match.group(4)
+              if prerelease is None:
+                  pre_key = (1,)
+              else:
+                  identifiers = []
+                  for identifier in prerelease.split("."):
+                      identifiers.append(
+                          (0, int(identifier)) if identifier.isdigit() else (1, identifier)
+                      )
+                  pre_key = (0, tuple(identifiers))
+              return major, minor, patch, pre_key
+
+          current = parse(sys.argv[1])
+          candidate = parse(sys.argv[2])
+          print("newer" if candidate > current else "older" if candidate < current else "equal")
+          PY
+          }
+
+          render_formula() {
+            local formula="$1"
+            mkdir -p "$(dirname "$formula")"
+            cat > "$formula" <<EOF
           class SnapdogUpdate < Formula
             desc "Firmware update client for SnapDog OS"
             homepage "https://github.com/SnapDogRocks/snapdog-os"
@@ -244,13 +518,63 @@ jobs:
             end
           end
           EOF
+          }
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/snapdog-update.rb
-          if git diff --cached --quiet; then
-            echo "Formula already current"
-          else
-            git commit -m "Update snapdog-update to ${VERSION}"
-            git push
-          fi
+          gh auth setup-git
+          gh repo clone SnapDogRocks/homebrew-tap homebrew-tap -- --no-checkout
+          TAP_BRANCH="$(git -C homebrew-tap symbolic-ref --quiet --short refs/remotes/origin/HEAD)"
+          TAP_BRANCH="${TAP_BRANCH#origin/}"
+          test -n "$TAP_BRANCH" || { echo "Could not determine Homebrew tap default branch" >&2; exit 1; }
+
+          # Each attempt starts from the latest remote branch. A competing release may
+          # win the push, so re-read its version before rebuilding and retrying.
+          for attempt in 1 2 3 4 5; do
+            git -C homebrew-tap fetch --quiet origin "$TAP_BRANCH"
+            WORKTREE="${RUNNER_TEMP}/homebrew-tap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${attempt}"
+            git -C homebrew-tap worktree add --quiet --detach "$WORKTREE" "origin/${TAP_BRANCH}"
+            FORMULA="${WORKTREE}/Formula/snapdog-update.rb"
+
+            if [ -f "$FORMULA" ]; then
+              CURRENT_VERSION="$(python3 - "$FORMULA" <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          formula = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+          versions = re.findall(r'^\s*version\s+"([^"]+)"\s*$', formula, flags=re.MULTILINE)
+          if len(versions) != 1:
+              raise SystemExit("expected exactly one explicit version in the Homebrew formula")
+          print(versions[0])
+          PY
+              )"
+              ORDER="$(compare_semver "$CURRENT_VERSION" "$VERSION")"
+              if [ "$ORDER" = "older" ] || [ "$ORDER" = "equal" ]; then
+                echo "Homebrew already has ${CURRENT_VERSION}; preserving it instead of writing ${VERSION}"
+                git -C homebrew-tap worktree remove --force "$WORKTREE"
+                exit 0
+              fi
+            fi
+
+            render_formula "$FORMULA"
+            git -C "$WORKTREE" config user.name "github-actions[bot]"
+            git -C "$WORKTREE" config user.email "github-actions[bot]@users.noreply.github.com"
+            git -C "$WORKTREE" add Formula/snapdog-update.rb
+            if git -C "$WORKTREE" diff --cached --quiet; then
+              echo "Formula already current at ${VERSION}"
+              git -C homebrew-tap worktree remove --force "$WORKTREE"
+              exit 0
+            fi
+
+            git -C "$WORKTREE" commit -m "Update snapdog-update to ${VERSION}"
+            if git -C "$WORKTREE" push origin "HEAD:${TAP_BRANCH}"; then
+              git -C homebrew-tap worktree remove --force "$WORKTREE"
+              exit 0
+            fi
+
+            git -C homebrew-tap worktree remove --force "$WORKTREE"
+            if [ "$attempt" -eq 5 ]; then
+              echo "Homebrew tap changed concurrently five times; refusing an unsafe overwrite" >&2
+              exit 1
+            fi
+            sleep "$attempt"
+          done

@@ -3,23 +3,30 @@
   "packages": {
     ".": {
       "release-type": "simple",
+      "changelog-path": "CHANGELOG.md",
+      "bump-minor-pre-major": true,
       "draft": true,
       "force-tag-creation": true,
-      "changelog-path": "CHANGELOG.md",
-      "bump-minor-pre-major": true
+      "exclude-paths": [
+        "snapdog-update/**",
+        "docs/snapdog-update-release-flow.md",
+        ".github/workflows/release-snapdog-update.yml"
+      ]
     },
     "snapdog-ctrl": {
       "release-type": "rust",
       "changelog-path": "snapdog-ctrl/CHANGELOG.md",
-      "bump-minor-pre-major": true
+      "bump-minor-pre-major": true,
+      "draft": true,
+      "force-tag-creation": true
     },
     "snapdog-update": {
       "release-type": "rust",
-      "draft": true,
-      "force-tag-creation": true,
       "component": "snapdog-update",
       "changelog-path": "snapdog-update/CHANGELOG.md",
-      "bump-minor-pre-major": true
+      "bump-minor-pre-major": true,
+      "draft": true,
+      "force-tag-creation": true
     }
   }
 }

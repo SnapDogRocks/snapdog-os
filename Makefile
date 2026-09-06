@@ -7,13 +7,10 @@ SNAPDOG_ROOT_DEV ?= /dev/mmcblk0p
 BRDIR := ../buildroot-$(BOARD)
 BRSRC := ../buildroot
 
-.PHONY: setup prepare-ctrl build config clean all check-release-manifest check-release-publication
+.PHONY: setup prepare-ctrl build config clean all check-release-manifest
 
-check-release-manifest: ## Test the release manifest v2 contract locally
-	@python3 -m unittest discover -s scripts/tests -p 'test_release_manifest.py'
-
-check-release-publication: ## Test complete-asset checks before locking GitHub releases
-	@python3 -m unittest discover -s scripts/tests -p 'test_finalize_release.py'
+check-release-manifest: ## Test release publishing contracts locally
+	@python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 
 setup: ## Download and prepare buildroot
 	@git config core.hooksPath .githooks

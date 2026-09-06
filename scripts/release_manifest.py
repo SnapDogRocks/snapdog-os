@@ -29,13 +29,21 @@ SCHEMA_VERSION = 2
 CATALOG_SCHEMA_VERSION = 1
 MAX_CATALOG_RELEASES = 20
 CHUNK_SIZE = 1024 * 1024
+CANONICAL_BUNDLE_BASE_URL = "https://updates.snapdog.cc/os/bundles"
 
-SEMVER_RE = re.compile(
-    r"^(?:0|[1-9][0-9]*)\."
+SEMVER_CORE_PATTERN = (
+    r"(?:0|[1-9][0-9]*)\."
     r"(?:0|[1-9][0-9]*)\."
     r"(?:0|[1-9][0-9]*)"
+)
+SEMVER_RE = re.compile(
+    rf"^{SEMVER_CORE_PATTERN}"
     r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
+STABLE_VERSION_RE = re.compile(rf"^{SEMVER_CORE_PATTERN}$")
+BETA_VERSION_RE = re.compile(
+    rf"^{SEMVER_CORE_PATTERN}-beta\.(?:0|[1-9][0-9]*)$"
 )
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -108,6 +116,25 @@ def _validate_version(version: Any, context: str) -> str:
         SEMVER_RE.fullmatch(version) is not None,
         f"{context}: invalid version {version!r}",
     )
+    return version
+
+
+def _validate_channel_version(channel: str, version: Any, context: str) -> str:
+    version = _validate_version(version, context)
+    if channel == "release":
+        _require(
+            STABLE_VERSION_RE.fullmatch(version) is not None,
+            f"{context}: release channel requires stable X.Y.Z, got {version!r}",
+        )
+    elif channel == "beta":
+        _require(
+            STABLE_VERSION_RE.fullmatch(version) is not None
+            or BETA_VERSION_RE.fullmatch(version) is not None,
+            (
+                f"{context}: beta channel requires X.Y.Z-beta.N or mirrored "
+                f"stable X.Y.Z, got {version!r}"
+            ),
+        )
     return version
 
 
@@ -224,15 +251,26 @@ def _validate_board_metadata(
 
 
 def _public_board_entry(
-    metadata: dict[str, Any], *, channel: str, base_url: str
+    metadata: dict[str, Any],
+    *,
+    channel: str,
+    base_url: str,
+    bundle_base_url: str,
 ) -> dict[str, Any]:
     board = metadata["board"]
+    version = metadata["version"]
     return {
         # v1 fields: keep their names and semantics for existing consumers.
         "image": f"snapdog-os-{board}-{channel}.img.gz",
         "sha256": metadata["sha256"],
         # v2 fields: immutable download plus pre/decompression verification data.
         "url": f"{base_url}/{quote(metadata['image'])}",
+        # Exact signed OTA payload. Consumers must not infer the target from a
+        # rolling channel alias: that can move between reading the manifest and
+        # downloading the bundle.
+        "bundle_url": (
+            f"{bundle_base_url}/{quote(f'snapdog-os-{board}-{version}.raucb')}"
+        ),
         "compressed_size": metadata["compressed_size"],
         "uncompressed_size": metadata["uncompressed_size"],
         "raw_sha256": metadata["raw_sha256"],
@@ -246,17 +284,23 @@ def create_manifest(
     commit: str,
     date: str,
     base_url: str,
+    bundle_base_url: str,
     metadata_paths: list[Path],
 ) -> dict[str, Any]:
     """Create a public v2 channel manifest from verified build metadata."""
     _require(channel in CHANNELS, f"unsupported channel {channel!r}")
-    _validate_version(version, "manifest")
+    _validate_channel_version(channel, version, "manifest")
     _require(
         COMMIT_RE.fullmatch(commit) is not None,
         "manifest: commit must be a 40-digit SHA",
     )
     _validate_date(date)
     base_url = _validate_base_url(base_url)
+    bundle_base_url = _validate_base_url(bundle_base_url)
+    _require(
+        bundle_base_url == CANONICAL_BUNDLE_BASE_URL,
+        f"bundle base URL must be {CANONICAL_BUNDLE_BASE_URL!r}",
+    )
 
     metadata_by_board: dict[str, dict[str, Any]] = {}
     for path in metadata_paths:
@@ -285,7 +329,10 @@ def create_manifest(
         "date": date,
         "boards": {
             board: _public_board_entry(
-                metadata_by_board[board], channel=channel, base_url=base_url
+                metadata_by_board[board],
+                channel=channel,
+                base_url=base_url,
+                bundle_base_url=bundle_base_url,
             )
             for board in BOARDS
         },
@@ -302,7 +349,7 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
     )
     channel = manifest.get("channel")
     _require(channel in CHANNELS, f"manifest: unsupported channel {channel!r}")
-    version = _validate_version(manifest.get("version"), "manifest")
+    version = _validate_channel_version(channel, manifest.get("version"), "manifest")
     commit = manifest.get("commit")
     _require(
         isinstance(commit, str) and COMMIT_RE.fullmatch(commit) is not None,
@@ -348,6 +395,47 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
             unquote(Path(parsed.path).name) == expected_versioned_image,
             f"manifest: {board}.url must reference immutable image {expected_versioned_image!r}",
         )
+
+        # `bundle_url` was added additively to schema v2. Accept its absence so
+        # already-published manifests and catalogs remain readable; every newly
+        # generated manifest includes it. Updated devices derive this same
+        # versioned URL only for those legacy documents and never use an alias.
+        if "bundle_url" in entry:
+            bundle_url = entry["bundle_url"]
+            _require(
+                isinstance(bundle_url, str),
+                f"manifest: {board}.bundle_url must be a string",
+            )
+            parsed_bundle = urlparse(bundle_url)
+            _require(
+                parsed_bundle.scheme == "https" and bool(parsed_bundle.netloc),
+                f"manifest: {board}.bundle_url must use HTTPS",
+            )
+            _require(
+                not parsed_bundle.params
+                and not parsed_bundle.query
+                and not parsed_bundle.fragment,
+                (
+                    f"manifest: {board}.bundle_url must not contain parameters, "
+                    "a query, or a fragment"
+                ),
+            )
+            expected_bundle = f"snapdog-os-{board}-{version}.raucb"
+            _require(
+                unquote(Path(parsed_bundle.path).name) == expected_bundle,
+                (
+                    f"manifest: {board}.bundle_url must reference immutable "
+                    f"bundle {expected_bundle!r}"
+                ),
+            )
+            expected_bundle_url = f"{CANONICAL_BUNDLE_BASE_URL}/{expected_bundle}"
+            _require(
+                bundle_url == expected_bundle_url,
+                (
+                    f"manifest: {board}.bundle_url must be the canonical URL "
+                    f"{expected_bundle_url!r}"
+                ),
+            )
 
 
 def _semver_key(value: str) -> tuple[Any, ...]:
@@ -455,6 +543,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     generate.add_argument("--commit", required=True)
     generate.add_argument("--date", required=True)
     generate.add_argument("--base-url", required=True)
+    generate.add_argument("--bundle-base-url", required=True)
     generate.add_argument("--metadata", required=True, nargs="+", type=Path)
     generate.add_argument("--output", required=True, type=Path)
 
@@ -496,6 +585,7 @@ def main(argv: list[str] | None = None) -> int:
                 commit=args.commit,
                 date=args.date,
                 base_url=args.base_url,
+                bundle_base_url=args.bundle_base_url,
                 metadata_paths=args.metadata,
             )
             _write_json(args.output, value)

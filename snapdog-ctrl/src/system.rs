@@ -905,15 +905,6 @@ const PENDING_UPDATE_FILE: &str = "/data/snapdog-os.pending-update";
 /// drive an endless install→rollback→reinstall loop that wears out the eMMC/SD.
 const FAILED_UPDATE_FILE: &str = "/data/snapdog-os.failed-update";
 
-/// Construct the bundle URL for a given channel.
-pub async fn bundle_url(channel: &str) -> String {
-    let board = detect_board().await;
-    // Channel bundles are published as snapdog-os-<board>-<channel>.raucb — the
-    // channel is "release" or "beta", matching the CI/CDN naming (the stable
-    // channel is called "release" everywhere: manifest latest-release.json etc.).
-    format!("{UPDATE_BASE_URL}/{board}-{channel}.raucb")
-}
-
 pub async fn detect_board() -> String {
     // Read compatible string from RAUC system.conf (e.g. "snapdog-os-pi4")
     let content = tokio::fs::read_to_string("/etc/rauc/system.conf")
@@ -929,7 +920,6 @@ pub async fn detect_board() -> String {
 pub async fn check_update() -> UpdateCheckResponse {
     let current = current_os_version().await;
     let config = get_auto_update().await;
-    let url = bundle_url(&config.channel).await;
 
     // This only reports whether RAUC has a trust anchor available. The concrete
     // bundle is not "signature verified" until RAUC has actually accepted it;
@@ -942,12 +932,20 @@ pub async fn check_update() -> UpdateCheckResponse {
     // `is_downgrade` = the channel points at an OLDER version than we run.
     // When the manifest is unreachable, `latest_version` is left empty and the UI
     // presents that as "cannot reach the update server" (NOT "up to date").
-    let remote = remote_channel_version(&config.channel).await;
+    let remote = remote_channel_update(&config.channel).await;
+    let bundle_url = remote
+        .as_ref()
+        .map(|update| update.bundle_url.clone())
+        .unwrap_or_default();
     let (mut available, mut is_downgrade, latest_version) = match remote {
-        Some(r) if version_is_newer(&r, &current) => (true, false, r),
-        Some(r) if version_is_newer(&current, &r) => (false, true, r),
-        Some(r) => (false, false, r), // same version — up to date
-        None => (false, false, String::new()), // manifest unknown/unreachable
+        Some(update) if version_is_newer(&update.version, &current) => {
+            (true, false, update.version)
+        }
+        Some(update) if version_is_newer(&current, &update.version) => {
+            (false, true, update.version)
+        }
+        Some(update) => (false, false, update.version), // same version — up to date
+        None => (false, false, String::new()),          // manifest unknown/unreachable
     };
 
     // A version already written to the boot slot, waiting for a reboot to activate
@@ -981,7 +979,7 @@ pub async fn check_update() -> UpdateCheckResponse {
         is_downgrade,
         trusted_keyring_available,
         signature_verified: trusted_keyring_available,
-        bundle_url: url,
+        bundle_url,
         staged_version,
     }
 }
@@ -1028,18 +1026,85 @@ pub async fn current_os_version() -> String {
         .to_string()
 }
 
-/// Fetch the version a channel currently points at from its manifest
-/// (`latest-<channel>.json`). Returns `None` when the manifest is unreachable or
-/// unparseable — callers must treat "unknown" as "do not install" rather than
-/// installing blind.
-pub async fn remote_channel_version(channel: &str) -> Option<String> {
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct RemoteChannelUpdate {
+    pub version: String,
+    pub bundle_url: String,
+}
+
+fn is_canonical_number(value: &str) -> bool {
+    !value.is_empty()
+        && value.bytes().all(|byte| byte.is_ascii_digit())
+        && (value == "0" || !value.starts_with('0'))
+}
+
+fn valid_core_version(version: &str) -> bool {
+    let mut parts = version.split('.');
+    let valid = (0..3).all(|_| parts.next().is_some_and(is_canonical_number));
+    valid && parts.next().is_none()
+}
+
+fn valid_channel_version(channel: &str, version: &str) -> bool {
+    if valid_core_version(version) {
+        return matches!(channel, "release" | "beta");
+    }
+    channel == "beta"
+        && version
+            .split_once("-beta.")
+            .is_some_and(|(core, sequence)| {
+                valid_core_version(core) && is_canonical_number(sequence)
+            })
+}
+
+fn manifest_board(compatible: &str) -> Option<&str> {
+    let board = compatible.strip_prefix("snapdog-os-").unwrap_or(compatible);
+    matches!(board, "pi3" | "pi4" | "pi5" | "zero2w").then_some(board)
+}
+
+/// Parse one channel manifest into a coherent version + immutable signed bundle
+/// target. `bundle_url` is optional solely for v2 manifests published before the
+/// field existed; their URL is deterministically derived from the version instead
+/// of falling back to a mutable channel alias.
+fn parse_channel_update(
+    body: &str,
+    requested_channel: &str,
+    compatible: &str,
+) -> Option<RemoteChannelUpdate> {
+    let manifest: serde_json::Value = serde_json::from_str(body).ok()?;
+    if manifest.get("schema_version")?.as_u64()? != 2
+        || manifest.get("channel")?.as_str()? != requested_channel
+    {
+        return None;
+    }
+    let version = manifest.get("version")?.as_str()?.trim();
+    if !valid_channel_version(requested_channel, version) {
+        return None;
+    }
+    let board = manifest_board(compatible)?;
+    let entry = manifest.get("boards")?.get(board)?.as_object()?;
+    let expected_url = format!("{UPDATE_BASE_URL}/snapdog-os-{board}-{version}.raucb");
+    let bundle_url = match entry.get("bundle_url") {
+        None => expected_url,
+        Some(serde_json::Value::String(url)) if url == &expected_url => url.clone(),
+        Some(_) => return None,
+    };
+    Some(RemoteChannelUpdate {
+        version: version.to_string(),
+        bundle_url,
+    })
+}
+
+/// Fetch the coherent update target a channel currently points at from its
+/// manifest (`latest-<channel>.json`). Returns `None` when the document is
+/// unreachable, malformed, for a different channel/board, or points anywhere
+/// other than the expected immutable HTTPS bundle object.
+pub async fn remote_channel_update(channel: &str) -> Option<RemoteChannelUpdate> {
     let url = format!("{UPDATE_MANIFEST_BASE}/latest-{channel}.json");
     let body = command_stdout("curl", &["-sf", "--max-time", "10", &url])
         .await
         .ok()?;
-    let manifest: serde_json::Value = serde_json::from_str(&body).ok()?;
-    let version = manifest.get("version")?.as_str()?.trim().to_string();
-    (!version.is_empty()).then_some(version)
+    let compatible = detect_board().await;
+    parse_channel_update(&body, channel, &compatible)
 }
 
 /// The version last marked bad after a failed boot/rollback, if any.
@@ -1224,30 +1289,48 @@ pub fn decide_update(
 
 /// True when `remote` is a strictly newer version than `current`.
 ///
-/// Compares dotted numeric components (ignoring a leading `v` and any
-/// `-prerelease`/`+build` suffix). If either side cannot be parsed, falls back to
-/// "install when they differ" so a legitimately different bundle is not blocked —
-/// the last-failed gate still prevents a reinstall loop.
+/// Compares the OS version forms accepted by the release manifest: stable
+/// `X.Y.Z` and `X.Y.Z-beta.N`. A stable release sorts after every beta of the
+/// same core version, while build metadata does not affect precedence. If either
+/// side cannot be parsed, falls back to "install when they differ" so a
+/// legitimately different legacy bundle is not blocked — the last-failed gate
+/// still prevents a reinstall loop.
 fn version_is_newer(remote: &str, current: &str) -> bool {
     match (parse_version(remote), parse_version(current)) {
-        (Some(mut r), Some(mut c)) => {
-            let width = r.len().max(c.len());
-            r.resize(width, 0);
-            c.resize(width, 0);
-            r > c
-        }
+        (Some(remote), Some(current)) => remote > current,
         _ => remote.trim() != current.trim(),
     }
 }
 
-fn parse_version(version: &str) -> Option<Vec<u64>> {
-    let core = version.trim().trim_start_matches('v');
-    let core = core.split(['-', '+']).next().unwrap_or(core);
-    let parts: Vec<u64> = core
-        .split('.')
-        .map(|p| p.parse().ok())
-        .collect::<Option<_>>()?;
-    (!parts.is_empty()).then_some(parts)
+fn parse_version(version: &str) -> Option<(u64, u64, u64, u8, u64)> {
+    let value = version.trim();
+    let value = value.strip_prefix('v').unwrap_or(value);
+    let precedence = value.split_once('+').map_or(value, |(value, _)| value);
+    let (core, prerelease) = precedence
+        .split_once('-')
+        .map_or((precedence, None), |(core, prerelease)| {
+            (core, Some(prerelease))
+        });
+
+    let mut parts = core.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+
+    let (stable_rank, beta_sequence) = match prerelease {
+        None => (1, 0),
+        Some(value) => {
+            let sequence = value.strip_prefix("beta.")?;
+            if !is_canonical_number(sequence) {
+                return None;
+            }
+            (0, sequence.parse().ok()?)
+        }
+    };
+    Some((major, minor, patch, stable_rank, beta_sequence))
 }
 
 // --- Factory Reset ---
@@ -1993,6 +2076,86 @@ fn validate_client_arg(field: &str, value: &str) -> Result<()> {
 mod tests {
     use super::*;
 
+    fn update_manifest(channel: &str, version: &str, bundle_url: Option<&str>) -> String {
+        let mut pi4 = serde_json::json!({});
+        if let Some(url) = bundle_url {
+            pi4["bundle_url"] = serde_json::Value::String(url.to_string());
+        }
+        serde_json::json!({
+            "schema_version": 2,
+            "channel": channel,
+            "version": version,
+            "boards": { "pi4": pi4 },
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn channel_manifest_selects_exact_versioned_bundle() {
+        let url = "https://updates.snapdog.cc/os/bundles/snapdog-os-pi4-1.2.3.raucb";
+        let manifest = update_manifest("release", "1.2.3", Some(url));
+
+        assert_eq!(
+            parse_channel_update(&manifest, "release", "snapdog-os-pi4"),
+            Some(RemoteChannelUpdate {
+                version: "1.2.3".into(),
+                bundle_url: url.into(),
+            })
+        );
+    }
+
+    #[test]
+    fn legacy_v2_manifest_derives_versioned_bundle_without_alias_fallback() {
+        let manifest = update_manifest("beta", "1.2.4-beta.7", None);
+
+        assert_eq!(
+            parse_channel_update(&manifest, "beta", "pi4"),
+            Some(RemoteChannelUpdate {
+                version: "1.2.4-beta.7".into(),
+                bundle_url: concat!(
+                    "https://updates.snapdog.cc/os/bundles/",
+                    "snapdog-os-pi4-1.2.4-beta.7.raucb"
+                )
+                .into(),
+            })
+        );
+    }
+
+    #[test]
+    fn channel_manifest_rejects_mutable_or_untrusted_bundle_targets() {
+        for url in [
+            "https://updates.snapdog.cc/os/bundles/snapdog-os-pi4-release.raucb",
+            "https://example.com/snapdog-os-pi4-1.2.3.raucb",
+            "http://updates.snapdog.cc/os/bundles/snapdog-os-pi4-1.2.3.raucb",
+        ] {
+            let manifest = update_manifest("release", "1.2.3", Some(url));
+            assert_eq!(
+                parse_channel_update(&manifest, "release", "snapdog-os-pi4"),
+                None,
+                "accepted {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn channel_manifest_rejects_mismatched_channel_or_version() {
+        let release_url = "https://updates.snapdog.cc/os/bundles/snapdog-os-pi4-1.2.3.raucb";
+        let release = update_manifest("release", "1.2.3", Some(release_url));
+        assert_eq!(
+            parse_channel_update(&release, "beta", "snapdog-os-pi4"),
+            None
+        );
+
+        for version in ["1.2", "01.2.3", "1.2.3-rc.1", "../../bundle"] {
+            let manifest = update_manifest("release", version, None);
+            assert_eq!(
+                parse_channel_update(&manifest, "release", "snapdog-os-pi4"),
+                None,
+                "accepted {version}"
+            );
+        }
+    }
+
     #[test]
     fn legacy_stable_update_channel_maps_to_release() {
         assert_eq!(normalize_update_channel("stable"), "release");
@@ -2204,13 +2367,31 @@ mod tests {
         assert!(!version_is_newer("0.2.9", "0.3.0"));
         // Numeric, not lexicographic (would fail a naive string compare).
         assert!(version_is_newer("0.10.0", "0.9.0"));
-        // Leading `v` and build/prerelease suffixes are ignored for the core cmp.
+        // Leading `v` is accepted and build metadata does not affect precedence.
         assert!(version_is_newer("v0.4.0", "0.3.0"));
         assert!(!version_is_newer("0.3.0+build.7", "0.3.0"));
         // Unparseable but different → treated as installable (last-failed gate is
         // the backstop); identical unparseable → not newer.
         assert!(version_is_newer("nightly-b", "nightly-a"));
         assert!(!version_is_newer("weird", "weird"));
+    }
+
+    #[test]
+    fn version_comparison_honors_beta_semver_precedence() {
+        // Later builds of the same beta line must be offered to beta clients.
+        assert!(version_is_newer("1.2.4-beta.2", "1.2.4-beta.1"));
+        // The final release outranks every same-core beta.
+        assert!(version_is_newer("1.2.4", "1.2.4-beta.187"));
+        assert!(!version_is_newer("1.2.4-beta.187", "1.2.4"));
+        // Moving to an older beta is a downgrade, both within one beta line and
+        // across core versions.
+        assert!(!version_is_newer("1.2.4-beta.1", "1.2.4-beta.2"));
+        assert!(!version_is_newer("1.2.3", "1.2.4-beta.1"));
+
+        assert_eq!(
+            decide_update(Some("1.2.4-beta.2"), "1.2.4-beta.1", None),
+            UpdateDecision::Install("1.2.4-beta.2".into())
+        );
     }
 
     #[test]

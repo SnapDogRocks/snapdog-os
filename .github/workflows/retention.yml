@@ -1,13 +1,16 @@
 # R2 update-bucket retention (safety net)
 name: R2 Retention
 
-# The Publish job (release.yml) already prunes on every release, applying the
-# self-cleaning policy: releases kept forever; betas kept only while their
-# version is unreleased (base_semver > latest_release). This workflow is a
-# weekly backstop for interrupted publishes, plus an on-demand dry-run.
+# The Publish job (release.yml) already prunes after every tagged stable or
+# explicitly dispatched beta publication. Releases are kept forever; betas are
+# kept only while their version is unreleased (base_semver > latest_release).
+# Version manifests are retired first; payload deletion waits for that
+# manifest's cache lifetime plus a 24-hour download grace. The hourly run also
+# repairs rolling aliases from committed channel pointers after a hard runner
+# loss that could not execute release.yml's cooperative recovery step.
 on:
   schedule:
-    - cron: "17 4 * * 1" # Mondays 04:17 UTC
+    - cron: "17 * * * *"
   workflow_dispatch:
     inputs:
       apply:
@@ -18,32 +21,74 @@ on:
 permissions:
   contents: read
 
-# Shared with the Publish job's job-level group so cron and publish never mutate
-# R2 concurrently.
+env:
+  R2_BUCKET: snapdog-updates
+  BOTO3_VERSION: "1.43.54"
+
+# Bound scheduled/manual backlog without sharing a GitHub concurrency group
+# with releases. Cross-workflow exclusion is provided by the R2 lease below.
 concurrency:
-  group: r2-maintenance
+  group: r2-retention-backstop
   cancel-in-progress: false
 
 jobs:
   prune:
     name: Prune R2
     runs-on: ubuntu-24.04
+    environment: r2-maintenance
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Prune superseded betas from R2
+      - name: Install R2 tools
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/r2venv
+          /tmp/r2venv/bin/pip install --quiet "boto3==${BOTO3_VERSION}"
+
+      - name: Acquire R2 mutation lock
+        timeout-minutes: 300
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
-          R2_BUCKET: snapdog-updates
         run: |
           set -euo pipefail
-          python3 -m venv /tmp/r2venv
-          /tmp/r2venv/bin/pip install --quiet boto3
+          test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "Missing R2_ACCESS_KEY_ID" >&2; exit 1; }
+          test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "Missing R2_SECRET_ACCESS_KEY" >&2; exit 1; }
+          test -n "${AWS_ENDPOINT_URL:-}" || { echo "Missing R2_ENDPOINT_URL" >&2; exit 1; }
+          owner="${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${GITHUB_JOB}:${RANDOM}:$(date +%s%N)"
+          printf '%s\n' "$owner" > /tmp/r2-lock-owner
+          /tmp/r2venv/bin/python tools/r2_lock.py acquire \
+            --owner "$owner" --ttl-seconds 7200 --wait-seconds 18000
+
+      - name: Repair aliases and prune superseded betas
+        timeout-minutes: 30
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+        run: |
+          set -euo pipefail
+          owner=$(cat /tmp/r2-lock-owner)
+          /tmp/r2venv/bin/python tools/r2_lock.py renew \
+            --owner "$owner" --ttl-seconds 7200
           # Scheduled runs prune; manual runs are dry unless apply=true.
           APPLY=""
           if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.apply }}" = "true" ]; then
             APPLY="--apply"
           fi
+          /tmp/r2venv/bin/python tools/r2_repair_aliases.py $APPLY
           /tmp/r2venv/bin/python tools/r2_maintenance.py $APPLY
+
+      - name: Release R2 mutation lock
+        if: always()
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+        run: |
+          set -euo pipefail
+          if [ -s /tmp/r2-lock-owner ] && [ -x /tmp/r2venv/bin/python ]; then
+            owner=$(cat /tmp/r2-lock-owner)
+            /tmp/r2venv/bin/python tools/r2_lock.py release --owner "$owner"
+          fi

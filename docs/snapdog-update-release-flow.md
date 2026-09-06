@@ -5,42 +5,68 @@ existing SnapDog client binary and Homebrew tap pattern.
 
 ## Goals
 
-- Publish reproducible release archives for macOS and Linux.
+- Publish reproducible release archives for macOS, Linux, and Windows.
 - Keep release artifacts separate from OS image and RAUC bundle artifacts.
 - Update the SnapDog Homebrew tap automatically after a stable release.
 - Preserve checksums and provenance for automation and operator trust.
 
 ## Workflow Shape
 
-1. Release Please manages the `snapdog-update` package version and changelog,
-   creating a draft release and its tag before the build starts.
-2. Stable binary releases are triggered by tags in the form
-   `snapdog-update-v<version>`.
-3. `.github/workflows/release-snapdog-update.yml` builds a Rust-only matrix for:
+1. Release Please manages the `snapdog-update` package version and changelog.
+2. Binary releases are triggered only by a pushed strict SemVer tag in the form
+   `snapdog-update-v<version>`; prerelease suffixes are supported. There is no
+   manually supplied tag input: reruns use the original tag-push event and its
+   immutable source revision.
+3. Before building, the workflow resolves the tag to a commit and requires it
+   to match the event SHA. The tag version must also match both the
+   `snapdog-update` entry in `.release-please-manifest.json` and the package
+   version in `snapdog-update/Cargo.toml`. Every matrix checkout is pinned to
+   that validated commit, so the archives and GitHub provenance describe the
+   same source.
+4. `.github/workflows/release-snapdog-update.yml` builds a Rust-only matrix for:
    - `x86_64-apple-darwin`
    - `aarch64-apple-darwin`
    - `x86_64-unknown-linux-gnu`
    - `aarch64-unknown-linux-gnu`
-4. Each build is packaged as:
-   - `${TAG}-${TARGET}.tar.gz`
-   - `${TAG}-${TARGET}.tar.gz.sha256`
-
-   The tag already reads `snapdog-update-v<version>`, so it is the whole archive
-   prefix on its own.
-5. Each archive contains `snapdog-update`, `README.md`, and `LICENSE`.
-6. The workflow attaches archives, per-archive checksums, and aggregate `SHA256SUMS` to the
-   draft GitHub Release, verifies all nine required assets, then publishes it.
-7. GitHub artifact attestations are generated for the release assets.
-8. For **stable** tags only, the workflow updates `SnapDogRocks/homebrew-tap`
+   - `x86_64-pc-windows-msvc`
+   - `aarch64-pc-windows-msvc`
+5. Each build is packaged as:
+   - macOS/Linux: `${TAG}-${TARGET}.tar.gz` and its `.sha256`
+   - Windows: `${TAG}-${TARGET}.zip` and its `.sha256`
+   - where `TAG` already includes the component name, for example
+     `snapdog-update-v0.5.0-x86_64-apple-darwin.tar.gz`
+6. Each archive contains the platform binary, `README.md`, and `LICENSE`.
+7. Release Please creates a draft plus its protected tag. The workflow creates
+   reproducible archives, refuses to replace an existing asset with different
+   bytes, attaches six archives, six per-archive checksums, and aggregate
+   `SHA256SUMS` (13 assets total), then re-downloads and byte-compares the exact
+   13-asset set immediately before publishing the draft with `latest=false`.
+   Publishing activates GitHub release immutability for its tag and assets.
+8. GitHub artifact attestations are generated for the release assets.
+9. For **stable** tags only, the workflow updates `SnapDogRocks/homebrew-tap`
    with `Formula/snapdog-update.rb`. Prerelease tags (a semver hyphen suffix,
    e.g. `snapdog-update-v0.1.0-beta.1` or `-rc.1`) still publish GitHub Release
-   assets but skip the tap, so `brew install snapdogrocks/tap/snapdog-update`
-   always resolves to the latest stable. The gate is the `meta.prerelease`
-   output driving `if:` on the `update-homebrew` job.
+   assets, are marked as GitHub prereleases, and skip the tap, so
+   `brew install snapdogrocks/tap/snapdog-update` always resolves to the latest
+   stable. The gate is the `meta.prerelease` output driving `if:` on the
+   `update-homebrew` job.
+10. Homebrew publication is guarded by a SemVer comparison and optimistic Git
+    push retries. Jobs may run concurrently without a GitHub concurrency queue
+    silently dropping one of them: every retry starts from the latest tap
+    revision and re-checks its version. An older release can never downgrade the
+    formula. Equal versions are left untouched as well, preserving any tap
+    `revision` hotfix instead of silently erasing it.
+
+Release jobs use the protected `updater-release` environment, which accepts only
+`snapdog-update-v*` tags and owns the Homebrew credential. One repository
+ruleset permits organization administrators (including the Release Please PAT
+owner) to create release tags; a second ruleset prevents everyone, including
+administrators, from moving or deleting one after creation. Metadata additionally
+requires the tagged commit to be an ancestor of protected `main`, and the tag is
+re-resolved immediately before draft mutation and publication.
 
 The release job sets `SNAPDOG_UPDATE_VERSION=<version>` during the build so the
 binary reports the package release version instead of the root OS image tag.
-See [GitHub release publication](release-publication.md) for immutability and retry behavior.
 
 ## Homebrew Formula
 
@@ -51,6 +77,7 @@ class SnapdogUpdate < Formula
   desc "Firmware update client for SnapDog OS"
   homepage "https://github.com/SnapDogRocks/snapdog-os"
   license "GPL-3.0-only"
+  version "${VERSION}"
 
   on_macos do
     if Hardware::CPU.intel?
@@ -78,10 +105,10 @@ end
 brew install snapdogrocks/tap/snapdog-update
 ```
 
-Linux users can download the matching release archive directly, verify the
-checksum, and install the binary into their preferred tool path.
+Linux and Windows users can download the matching release archive directly,
+verify the checksum, and install the binary into their preferred tool path.
 
 ## Required Secrets
 
-- `HOMEBREW_TAP_TOKEN`: token with write access to
-  `SnapDogRocks/homebrew-tap`.
+- `updater-release` environment secret `HOMEBREW_TAP_TOKEN`: token with write
+  access to `SnapDogRocks/homebrew-tap`.

@@ -52,7 +52,7 @@ All builds are 64-bit (aarch64). Kernel: Raspberry Pi Linux 6.6 LTS.
 
 ### Raspberry Pi Imager (recommended)
 
-1. Download the latest image for your board from [Releases](https://github.com/SnapDogRocks/snapdog-os/releases) or `https://updates.snapdog.cc/os/images/snapdog-os-<board>-beta.img.gz`
+1. Download the latest stable image for your board from [Releases](https://github.com/SnapDogRocks/snapdog-os/releases) or `https://updates.snapdog.cc/os/images/snapdog-os-<board>-release.img.gz`. The `beta` channel is an explicit opt-in preview.
 2. Open [Raspberry Pi Imager](https://www.raspberrypi.com/software/)
 3. Choose **"Use custom"** and select the downloaded `.img.gz` file
 4. Select your SD card and write
@@ -151,8 +151,8 @@ time = "04:00"
 - **Auto-rollback**: If `snapdog-ctrl` fails to start 3 times → previous slot
 - **Auto-update**: Daily check at configured time, install + reboot
 - **Manual**: Upload `.raucb` via web UI or install from URL
-- **Channels**: `release` (`snapdog-os-<board>-release.raucb`) / `beta` (`snapdog-os-<board>-beta.raucb`) for `pi3`, `pi4`, `pi5`, and `zero2w`
-- **Installer metadata**: Backward-compatible [release manifest v2](docs/release-manifest-v2.md) with immutable image URLs, byte sizes, and hashes for compressed and raw images
+- **Channels**: `release` / `beta` manifests for `pi3`, `pi4`, `pi5`, and `zero2w`; each selected update resolves to an exact versioned bundle, while rolling bundle names remain compatibility aliases
+- **Installer metadata**: Backward-compatible [release manifest v2](docs/release-manifest-v2.md) with immutable image and signed RAUC bundle URLs, byte sizes, and hashes for compressed and raw images
 
 ### SoftAP
 
@@ -255,13 +255,21 @@ Branch protection on `main`:
 Actions permissions:
 - Default workflow permissions: read-only
 - Allowlist pinned actions/reusable workflows only where supported
-- Release workflow grants write permissions only to release-please/publish jobs
+- Release Please grants write permissions only to its release job
+- OS and updater workflows grant write permissions only to their publish jobs
 
 Required secrets for releases:
 - `R2_ACCESS_KEY_ID` — Cloudflare R2 access key
 - `R2_SECRET_ACCESS_KEY` — Cloudflare R2 secret
 - `R2_ENDPOINT_URL` — Cloudflare R2 endpoint
-- `SNAPDOG_UPDATE_SIGNING_KEY_PEM` — private RSA update metadata signing key
+- `RAUC_CA_KEY_PEM` — X.509 private key for signing RAUC bundles
+- `TAP_TOKEN` — repository PAT used by Release Please so created tags trigger artifact workflows
+- `HOMEBREW_TAP_TOKEN` — token with write access to `SnapDogRocks/homebrew-tap`
+- `VERCEL_SNAPDOG_WEB_DEPLOY_HOOK` — rebuild hook after a stable OS release
+
+See [OS release flow](docs/os-release-flow.md) and
+[snapdog-update release flow](docs/snapdog-update-release-flow.md) for the
+tag, beta, publication, and retry contracts.
 
 RAUC signing key (X.509):
 

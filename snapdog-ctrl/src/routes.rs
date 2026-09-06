@@ -1076,8 +1076,14 @@ async fn post_update() -> StatusCode {
     // Stage the channel bundle ourselves so download bytes are observable, then
     // hand the verified local file to RAUC for installation.
     let config = system::get_auto_update().await;
-    let url = system::bundle_url(&config.channel).await;
-    match crate::update::start_online(url).await {
+    let Some(update) = system::remote_channel_update(&config.channel).await else {
+        tracing::warn!(
+            channel = %config.channel,
+            "post_update refused because the update manifest is unavailable or invalid"
+        );
+        return StatusCode::SERVICE_UNAVAILABLE;
+    };
+    match crate::update::start_online(update.bundle_url).await {
         Ok(()) => StatusCode::ACCEPTED,
         Err(error) => {
             tracing::error!(%error, "post_update failed");

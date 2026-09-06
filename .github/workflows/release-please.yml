@@ -1,0 +1,59 @@
+# Release orchestration only. Artifact builds are tag-driven in release.yml and
+# release-snapdog-update.yml so merging a Release Please PR cannot start a
+# second copy of work that is already running for the preceding main push.
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "README.md"
+      - "LICENSE"
+      - "docs/**"
+      - "assets/**"
+      - ".githooks/**"
+      - ".github/dependabot.yml"
+
+permissions:
+  contents: read
+
+# Release Please mutates one shared branch/PR. Serialize main pushes so two
+# invocations cannot race while updating it; completed release work is never
+# cancelled halfway through tag creation.
+concurrency:
+  group: release-please-main
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: Release Please
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # A PAT is intentional: tags created with GITHUB_TOKEN do not trigger the
+      # tag-driven artifact workflows.
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: rp
+        with:
+          token: ${{ secrets.TAP_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: Enable auto-merge for release PR
+        if: ${{ steps.rp.outputs.pr }}
+        env:
+          PR_JSON: ${{ steps.rp.outputs.pr }}
+          GH_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          # release-please-action's `pr` output is a PullRequest object with
+          # `.number` — it has no `.html_url`.
+          PR_NUMBER=$(echo "$PR_JSON" | jq -r .number)
+          if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ]; then
+            echo "Enabling auto-merge for release PR #${PR_NUMBER}"
+            # No --delete-branch: this job has no checkout, and branch cleanup
+            # through gh requires a local Git repository.
+            gh pr merge --auto --squash "$PR_NUMBER" --repo "$GITHUB_REPOSITORY"
+          fi

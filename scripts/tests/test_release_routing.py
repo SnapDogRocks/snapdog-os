@@ -22,10 +22,18 @@ class ReleaseRoutingContractTests(unittest.TestCase):
         self.assertIn('source_sha="$GITHUB_SHA"', os_release)
         self.assertIn('if [ "$GITHUB_REF" != "refs/heads/main" ]', os_release)
         self.assertNotIn('gh api "repos/${repo}/commits/main"', os_release)
-        self.assertEqual(
-            os_release.count("ref: ${{ needs.release-meta.outputs.source_sha }}"),
-            3,
-        )
+        # Every build job checks out one immutable commit, and it takes it from
+        # github.sha rather than from a job output. release-meta sets source_sha
+        # to GITHUB_SHA on both paths, so the value is the same; the difference
+        # is that no job output decides which code a privileged job builds, which
+        # is what the cache-poisoning analysis objects to.
+        self.assertEqual(os_release.count("ref: ${{ github.sha }}"), 3)
+        self.assertNotIn("ref: ${{ github.ref }}", os_release)
+        self.assertNotIn("ref: ${{ github.ref_name }}", os_release)
+        self.assertNotIn("ref: main", os_release)
+        # Caches are read by later default-branch runs, so only main fills them.
+        self.assertIn("save-if: ${{ github.ref == 'refs/heads/main' }}", os_release)
+        self.assertEqual(os_release.count("uses: actions/cache@"), 0)
         self.assertIn(
             '--commit "${{ needs.release-meta.outputs.source_sha }}"', os_release
         )

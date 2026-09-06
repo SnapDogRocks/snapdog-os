@@ -32,9 +32,6 @@ jobs:
       - name: Test release manifest contract
         run: make check-release-manifest
 
-      - name: Test release publication guard
-        run: make check-release-publication
-
       - name: Install Rust toolchain
         run: |
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
@@ -183,6 +180,19 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Lint GitHub Actions workflows
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSLo "$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+          echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum --check
+          tar -xzf "$archive" actionlint
+          ./actionlint
+
       - name: Validate release config
         run: |
           ruby -e 'require "json"; JSON.parse(File.read("release-please-config.json")); JSON.parse(File.read(".release-please-manifest.json"))'
@@ -200,4 +210,5 @@ jobs:
         run: |
           bash -n buildroot/board/raspberrypi/post-image-ab.sh
           bash -n buildroot/rauc/create-bundle.sh
+          bash -n scripts/r2_helpers.sh
           sh -n buildroot/package/snapdog-rauc/boot-handler.sh

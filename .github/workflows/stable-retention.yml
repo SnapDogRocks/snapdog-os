@@ -1,0 +1,59 @@
+name: R2 Stable Retention
+
+on:
+  schedule:
+    - cron: "47 * * * *"
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Apply the two-phase retention plan
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  # Pinned in one place per workflow, like the other R2 jobs.
+  BOTO3_VERSION: "1.43.54"
+
+concurrency:
+  group: r2-stable-retention
+  cancel-in-progress: false
+
+jobs:
+  retain:
+    runs-on: ubuntu-24.04
+    environment: r2-maintenance
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install R2 client
+        run: |
+          python3 -m venv /tmp/r2venv
+          /tmp/r2venv/bin/pip install --quiet "boto3==${BOTO3_VERSION}"
+      - name: Acquire R2 mutation lock
+        timeout-minutes: 300
+        env: &r2
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_BUCKET: snapdog-updates
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${GITHUB_JOB}:${RANDOM}:$(date +%s%N)"
+          printf '%s\n' "$owner" > /tmp/r2-lock-owner
+          /tmp/r2venv/bin/python tools/r2_lock.py acquire --owner "$owner" --ttl-seconds 7200 --wait-seconds 18000
+      - name: Retain five stable releases
+        env: *r2
+        run: |
+          set -euo pipefail
+          apply=""
+          if [ "${{ github.event_name }}" = schedule ] || [ "${{ inputs.apply }}" = true ]; then apply="--apply"; fi
+          /tmp/r2venv/bin/python tools/r2_stable_retention.py $apply
+      - name: Release R2 mutation lock
+        if: always()
+        env: *r2
+        run: |
+          if [ -s /tmp/r2-lock-owner ]; then
+            /tmp/r2venv/bin/python tools/r2_lock.py release --owner "$(cat /tmp/r2-lock-owner)"
+          fi

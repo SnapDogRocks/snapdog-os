@@ -19,14 +19,12 @@ permissions:
 
 env:
   R2_BUCKET: snapdog-updates
+  BOTO3_VERSION: "1.43.54"
 
 jobs:
   publish:
     name: Publish ${{ matrix.channel }} catalog
     runs-on: ubuntu-24.04
-    concurrency:
-      group: r2-maintenance
-      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
@@ -38,12 +36,32 @@ jobs:
 
       - name: Install publish tools
         run: |
+          set -euo pipefail
           if ! aws --version 2>/dev/null; then
             curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscli.zip
             unzip -q /tmp/awscli.zip -d /tmp && sudo /tmp/aws/install
           fi
+          python3 -m venv /tmp/r2venv
+          /tmp/r2venv/bin/pip install --quiet "boto3==${BOTO3_VERSION}"
+
+      - name: Acquire R2 mutation lock
+        timeout-minutes: 300
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+        run: |
+          set -euo pipefail
+          test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "Missing R2_ACCESS_KEY_ID" >&2; exit 1; }
+          test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "Missing R2_SECRET_ACCESS_KEY" >&2; exit 1; }
+          test -n "${AWS_ENDPOINT_URL:-}" || { echo "Missing R2_ENDPOINT_URL" >&2; exit 1; }
+          owner="${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${GITHUB_JOB}:${RANDOM}:$(date +%s%N)"
+          printf '%s\n' "$owner" > /tmp/r2-lock-owner
+          /tmp/r2venv/bin/python tools/r2_lock.py acquire \
+            --owner "$owner" --ttl-seconds 7200 --wait-seconds 18000
 
       - name: Publish validated catalog
+        timeout-minutes: 30
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -52,6 +70,10 @@ jobs:
           CHANNEL: ${{ matrix.channel }}
         run: |
           set -euo pipefail
+          source scripts/r2_helpers.sh
+          owner=$(cat /tmp/r2-lock-owner)
+          /tmp/r2venv/bin/python tools/r2_lock.py renew \
+            --owner "$owner" --ttl-seconds 7200
 
           test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "Missing R2_ACCESS_KEY_ID"; exit 1; }
           test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "Missing R2_SECRET_ACCESS_KEY"; exit 1; }
@@ -64,11 +86,38 @@ jobs:
           test "$(jq -r '.channel' latest.json)" = "$CHANNEL"
           VERSION=$(jq -r '.version' latest.json)
 
+          object_size() {
+            aws s3api head-object \
+              --bucket "$R2_BUCKET" \
+              --key "$1" \
+              --query ContentLength \
+              --output text \
+              --endpoint-url "$AWS_ENDPOINT_URL"
+          }
+          for board in pi3 pi4 pi5 zero2w; do
+            image_key="os/images/snapdog-os-${board}-${VERSION}.img.gz"
+            bundle_key="os/bundles/snapdog-os-${board}-${VERSION}.raucb"
+            sbom_key="os/sbom/snapdog-os-${board}-${VERSION}-sbom.csv"
+            expected_image_size=$(jq -er --arg board "$board" \
+              '.boards[$board].compressed_size | numbers' latest.json)
+            actual_image_size=$(object_size "$image_key")
+            test "$actual_image_size" = "$expected_image_size"
+            test "$(object_size "$bundle_key")" -gt 0
+            test "$(object_size "$sbom_key")" -gt 0
+          done
+
           CATALOG="catalog-${CHANNEL}.json"
           PREVIOUS_ARGS=()
-          if aws s3 cp "s3://${R2_BUCKET}/os/images/${CATALOG}" previous-catalog.json \
-               --endpoint-url "$AWS_ENDPOINT_URL" 2>/dev/null; then
+          if r2_get_optional \
+              "s3://${R2_BUCKET}/os/images/${CATALOG}" previous-catalog.json; then
             PREVIOUS_ARGS=(--previous previous-catalog.json)
+          else
+            optional_status=$?
+            if [ "$optional_status" -eq "$R2_OPTIONAL_MISSING" ]; then
+              echo "No previous ${CHANNEL} catalog; creating it."
+            else
+              exit "$optional_status"
+            fi
           fi
           python3 scripts/release_manifest.py catalog \
             --channel "$CHANNEL" \
@@ -77,12 +126,44 @@ jobs:
             --output "$CATALOG"
           python3 scripts/release_manifest.py validate-catalog --catalog "$CATALOG"
 
-          aws s3 cp latest.json \
-            "s3://${R2_BUCKET}/os/images/manifests/${CHANNEL}/${VERSION}.json" \
-            --cache-control "public, max-age=31536000, immutable" \
-            --content-type "application/json" \
-            --endpoint-url "$AWS_ENDPOINT_URL"
+          VERSION_MANIFEST="s3://${R2_BUCKET}/os/images/manifests/${CHANNEL}/${VERSION}.json"
+          VERSION_MANIFEST_CACHE="public, max-age=31536000, immutable"
+          if [ "$CHANNEL" = "beta" ]; then
+            VERSION_MANIFEST_CACHE="public, max-age=86400, immutable"
+          fi
+          if r2_get_optional "$VERSION_MANIFEST" version-manifest.json; then
+            jq -S . latest.json > latest-canonical.json
+            jq -S . version-manifest.json > version-canonical.json
+            if ! cmp -s latest-canonical.json version-canonical.json; then
+              diff -u version-canonical.json latest-canonical.json || true
+              echo "Refusing to overwrite differing immutable manifest $VERSION_MANIFEST" >&2
+              exit 1
+            fi
+            echo "Immutable version manifest already exists with identical content"
+          else
+            optional_status=$?
+            if [ "$optional_status" -ne "$R2_OPTIONAL_MISSING" ]; then
+              exit "$optional_status"
+            fi
+            aws s3 cp latest.json "$VERSION_MANIFEST" \
+              --cache-control "$VERSION_MANIFEST_CACHE" \
+              --content-type "application/json" \
+              --endpoint-url "$AWS_ENDPOINT_URL"
+          fi
           aws s3 cp "$CATALOG" "s3://${R2_BUCKET}/os/images/${CATALOG}" \
             --cache-control "public, max-age=60" \
             --content-type "application/json" \
             --endpoint-url "$AWS_ENDPOINT_URL"
+
+      - name: Release R2 mutation lock
+        if: always()
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+        run: |
+          set -euo pipefail
+          if [ -s /tmp/r2-lock-owner ] && [ -x /tmp/r2venv/bin/python ]; then
+            owner=$(cat /tmp/r2-lock-owner)
+            /tmp/r2venv/bin/python tools/r2_lock.py release --owner "$owner"
+          fi

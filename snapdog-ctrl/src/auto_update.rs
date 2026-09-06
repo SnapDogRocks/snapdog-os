@@ -19,9 +19,9 @@
 
 use crate::schedule::{interval_elapsed, parse_time};
 use crate::system::{
-    UpdateDecision, bundle_url, current_os_version, decide_update, get_auto_update,
-    last_auto_update_date, last_failed_update, rauc_operation, reboot, record_auto_update_date,
-    record_pending_update, remote_channel_version, update_auto_update_status,
+    UpdateDecision, current_os_version, decide_update, get_auto_update, last_auto_update_date,
+    last_failed_update, rauc_operation, reboot, record_auto_update_date, record_pending_update,
+    remote_channel_update, update_auto_update_status,
 };
 use chrono::{Local, Timelike};
 
@@ -109,7 +109,7 @@ async fn tick() -> anyhow::Result<()> {
     // no longer costs a whole interval.
     let current = current_os_version().await;
     update_auto_update_status("checking", true, false, false, None).await;
-    let Some(remote) = remote_channel_version(&config.channel).await else {
+    let Some(remote) = remote_channel_update(&config.channel).await else {
         tracing::info!("auto-update: update manifest unreachable, retrying next tick");
         update_auto_update_status(
             "error",
@@ -131,12 +131,17 @@ async fn tick() -> anyhow::Result<()> {
     record_auto_update_date(today).await;
 
     let last_failed = last_failed_update().await;
-    let version = match decide_update(Some(remote.as_str()), &current, last_failed.as_deref()) {
+    let version = match decide_update(
+        Some(remote.version.as_str()),
+        &current,
+        last_failed.as_deref(),
+    ) {
         UpdateDecision::Install(v) => v,
         UpdateDecision::Skip(reason) => {
             tracing::info!(
-                "auto-update: skipping (running {current}, {} channel offers {remote}): {reason}",
-                config.channel
+                "auto-update: skipping (running {current}, {} channel offers {}): {reason}",
+                config.channel,
+                remote.version
             );
             update_auto_update_status("up_to_date", false, false, false, None).await;
             return Ok(());
@@ -144,7 +149,7 @@ async fn tick() -> anyhow::Result<()> {
     };
 
     update_auto_update_status("installing", false, true, false, None).await;
-    match install_and_reboot(&version, &config.channel).await {
+    match install_and_reboot(&version, &remote.bundle_url).await {
         Ok(()) => {
             update_auto_update_status("rebooting", false, false, true, None).await;
             Ok(())
@@ -159,11 +164,9 @@ async fn tick() -> anyhow::Result<()> {
 /// Download, install via RAUC, and tryboot-reboot into `version`. A plain
 /// `systemctl reboot` would boot the committed slot instead of the trial slot the
 /// install just armed (RESTART2), so reconcile would then mark the bundle failed.
-async fn install_and_reboot(version: &str, channel: &str) -> anyhow::Result<()> {
-    // Bundle URL: <board>-<channel>.raucb (channel is "release" or "beta").
-    let url = bundle_url(channel).await;
-    tracing::info!("auto-update: installing {version} from {url}");
-    let update_guard = crate::update::install_online(&url).await?;
+async fn install_and_reboot(version: &str, bundle_url: &str) -> anyhow::Result<()> {
+    tracing::info!("auto-update: installing {version} from {bundle_url}");
+    let update_guard = crate::update::install_online(bundle_url).await?;
 
     // Record the version we are about to boot into so the next boot can confirm it took —
     // or mark it bad if the bootloader rolls back to the previous slot.

@@ -172,7 +172,6 @@ CONFIG_CRYPTO_SHA256=y
 | `R2_ACCESS_KEY_ID` | Cloudflare R2 access (existing) |
 | `R2_SECRET_ACCESS_KEY` | Cloudflare R2 secret (existing) |
 | `R2_ENDPOINT_URL` | Cloudflare R2 endpoint (existing) |
-| `SNAPDOG_UPDATE_SIGNING_KEY_PEM` | Ed25519 key for metadata JSON signing (existing) |
 
 ## Migration Path
 

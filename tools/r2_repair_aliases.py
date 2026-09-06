@@ -125,7 +125,11 @@ def repair_channel(
     committed_state = json_object_state(
         client, bucket, committed_key, optional=False
     )
-    assert committed_state is not None
+    if committed_state is None:
+        # `json_object_state(optional=False)` contracts never to return None. An
+        # assert would state that too, and vanish under `python -O`, which is
+        # exactly the run where a silent None would delete the wrong objects.
+        raise RuntimeError(f"{committed_key} could not be read")
     committed, _ = committed_state
     validate_manifest(committed)
     if committed != pointer:
@@ -174,7 +178,8 @@ def repair_channel(
         refreshed_state = json_object_state(
             client, bucket, pointer_key, optional=False
         )
-        assert refreshed_state is not None
+        if refreshed_state is None:
+            raise RuntimeError(f"{pointer_key} could not be re-read")
         refreshed, refreshed_modified = refreshed_state
         if refreshed != pointer or refreshed_modified != pointer_modified:
             raise RuntimeError(f"{pointer_key} changed during its cache barrier")

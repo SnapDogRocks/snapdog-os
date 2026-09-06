@@ -158,10 +158,16 @@ jobs:
           cache: npm
           cache-dependency-path: snapdog-ctrl/webui/package-lock.json
 
+      # Restoring is unconditional; writing is not. A cache the default branch
+      # later reads must only ever be filled from a tag push or from main, never
+      # from whatever ref a dispatch names. `release-meta` rejects any other
+      # dispatch ref already, but that check lives in a script and is invisible
+      # to static analysis, so the boundary is repeated here where it is visible.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: snapdog-ctrl
           key: aarch64-release
+          save-if: ${{ github.event_name == 'push' || github.ref == 'refs/heads/main' }}
 
       - name: Install aarch64 linker
         run: |
@@ -267,7 +273,7 @@ jobs:
 
       - name: Restore Buildroot source cache
         id: cache-buildroot-src
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ../buildroot-src
           key: buildroot-src-${{ runner.os }}-${{ env.BUILDROOT_VERSION }}-${{ hashFiles('buildroot/scripts/patch-buildroot') }}
@@ -382,15 +388,22 @@ jobs:
             "../buildroot-${{ matrix.board }}/host/bin/ccache" -c || true
           fi
 
+      - name: Save Buildroot source cache
+        if: success() && steps.cache-buildroot-src.outputs.cache-hit != 'true' && (github.event_name == 'push' || github.ref == 'refs/heads/main')
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ../buildroot-src
+          key: ${{ steps.cache-buildroot-src.outputs.cache-primary-key }}
+
       - name: Save Buildroot download cache
-        if: success() && steps.cache-buildroot-dl.outputs.cache-primary-key != ''
+        if: success() && steps.cache-buildroot-dl.outputs.cache-primary-key != '' && (github.event_name == 'push' || github.ref == 'refs/heads/main')
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.BR2_DL_DIR }}
           key: ${{ steps.cache-buildroot-dl.outputs.cache-primary-key }}
 
       - name: Save Buildroot compiler cache
-        if: success() && steps.cache-buildroot-ccache.outputs.cache-primary-key != ''
+        if: success() && steps.cache-buildroot-ccache.outputs.cache-primary-key != '' && (github.event_name == 'push' || github.ref == 'refs/heads/main')
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.BR2_CCACHE_DIR }}

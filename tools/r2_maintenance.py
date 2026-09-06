@@ -728,8 +728,11 @@ def main() -> int:
             keep_reason[reason][1] += size
 
     # Safety guard: never let a keep-classified key slip into the delete set.
+    # Not an assert. `python -O` removes those, and this is the one line that
+    # stands between a classification bug and deleted release artifacts.
     for k in delete:
-        assert classify(k, rel_t)[0] == "delete", f"guard: {k} is not deletable"
+        if classify(k, rel_t)[0] != "delete":
+            raise RuntimeError(f"guard: {k} is not deletable")
 
     marker_versions = {
         version

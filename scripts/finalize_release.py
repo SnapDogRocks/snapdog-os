@@ -14,7 +14,6 @@ UNIX_TARGETS = (
     "x86_64-unknown-linux-gnu",
     "aarch64-unknown-linux-gnu",
 )
-WINDOWS_TARGETS = ("x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc")
 
 
 def expected_assets(kind: str, tag: str) -> set[str]:
@@ -24,18 +23,22 @@ def expected_assets(kind: str, tag: str) -> set[str]:
     ):
         raise ValueError(f"Invalid {kind} release tag: {tag}")
     names = set()
-    for target in UNIX_TARGETS:
-        archive = f"snapdog-update-{tag}-{target}.tar.gz"
-        names.update((archive, f"{archive}.sha256"))
     if kind == "os":
+        # The OS release carries images, bundles and SBOMs. snapdog-update is a
+        # package of its own with its own version and its own release; it used to
+        # be built a second time here under the OS tag, which put a binary
+        # reporting one version behind an asset name claiming another.
         version = tag.removeprefix("v")
         for board in BOARDS:
             base = f"snapdog-os-{board}-{version}"
             names.update(f"{base}{suffix}" for suffix in (".img.gz", ".raucb", "-sbom.csv", ".sha256"))
-        for target in WINDOWS_TARGETS:
-            archive = f"snapdog-update-{tag}-{target}.zip"
-            names.update((archive, f"{archive}.sha256"))
     else:
+        # The tag already reads `snapdog-update-v<version>`, so it is the whole
+        # archive prefix. Prefixing it again produced
+        # `snapdog-update-snapdog-update-v0.4.1-…`.
+        for target in UNIX_TARGETS:
+            archive = f"{tag}-{target}.tar.gz"
+            names.update((archive, f"{archive}.sha256"))
         names.add("SHA256SUMS")
     return names
 

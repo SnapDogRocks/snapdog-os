@@ -22,8 +22,11 @@ existing SnapDog client binary and Homebrew tap pattern.
    - `x86_64-unknown-linux-gnu`
    - `aarch64-unknown-linux-gnu`
 4. Each build is packaged as:
-   - `snapdog-update-${TAG}-${TARGET}.tar.gz`
-   - `snapdog-update-${TAG}-${TARGET}.tar.gz.sha256`
+   - `${TAG}-${TARGET}.tar.gz`
+   - `${TAG}-${TARGET}.tar.gz.sha256`
+
+   The tag already reads `snapdog-update-v<version>`, so it is the whole archive
+   prefix on its own.
 5. Each archive contains `snapdog-update`, `README.md`, and `LICENSE`.
 6. The workflow attaches archives, per-archive checksums, and aggregate `SHA256SUMS` to the
    draft GitHub Release, verifies all nine required assets, then publishes it.
@@ -51,10 +54,10 @@ class SnapdogUpdate < Formula
 
   on_macos do
     if Hardware::CPU.intel?
-      url "https://github.com/SnapDogRocks/snapdog-os/releases/download/${TAG}/snapdog-update-${TAG}-x86_64-apple-darwin.tar.gz"
+      url "https://github.com/SnapDogRocks/snapdog-os/releases/download/${TAG}/${TAG}-x86_64-apple-darwin.tar.gz"
       sha256 "${MACOS_X64_SHA}"
     else
-      url "https://github.com/SnapDogRocks/snapdog-os/releases/download/${TAG}/snapdog-update-${TAG}-aarch64-apple-darwin.tar.gz"
+      url "https://github.com/SnapDogRocks/snapdog-os/releases/download/${TAG}/${TAG}-aarch64-apple-darwin.tar.gz"
       sha256 "${MACOS_ARM64_SHA}"
     end
   end

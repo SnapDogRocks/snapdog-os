@@ -105,7 +105,9 @@ jobs:
           set -euo pipefail
           TAG="${{ needs.meta.outputs.tag }}"
           TARGET="${{ matrix.target }}"
-          ARCHIVE="snapdog-update-${TAG}-${TARGET}"
+          # The tag already begins with `snapdog-update-`, so prefixing it again
+          # produced `snapdog-update-snapdog-update-v0.4.1-…`.
+          ARCHIVE="${TAG}-${TARGET}"
 
           mkdir "$ARCHIVE"
           cp "snapdog-update/target/${TARGET}/release/snapdog-update" "$ARCHIVE/"
@@ -210,8 +212,8 @@ jobs:
           set -euo pipefail
           test -n "${TAP_TOKEN:-}" || { echo "Missing HOMEBREW_TAP_TOKEN" >&2; exit 1; }
 
-          MACOS_X64_SHA="$(sha256sum "artifacts/snapdog-update-${TAG}-x86_64-apple-darwin.tar.gz" | cut -d' ' -f1)"
-          MACOS_ARM64_SHA="$(sha256sum "artifacts/snapdog-update-${TAG}-aarch64-apple-darwin.tar.gz" | cut -d' ' -f1)"
+          MACOS_X64_SHA="$(sha256sum "artifacts/${TAG}-x86_64-apple-darwin.tar.gz" | cut -d' ' -f1)"
+          MACOS_ARM64_SHA="$(sha256sum "artifacts/${TAG}-aarch64-apple-darwin.tar.gz" | cut -d' ' -f1)"
 
           git clone "https://x-access-token:${TAP_TOKEN}@github.com/SnapDogRocks/homebrew-tap.git"
           cd homebrew-tap
@@ -222,14 +224,13 @@ jobs:
             desc "Firmware update client for SnapDog OS"
             homepage "https://github.com/SnapDogRocks/snapdog-os"
             license "GPL-3.0-only"
-            version "${VERSION}"
 
             on_macos do
               if Hardware::CPU.intel?
-                url "https://github.com/SnapDogRocks/snapdog-os/releases/download/${TAG}/snapdog-update-${TAG}-x86_64-apple-darwin.tar.gz"
+                url "https://github.com/SnapDogRocks/snapdog-os/releases/download/${TAG}/${TAG}-x86_64-apple-darwin.tar.gz"
                 sha256 "${MACOS_X64_SHA}"
               else
-                url "https://github.com/SnapDogRocks/snapdog-os/releases/download/${TAG}/snapdog-update-${TAG}-aarch64-apple-darwin.tar.gz"
+                url "https://github.com/SnapDogRocks/snapdog-os/releases/download/${TAG}/${TAG}-aarch64-apple-darwin.tar.gz"
                 sha256 "${MACOS_ARM64_SHA}"
               end
             end

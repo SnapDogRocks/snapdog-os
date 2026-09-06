@@ -40,8 +40,15 @@ class ReleasePublicationTests(unittest.TestCase):
 
     def test_complete_os_release_can_be_published(self):
         release = release_fixture()
-        self.assertEqual(len(release["assets"]), 28)
+        # Four boards with an image, a bundle, an SBOM and a checksum each. The
+        # updater archives are not part of an OS release any more.
+        self.assertEqual(len(release["assets"]), 16)
         self.assertEqual(self.run_cli(json.dumps(release)), (0, "draft\n", ""))
+
+    def test_an_os_release_expects_no_updater_asset(self):
+        self.assertEqual(
+            [name for name in expected_assets("os", OS_TAG) if "snapdog-update" in name], []
+        )
 
     def test_no_uploads_never_publishes(self):
         release = release_fixture()
@@ -51,7 +58,7 @@ class ReleasePublicationTests(unittest.TestCase):
         self.assertEqual(output, "")
         self.assertIn("Missing release assets", errors)
 
-    def test_every_missing_firmware_or_updater_asset_blocks_publication(self):
+    def test_every_missing_firmware_asset_blocks_publication(self):
         complete = release_fixture()
         for asset in complete["assets"]:
             with self.subTest(missing=asset["name"]):
@@ -79,6 +86,12 @@ class ReleasePublicationTests(unittest.TestCase):
         release["assets"].pop()
         with self.assertRaisesRegex(ValueError, "Missing release assets"):
             publication_state("os", OS_TAG, release)
+
+    def test_updater_archives_carry_the_tag_once(self):
+        tag = "snapdog-update-v0.4.1"
+        names = expected_assets("updater", tag)
+        self.assertEqual([n for n in names if n.startswith("snapdog-update-snapdog-update")], [])
+        self.assertIn(f"{tag}-x86_64-apple-darwin.tar.gz", names)
 
     def test_standalone_updater_requires_aggregate_checksums(self):
         tag = "snapdog-update-v0.3.0"

@@ -77,6 +77,24 @@ class ReleaseRoutingContractTests(unittest.TestCase):
         self.assertIn("overwrite: true", updater_release)
         self.assertIn("refusing split ownership", updater_release)
 
+        # The tap is written through a pull request the tap itself qualifies,
+        # with a scoped app token, never by pushing onto its default branch with
+        # a stored credential.
+        self.assertNotIn("HOMEBREW_TAP_TOKEN", updater_release)
+        self.assertNotIn('push origin "HEAD:', updater_release)
+        self.assertIn("client-id: ${{ vars.HOMEBREW_APP_CLIENT_ID }}", updater_release)
+        self.assertIn("permission-contents: write", updater_release)
+        self.assertIn("gh pr create --repo \"$TAP_REPO\"", updater_release)
+        self.assertIn("gh pr checks \"$PR\" --repo \"$TAP_REPO\"", updater_release)
+        self.assertIn("gh pr merge \"$PR\" --repo \"$TAP_REPO\" --squash", updater_release)
+        # Two tokens: the qualification wait can outlive the first one.
+        self.assertEqual(
+            updater_release.count("uses: actions/create-github-app-token@"), 2
+        )
+        # The formula carries no explicit version; brew audit --strict rejects
+        # one that repeats what it scans from the URL.
+        self.assertNotIn('version "${VERSION}"', updater_release)
+
         targets = set(re.findall(r"^\s+- target: (\S+)$", updater_release, re.MULTILINE))
         self.assertEqual(
             targets,

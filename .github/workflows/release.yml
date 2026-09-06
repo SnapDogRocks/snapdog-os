@@ -4,13 +4,28 @@ name: Release
 on:
   push:
     branches: [main]
+    # A push is skipped only when every changed file matches, so a mixed commit
+    # still builds. Listed here is CI and developer metadata alone: nothing that
+    # reaches an image, the embedded snapdog-ctrl binary or the publication path,
+    # and no source of a released package. This filter also hides a push from
+    # release-please, which runs inside this workflow, so product code must never
+    # be added here.
     paths-ignore:
       - "README.md"
       - "LICENSE"
       - "docs/**"
       - "assets/**"
+      - "dev/**"
       - ".githooks/**"
+      - ".github/CODEOWNERS"
+      - ".github/actionlint.yaml"
       - ".github/dependabot.yml"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/dependabot-auto-merge.yml"
+      - ".github/workflows/publish-installer-catalog.yml"
+      - ".github/workflows/retention.yml"
+      - ".github/workflows/release-snapdog-update.yml"
+      - "scripts/tests/**"
 
 permissions:
   contents: read

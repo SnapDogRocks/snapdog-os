@@ -118,6 +118,8 @@ class ReleaseRoutingContractTests(unittest.TestCase):
                 "snapdog-update/**",
                 "docs/snapdog-update-release-flow.md",
                 ".github/workflows/release-snapdog-update.yml",
+                "scripts/homebrew_updater.py",
+                "scripts/tests/test_homebrew_updater.py",
             },
         )
         for package in (".", "snapdog-ctrl", "snapdog-update"):

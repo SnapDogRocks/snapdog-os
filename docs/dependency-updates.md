@@ -73,8 +73,20 @@ fail with read-only credentials. Use a maintainer-authored replacement PR when
 necessary, verify its checks, then close the superseded bot PRs. See
 [GitHub's CodeQL/Dependabot guidance](https://docs.github.com/en/code-security/reference/code-scanning/troubleshoot-analysis-errors/resource-not-accessible).
 
-Automatic Dependabot merges are disabled by default. Do not set the repository
-variable `DEPENDABOT_AUTOMERGE_ENABLED=true` until both the merge strategy and
-required CodeQL checks have been explicitly configured and verified. The existing
-four required CI checks alone do not enforce complete CodeQL coverage. Changing
-that repository policy is separate from qualifying an individual update.
+The default-branch ruleset requires `Lint & Test`, `Security Audit`,
+`Cross-compile (aarch64)`, `Release Sanity`, `Rust MSRV`, `CodeQL Coverage`, and
+the final `CodeQL` check. This also applies to Release Please auto-merges.
+The new checks are bound to their GitHub integration IDs, not merely their names.
+
+`CodeQL Coverage` reads the managed CodeQL workflow (repository-specific ID
+`308299760`) for the exact PR head. It requires the latest run attempt and all
+five language jobs to finish successfully, followed by a successful CodeQL
+result from integration `57789`. Missing, skipped, neutral, stale, and failed
+results fail closed after a bounded wait. Code Quality's similarly named jobs
+cannot substitute for security analysis. If the managed workflow is recreated,
+verify its new ID and update the CI invocation together.
+
+Automatic Dependabot merges remain disabled. Do not set the repository variable
+`DEPENDABOT_AUTOMERGE_ENABLED=true` until the squash-author limitation and full
+PR/default-branch coverage have been verified for bot-authored updates. Required
+checks are not a reason to bypass an absent scan.

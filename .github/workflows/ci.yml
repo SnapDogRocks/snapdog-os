@@ -44,7 +44,10 @@ jobs:
           cache-dependency-path: snapdog-ctrl/webui/package-lock.json
 
       - name: Install webui deps
-        run: cd snapdog-ctrl/webui && npm install --prefer-offline
+        run: cd snapdog-ctrl/webui && npm ci --prefer-offline
+
+      - name: Verify committed dependency files are unchanged
+        run: git diff --exit-code -- snapdog-ctrl/webui/package.json snapdog-ctrl/webui/package-lock.json
 
       - name: WebUI i18n completeness
         run: cd snapdog-ctrl/webui && npm run i18n:check
@@ -92,7 +95,7 @@ jobs:
           cache-dependency-path: snapdog-ctrl/webui/package-lock.json
 
       - name: Install webui deps
-        run: cd snapdog-ctrl/webui && npm install --prefer-offline
+        run: cd snapdog-ctrl/webui && npm ci --prefer-offline
 
       - name: Install system deps
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libavahi-compat-libdnssd-dev
@@ -106,29 +109,36 @@ jobs:
   security-audit:
     name: Security Audit
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Run the auditor directly: Dependabot/fork PRs must not need a writable
+      # token merely to report an audit result. Fail on informational warnings
+      # as well, including unsound and yanked crates.
+      - name: Install pinned Rust auditor
+        run: cargo install cargo-audit --version 0.22.2 --locked
+
       - name: Audit snapdog-ctrl Rust dependencies
-        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          working-directory: snapdog-ctrl
+        run: cargo audit --file snapdog-ctrl/Cargo.lock --deny warnings
 
       - name: Audit snapdog-update Rust dependencies
-        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          working-directory: snapdog-update
+        if: ${{ !cancelled() }}
+        run: cargo audit --file snapdog-update/Cargo.lock --deny warnings
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: ${{ !cancelled() }}
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: snapdog-ctrl/webui/package-lock.json
 
-      - name: Audit webui runtime deps
-        run: cd snapdog-ctrl/webui && npm audit --omit=dev --audit-level=high
+      - name: Audit webui dependencies
+        if: ${{ !cancelled() }}
+        working-directory: snapdog-ctrl/webui
+        run: |
+          npm audit --omit=dev --audit-level=high
+          npm audit --audit-level=high
 
   cross-compile:
     name: Cross-compile (aarch64)
@@ -168,7 +178,7 @@ jobs:
           PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
           PKG_CONFIG_SYSROOT_DIR: /usr/aarch64-linux-gnu
         run: |
-          cd snapdog-ctrl/webui && npm install --prefer-offline && npm run build && cd ../..
+          cd snapdog-ctrl/webui && npm ci --prefer-offline && npm run build && cd ../..
           cd snapdog-ctrl && cargo build --locked --release --target aarch64-unknown-linux-gnu
 
       - name: Verify binary

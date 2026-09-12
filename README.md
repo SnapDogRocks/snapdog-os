@@ -230,6 +230,9 @@ Output: `../buildroot-<board>/images/sdcard.img`
 
 ## Security
 
+See [dependency qualification](docs/dependency-updates.md) for reproducible
+installs, strict security audits, and Dependabot/CodeQL merge requirements.
+
 | Aspect | Default |
 |--------|---------|
 | Web UI | Optional password (protects UI + console login) |

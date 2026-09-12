@@ -72,7 +72,7 @@ class SnapdogUpdate < Formula
   desc "Firmware update client for SnapDog OS"
   homepage "https://github.com/SnapDogRocks/snapdog-os"
   license "GPL-3.0-only"
-  version "${VERSION}"
+  version_scheme 1
 
   on_macos do
     if Hardware::CPU.intel?
@@ -93,6 +93,35 @@ class SnapdogUpdate < Formula
   end
 end
 ```
+
+The historical formula used the OS release version `0.16.6`, although its
+executable was updater `0.4.1`. Migration to updater `0.4.2` must not compare
+those two version namespaces numerically. `version_scheme 1` makes the new
+package version an upgrade in Homebrew and must remain in subsequent formulas.
+Do not add an explicit `version` duplicating the version inferred from the URL.
+
+Tap updates are serialized across stable tags. Check registration and completion
+are separate: a pending check is registered, not missing. Retries must reuse an
+existing matching PR or stop without deleting its branch. Before merging, check
+the current formula again, the unchanged PR head, and effective PR/required-check
+rules. A generic `protected: true` flag alone does not prove qualification is
+required. The tap requires `Formula qualification`, including installs on Intel
+and ARM macOS and `brew test` for the updater version.
+
+## Recover a failed tap update without rebuilding
+
+A failed Homebrew job does not imply that the GitHub release failed. First inspect
+the published release and its complete asset set. Download the existing archives
+and `SHA256SUMS` to a new directory, verify all checksums, and independently
+measure both macOS archive SHA256 values. Propose only the formula migration
+through a tap PR; require both macOS installation/version checks before merging.
+Do not overwrite release assets, move tags, or rebuild binaries for this repair.
+
+Rerunning an old tagged workflow uses that old workflow's code. A publisher fix
+on `main` does not change an already published tag. For an old failed release,
+use the verified-asset PR recovery above rather than repeatedly rerunning the
+same broken job. The tag-only `updater-release` environment restriction remains
+unchanged; there is no privileged arbitrary-ref recovery dispatch.
 
 ## Operator Install Path
 

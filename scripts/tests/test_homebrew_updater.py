@@ -15,6 +15,7 @@ from homebrew_updater import (  # noqa: E402
     decide,
     orphan_branch_is_deletable,
     parse_formula,
+    semver_key,
     validate_formula,
 )
 
@@ -56,6 +57,15 @@ end
 
 
 class HomebrewUpdaterTests(unittest.TestCase):
+    def test_semver_suffix_validation_and_ordering(self) -> None:
+        for invalid in ("01.2.3", "1.2", "1.2.3-", "1.2.3+", "1.2.3-rc..1",
+                        "1.2.3-01", "1.2.3+x+y", "1.2.3+bad/metadata"):
+            with self.subTest(version=invalid), self.assertRaises(FormulaError):
+                semver_key(invalid)
+        self.assertLess(semver_key("1.2.3-rc.2"), semver_key("1.2.3-rc.10"))
+        self.assertLess(semver_key("1.2.3-rc.10"), semver_key("1.2.3"))
+        self.assertEqual(semver_key("1.2.3+001"), semver_key("1.2.3+abc"))
+
     def test_legacy_os_version_migrates_to_updater_scheme(self) -> None:
         state = parse_formula(legacy_formula())
         self.assertEqual(state.version, "0.16.6")

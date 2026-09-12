@@ -8,7 +8,8 @@ The managed workflow ID is repository-specific and intentionally explicit.
 import argparse
 from datetime import datetime
 import json
-import subprocess
+import shutil
+import subprocess  # nosec B404 - fixed gh executable/argv; no shell is used.
 import time
 
 
@@ -16,8 +17,12 @@ LANGUAGES = ("actions", "c-cpp", "javascript-typescript", "python", "rust")
 
 
 def api(path):
-    result = subprocess.run(
-        ["gh", "api", "--paginate", "--slurp", path],
+    executable = shutil.which("gh")
+    if executable is None:
+        raise RuntimeError("GitHub CLI is required")
+    # The endpoint is one argv item, never shell code or an executable name.
+    result = subprocess.run(  # nosec B603 - fixed executable and options, shell=False.
+        [executable, "api", "--hostname", "github.com", "--paginate", "--slurp", path],
         check=True, capture_output=True, text=True, timeout=60,
     )
     return json.loads(result.stdout)

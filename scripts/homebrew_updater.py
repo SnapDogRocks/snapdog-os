@@ -19,11 +19,6 @@ from pathlib import Path
 from typing import Any
 
 
-SEMVER_RE = re.compile(
-    r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
-    r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
-    r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
-)
 URL_SHA_RE = re.compile(
     r'\burl\s+"(?P<url>[^"]+)"\s*\n\s*'
     r'sha256\s+"(?P<sha>[0-9a-fA-F]{64})"'
@@ -55,16 +50,25 @@ class FormulaState:
 def semver_key(version: str) -> tuple[Any, ...]:
     """Return a SemVer ordering key (build metadata is intentionally ignored)."""
 
-    match = SEMVER_RE.fullmatch(version)
-    if not match:
+    without_build, build_separator, build = version.partition("+")
+    core_text, prerelease_separator, prerelease = without_build.partition("-")
+    numbers = core_text.split(".")
+    if len(numbers) != 3 or any(
+        not re.fullmatch(r"[0-9]+", number)
+        or (len(number) > 1 and number.startswith("0")) for number in numbers
+    ):
         raise FormulaError(f"invalid SemVer: {version}")
-    major, minor, patch, prerelease, _build = match.groups()
-    core = (int(major), int(minor), int(patch))
-    if prerelease is None:
+    for present, suffix in ((build_separator, build), (prerelease_separator, prerelease)):
+        if present and any(not re.fullmatch(r"[0-9A-Za-z-]+", part) for part in suffix.split(".")):
+            raise FormulaError(f"invalid SemVer: {version}")
+    core = tuple(int(number) for number in numbers)
+    if not prerelease_separator:
         return (*core, (1,))
     identifiers: list[tuple[int, Any]] = []
     for identifier in prerelease.split("."):
         if identifier.isdigit():
+            if len(identifier) > 1 and identifier.startswith("0"):
+                raise FormulaError(f"invalid SemVer numeric prerelease: {version}")
             # Numeric prerelease identifiers sort before non-numeric ones.
             identifiers.append((0, int(identifier)))
         else:
@@ -72,13 +76,17 @@ def semver_key(version: str) -> tuple[Any, ...]:
     return (*core, (0, *identifiers))
 
 
-def parse_formula(text: str) -> FormulaState:
-    """Parse both the old OS-tag URL scheme and the current updater scheme."""
-
+def explicit_version_scheme(text: str) -> int | None:
     scheme_matches = list(SCHEME_RE.finditer(text))
     if len(scheme_matches) > 1:
         raise FormulaError("formula contains more than one version_scheme")
-    explicit_scheme = int(scheme_matches[0].group("scheme")) if scheme_matches else None
+    return int(scheme_matches[0].group("scheme")) if scheme_matches else None
+
+
+def parse_formula(text: str) -> FormulaState:
+    """Parse both the old OS-tag URL scheme and the current updater scheme."""
+
+    explicit_scheme = explicit_version_scheme(text)
 
     entries = list(URL_SHA_RE.finditer(text))
     if len(entries) != 2:

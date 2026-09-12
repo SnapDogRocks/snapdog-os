@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.4](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.14.3...snapdog-ctrl-v0.14.4) (2026-09-12)
+
+
+### Bug Fixes
+
+* **deps:** qualify dependency updates and harden security checks ([#186](https://github.com/SnapDogRocks/snapdog-os/issues/186)) ([8f8aa30](https://github.com/SnapDogRocks/snapdog-os/commit/8f8aa305d16aa049a106d0adf8a247244b767a69))
+
 ## [0.14.3](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.14.2...snapdog-ctrl-v0.14.3) (2026-09-05)
 
 

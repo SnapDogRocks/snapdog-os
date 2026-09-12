@@ -21,6 +21,26 @@ env:
   NODE_VERSION: "26.5.0"
 
 jobs:
+  codeql-coverage:
+    name: CodeQL Coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require every CodeQL language and the final result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 scripts/check_codeql_coverage.py --repo "$GITHUB_REPOSITORY" \
+            --sha "$PR_HEAD_SHA" --workflow-id 308299760 --timeout 1200
+
   check:
     name: Lint & Test
     runs-on: ubuntu-24.04

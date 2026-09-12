@@ -54,7 +54,27 @@ update. Repair shared audit blockers first, then update the remaining PRs agains
 the merged base and qualify each resulting head again. Close redundant PRs only
 after verifying that the merged dependency graph includes their fixes.
 
-Disable auto-merge while repairing or investigating a PR. Maintainer repair
-pushes do not re-enable it; bot-authored events may enable it subject to required
-checks. Never modify existing release tags or release assets during dependency
-maintenance.
+Disable an existing auto-merge request explicitly before repairing or investigating
+a PR. The actor guard prevents re-enabling a hold; it does not cancel a request
+that was already enabled. Never modify existing release tags or release assets
+during dependency maintenance.
+
+## CodeQL and merge policy
+
+Default CodeQL setup can omit scans for Dependabot-triggered events. A maintainer
+push can trigger the missing analyses; verify all five language configurations
+(`actions`, `c-cpp`, `javascript-typescript`, `python`, `rust`) and the final CodeQL
+result for the exact head before merging. Do not count a neutral result while a
+language analysis is missing as qualification.
+
+The repository currently requires linear history and squash merges. GitHub warns
+that a Dependabot-authored squash commit can make default-branch CodeQL uploads
+fail with read-only credentials. Use a maintainer-authored replacement PR when
+necessary, verify its checks, then close the superseded bot PRs. See
+[GitHub's CodeQL/Dependabot guidance](https://docs.github.com/en/code-security/reference/code-scanning/troubleshoot-analysis-errors/resource-not-accessible).
+
+Automatic Dependabot merges are disabled by default. Do not set the repository
+variable `DEPENDABOT_AUTOMERGE_ENABLED=true` until both the merge strategy and
+required CodeQL checks have been explicitly configured and verified. The existing
+four required CI checks alone do not enforce complete CodeQL coverage. Changing
+that repository policy is separate from qualifying an individual update.

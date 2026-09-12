@@ -42,7 +42,15 @@ class DependencyCiTests(unittest.TestCase):
 
     def test_maintainer_push_does_not_reenable_auto_merge(self):
         workflow = (ROOT / ".github/workflows/dependabot-auto-merge.yml").read_text()
-        self.assertIn("github.actor == 'dependabot[bot]'", workflow)
+        self.assertIn(
+            "if: vars.DEPENDABOT_AUTOMERGE_ENABLED == 'true' && "
+            "github.event.pull_request.user.login == 'dependabot[bot]' && "
+            "github.actor == 'dependabot[bot]'",
+            workflow,
+        )
+        for action in re.findall(r"uses:\s+(\S+)", workflow):
+            with self.subTest(action=action):
+                self.assertRegex(action, r"^[\w./-]+@[0-9a-f]{40}$")
 
 
 if __name__ == "__main__":

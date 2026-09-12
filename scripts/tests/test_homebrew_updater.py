@@ -123,6 +123,8 @@ class HomebrewUpdaterTests(unittest.TestCase):
         self.assertIn("version_scheme 1", workflow)
         self.assertIn("--json name,state,bucket", workflow)
         self.assertIn("gh pr list", workflow)
+        self.assertIn("headRefOid,isCrossRepository", workflow)
+        self.assertIn('cmp -- "$existing_formula" Formula/snapdog-update.rb', workflow)
         self.assertIn("open PR", workflow)
         self.assertIn("snapdog-update-homebrew-tap", workflow)
         self.assertIn("required_status_checks", workflow)

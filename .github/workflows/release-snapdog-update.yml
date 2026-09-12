@@ -628,7 +628,7 @@ jobs:
           # Reuse it only when exactly one open PR targets main and its formula
           # is the verified candidate.  Any mismatch fails without deletion.
           existing_prs=$(gh pr list --repo "$TAP_REPO" --head "$branch" \
-            --state open --json number,url,baseRefName,headRefName,headRefOid --limit 20)
+            --state open --json number,url,baseRefName,headRefName,headRefOid,isCrossRepository --limit 20)
           existing_count=$(jq 'length' <<< "$existing_prs")
           if [[ "$existing_count" -gt 1 ]]; then
             echo "::error::TAP008 multiple open PRs use ${branch}; refusing to choose one"
@@ -638,7 +638,8 @@ jobs:
             existing_head=$(jq -r '.[0].headRefName' <<< "$existing_prs")
             existing_pr=$(jq -r '.[0].url' <<< "$existing_prs")
             existing_oid=$(jq -r '.[0].headRefOid' <<< "$existing_prs")
-            if [[ "$existing_base" != main || "$existing_head" != "$branch" ]]; then
+            if [[ "$existing_base" != main || "$existing_head" != "$branch" \
+                || "$(jq -r '.[0].isCrossRepository' <<< "$existing_prs")" != false ]]; then
               echo "::error::TAP009 existing PR for ${branch} does not target main"
               exit 1
             fi
@@ -652,6 +653,9 @@ jobs:
               --jq .content | base64 --decode > "$existing_formula"
             python3 "$helper" validate --formula "$existing_formula" \
               --tag "$TAG" --version "$VERSION" --x86-sha "$x64" --arm-sha "$arm"
+            # Matching fields alone do not rule out additional Ruby code.
+            # A retry may reuse only the exact candidate this run generated.
+            cmp -- "$existing_formula" Formula/snapdog-update.rb
             echo "reusing verified existing pull request ${existing_pr}"
             echo "pr=$existing_pr" >&3
             echo "head=$existing_oid" >&3

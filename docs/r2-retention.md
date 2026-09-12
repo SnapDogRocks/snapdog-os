@@ -17,3 +17,13 @@ runs apply the policy; manual runs are dry by default. Set the manual `apply`
 input only after reviewing its dry-run output. R2 lifecycle rules should remain
 limited to incomplete multipart uploads because lifecycle expiration cannot
 understand release aliases, manifests, catalogs, or pinned versions.
+
+Immediately before retention, the workflow verifies its lock owner and renews
+the shared lease for two hours. The entire renewal/retention step has a 30-minute
+timeout, leaving ample lease lifetime for runner termination and cleanup. A
+failed renewal prevents retention from starting; the final lock release runs
+even after failure. Never increase this timeout to approach or exceed the lease
+lifetime without adding an ownership-preserving renewal mechanism.
+
+The reported retirement candidate size is not reclaimed storage. Count only
+confirmed payload deletions after the cache lifetime and download grace period.

@@ -6,6 +6,7 @@ The managed workflow ID is repository-specific and intentionally explicit.
 """
 
 import argparse
+from datetime import datetime
 import json
 import subprocess
 import time
@@ -35,7 +36,16 @@ def coverage_complete(run, jobs, checks, sha):
               and check.get("app", {}).get("id") == 57789
               and check.get("head_sha") == sha]
     latest = max(codeql, key=lambda check: check["id"], default=None)
-    return bool(latest and latest.get("conclusion") == "success")
+    if not latest or latest.get("conclusion") != "success":
+        return False
+    # A result from an earlier attempt at the same SHA is not qualification
+    # for the latest attempt. CodeQL may update an existing check in place.
+    try:
+        completed = datetime.fromisoformat(latest["completed_at"].replace("Z", "+00:00"))
+        started = datetime.fromisoformat(run["run_started_at"].replace("Z", "+00:00"))
+        return completed >= started
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 def main():

@@ -12,11 +12,13 @@ SPEC.loader.exec_module(GATE)
 class CodeqlCoverageTests(unittest.TestCase):
     def setUp(self):
         self.sha = "a" * 40
-        self.run = {"head_sha": self.sha, "status": "completed", "conclusion": "success"}
+        self.run = {"head_sha": self.sha, "status": "completed", "conclusion": "success",
+                    "run_started_at": "2026-09-12T12:00:00Z"}
         self.jobs = [{"name": f"Analyze ({lang})", "conclusion": "success"}
                      for lang in GATE.LANGUAGES]
         self.checks = [{"id": 1, "name": "CodeQL", "app": {"id": 57789},
-                        "head_sha": self.sha, "conclusion": "success"}]
+                        "head_sha": self.sha, "conclusion": "success",
+                        "completed_at": "2026-09-12T12:01:00Z"}]
 
     def complete(self):
         return GATE.coverage_complete(self.run, self.jobs, self.checks, self.sha)
@@ -46,6 +48,12 @@ class CodeqlCoverageTests(unittest.TestCase):
     def test_missing_or_spoofed_result_does_not_pass(self):
         self.checks[0]["app"]["id"] = 15368
         self.assertFalse(self.complete())
+
+    def test_result_from_previous_attempt_does_not_pass(self):
+        self.run["run_started_at"] = "2026-09-12T13:00:00Z"
+        self.assertFalse(self.complete())
+        self.checks[0]["completed_at"] = "2026-09-12T13:01:00Z"
+        self.assertTrue(self.complete())
         self.checks = []
         self.assertFalse(self.complete())
 

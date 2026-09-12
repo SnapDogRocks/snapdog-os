@@ -7,25 +7,50 @@ The managed workflow ID is repository-specific and intentionally explicit.
 
 import argparse
 from datetime import datetime
+import http.client
 import json
-import shutil
-import subprocess  # nosec B404 - fixed gh executable/argv; no shell is used.
+import os
+import re
 import time
+from urllib.parse import urlsplit
 
 
 LANGUAGES = ("actions", "c-cpp", "javascript-typescript", "python", "rust")
 
 
+def next_page(link):
+    match = re.search(r'<([^>]+)>;\s*rel="next"', link)
+    if not match:
+        return None
+    url = urlsplit(match[1])
+    if url.scheme != "https" or url.netloc != "api.github.com":
+        raise ValueError("Refusing pagination outside the GitHub API")
+    return url.path + ("?" + url.query if url.query else "")
+
+
 def api(path):
-    executable = shutil.which("gh")
-    if executable is None:
-        raise RuntimeError("GitHub CLI is required")
-    # The endpoint is one argv item, never shell code or an executable name.
-    result = subprocess.run(  # nosec B603 - fixed executable and options, shell=False.
-        [executable, "api", "--hostname", "github.com", "--paginate", "--slurp", path],
-        check=True, capture_output=True, text=True, timeout=60,
-    )
-    return json.loads(result.stdout)
+    token = os.environ.get("GH_TOKEN")
+    if not token:
+        raise RuntimeError("A read-only GH_TOKEN is required")
+    pages = []
+    path = "/" + path
+    while path:
+        connection = http.client.HTTPSConnection("api.github.com", timeout=60)
+        try:
+            connection.request("GET", path, headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "User-Agent": "snapdog-codeql-coverage",
+            })
+            response = connection.getresponse()
+            if response.status != 200:
+                raise RuntimeError(f"GitHub read failed with HTTP {response.status}")
+            pages.append(json.loads(response.read()))
+            path = next_page(response.getheader("Link", ""))
+        finally:
+            connection.close()
+    return pages
 
 
 def coverage_complete(run, jobs, checks, sha):

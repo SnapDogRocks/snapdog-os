@@ -10,6 +10,17 @@ SPEC.loader.exec_module(GATE)
 
 
 class CodeqlCoverageTests(unittest.TestCase):
+    def test_pagination_stays_on_the_authenticated_github_origin(self):
+        self.assertEqual(
+            GATE.next_page('<https://api.github.com/repos/o/r/checks?page=2>; rel="next"'),
+            "/repos/o/r/checks?page=2",
+        )
+        self.assertIsNone(GATE.next_page(""))
+        for url in ("https://evil.example/checks", "http://api.github.com/checks",
+                    "https://api.github.com@evil.example/checks"):
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                GATE.next_page(f'<{url}>; rel="next"')
+
     def setUp(self):
         self.sha = "a" * 40
         self.run = {"head_sha": self.sha, "status": "completed", "conclusion": "success",

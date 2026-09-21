@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.5](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.14.4...snapdog-ctrl-v0.14.5) (2026-09-21)
+
+
+### Bug Fixes
+
+* **deps:** qualify dependency updates and patch rustls ([#192](https://github.com/SnapDogRocks/snapdog-os/issues/192)) ([d63504e](https://github.com/SnapDogRocks/snapdog-os/commit/d63504e5c5d7ac4c2a80525c90575c567155fd97))
+
 ## [0.14.4](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.14.3...snapdog-ctrl-v0.14.4) (2026-09-12)
 
 

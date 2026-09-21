@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.9](https://github.com/SnapDogRocks/snapdog-os/compare/v0.16.8...v0.16.9) (2026-09-21)
+
+
+### Bug Fixes
+
+* **deps:** qualify dependency updates and patch rustls ([#192](https://github.com/SnapDogRocks/snapdog-os/issues/192)) ([d63504e](https://github.com/SnapDogRocks/snapdog-os/commit/d63504e5c5d7ac4c2a80525c90575c567155fd97))
+
 ## [0.16.8](https://github.com/SnapDogRocks/snapdog-os/compare/v0.16.7...v0.16.8) (2026-09-12)
 
 

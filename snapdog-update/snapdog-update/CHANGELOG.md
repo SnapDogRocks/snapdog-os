@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.4](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-update-v0.4.3...snapdog-update-v0.4.4) (2026-10-24)
+
+
+### Bug Fixes
+
+* **deps:** move snapdog-ctrl to zbus 6 (RUSTSEC-2026-0370 to 0372) ([af9ba6c](https://github.com/SnapDogRocks/snapdog-os/commit/af9ba6c40eddca43e370c393bde28bf6ded6a07f))
+* **deps:** update the Rust dependencies of snapdog-ctrl and snapdog-update ([af9ba6c](https://github.com/SnapDogRocks/snapdog-os/commit/af9ba6c40eddca43e370c393bde28bf6ded6a07f))
+* **deps:** update the WebUI dependencies and resolve the audit findings ([af9ba6c](https://github.com/SnapDogRocks/snapdog-os/commit/af9ba6c40eddca43e370c393bde28bf6ded6a07f))
+
 ## [0.4.3](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-update-v0.4.2...snapdog-update-v0.4.3) (2026-09-21)
 
 

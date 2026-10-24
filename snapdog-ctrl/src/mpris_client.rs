@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 use tokio::sync::{Mutex, broadcast};
-use zbus::zvariant::Value;
+use zbus::Variant;
 
 const BUS_NAME: &str = "org.mpris.MediaPlayer2.snapdog_client";
 const OBJECT_PATH: &str = "/org/mpris/MediaPlayer2";
@@ -59,8 +59,8 @@ async fn poll_loop(
 ) -> anyhow::Result<()> {
     let conn = zbus::Connection::system().await?;
     let proxy = zbus::fdo::PropertiesProxy::builder(&conn)
-        .destination(BUS_NAME)?
-        .path(OBJECT_PATH)?
+        .destination(BUS_NAME)
+        .path(OBJECT_PATH)
         .build()
         .await?;
 
@@ -81,7 +81,7 @@ async fn poll_loop(
     }
 }
 
-fn parse_props(props: &HashMap<String, zbus::zvariant::OwnedValue>) -> NowPlaying {
+fn parse_props(props: &HashMap<String, zbus::OwnedVariant>) -> NowPlaying {
     let playing = props
         .get("PlaybackStatus")
         .and_then(|v| <&str>::try_from(v).ok())
@@ -117,7 +117,7 @@ fn parse_props(props: &HashMap<String, zbus::zvariant::OwnedValue>) -> NowPlayin
 
     let metadata = props
         .get("Metadata")
-        .and_then(|v| HashMap::<String, Value<'static>>::try_from(Value::from(v.clone())).ok());
+        .and_then(|v| HashMap::<String, Variant<'static>>::try_from(Variant::from(v.clone())).ok());
 
     let (title, artist, album, cover_url, duration_ms) = metadata.map_or_else(
         || (String::new(), String::new(), String::new(), None, 0),
@@ -131,7 +131,7 @@ fn parse_props(props: &HashMap<String, zbus::zvariant::OwnedValue>) -> NowPlayin
                 .get("xesam:artist")
                 .and_then(|v| {
                     // MPRIS2 spec: xesam:artist is Vec<String>
-                    zbus::zvariant::Array::try_from(v.clone())
+                    zbus::Array::try_from(v.clone())
                         .ok()
                         .and_then(|arr| {
                             arr.inner()
@@ -178,9 +178,9 @@ fn parse_props(props: &HashMap<String, zbus::zvariant::OwnedValue>) -> NowPlayin
 pub async fn send_command(command: &str) -> anyhow::Result<()> {
     let conn = zbus::Connection::system().await?;
     let proxy: zbus::Proxy<'_> = zbus::proxy::Builder::new(&conn)
-        .destination(BUS_NAME)?
-        .path(OBJECT_PATH)?
-        .interface(PLAYER_IFACE)?
+        .destination(BUS_NAME)
+        .path(OBJECT_PATH)
+        .interface(PLAYER_IFACE)
         .build()
         .await?;
 
@@ -200,12 +200,12 @@ pub async fn send_command(command: &str) -> anyhow::Result<()> {
 pub async fn set_volume(volume: f64) -> anyhow::Result<()> {
     let conn = zbus::Connection::system().await?;
     let proxy = zbus::fdo::PropertiesProxy::builder(&conn)
-        .destination(BUS_NAME)?
-        .path(OBJECT_PATH)?
+        .destination(BUS_NAME)
+        .path(OBJECT_PATH)
         .build()
         .await?;
     proxy
-        .set(PLAYER_IFACE.try_into()?, "Volume", Value::from(volume))
+        .set(PLAYER_IFACE.try_into()?, "Volume", &Variant::from(volume))
         .await?;
     Ok(())
 }
@@ -214,9 +214,9 @@ pub async fn set_volume(volume: f64) -> anyhow::Result<()> {
 pub async fn seek(offset_us: i64) -> anyhow::Result<()> {
     let conn = zbus::Connection::system().await?;
     let proxy: zbus::Proxy<'_> = zbus::proxy::Builder::new(&conn)
-        .destination(BUS_NAME)?
-        .path(OBJECT_PATH)?
-        .interface(PLAYER_IFACE)?
+        .destination(BUS_NAME)
+        .path(OBJECT_PATH)
+        .interface(PLAYER_IFACE)
         .build()
         .await?;
     proxy.call_noreply("Seek", &(offset_us,)).await?;
@@ -227,17 +227,20 @@ pub async fn seek(offset_us: i64) -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use zbus::zvariant::OwnedValue;
+    use zbus::OwnedVariant;
 
     #[test]
     fn test_parse_props_basic() {
         let mut props = HashMap::new();
-        props.insert("PlaybackStatus".to_string(), OwnedValue::from("Playing"));
-        props.insert("Volume".to_string(), OwnedValue::from(0.8));
-        props.insert("Position".to_string(), OwnedValue::from(15000000i64));
-        props.insert("CanSeek".to_string(), OwnedValue::from(true));
-        props.insert("CanGoNext".to_string(), OwnedValue::from(true));
-        props.insert("CanGoPrevious".to_string(), OwnedValue::from(false));
+        props.insert(
+            "PlaybackStatus".to_string(),
+            Variant::from("Playing").try_into_owned().unwrap(),
+        );
+        props.insert("Volume".to_string(), OwnedVariant::from(0.8));
+        props.insert("Position".to_string(), OwnedVariant::from(15_000_000_i64));
+        props.insert("CanSeek".to_string(), OwnedVariant::from(true));
+        props.insert("CanGoNext".to_string(), OwnedVariant::from(true));
+        props.insert("CanGoPrevious".to_string(), OwnedVariant::from(false));
 
         let now_playing = parse_props(&props);
         assert!(now_playing.playing);

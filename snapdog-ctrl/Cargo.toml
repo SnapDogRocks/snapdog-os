@@ -65,7 +65,7 @@ tar = "0.4"
 flate2 = "1"
 
 # D-Bus (RAUC OTA)
-zbus = "5.16.0"
+zbus = { version = "6.1.0", default-features = false, features = ["tokio", "proxy", "tracing"] }
 
 [lints.rust]
 unsafe_code = "forbid"

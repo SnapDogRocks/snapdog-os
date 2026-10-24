@@ -15,6 +15,9 @@ path = "src/main.rs"
 default = ["mdns-astro"]
 mdns-astro = ["dep:astro-dnssd"]
 mdns-sd = ["dep:mdns-sd"]
+# Serve canned data instead of touching the device (network, RAUC, systemd,
+# D-Bus), for web UI development on any machine: `cargo run --features mock`.
+mock = []
 
 [dependencies]
 # Async runtime

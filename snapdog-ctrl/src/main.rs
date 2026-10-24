@@ -2,26 +2,26 @@
 // Copyright (C) 2026 Fabian Schmieder
 
 mod auth;
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "mock"))]
 mod auto_update;
-#[cfg_attr(debug_assertions, allow(dead_code))]
+#[cfg_attr(feature = "mock", allow(dead_code))]
 mod captive_dns;
 mod config_txt;
 mod mdns;
-#[cfg(debug_assertions)]
+#[cfg(feature = "mock")]
 mod mock;
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "mock"))]
 mod mpris_client;
-#[cfg_attr(debug_assertions, allow(dead_code))]
+#[cfg_attr(feature = "mock", allow(dead_code))]
 mod network;
 mod rauc;
-#[cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
+#[cfg_attr(feature = "mock", allow(dead_code, unused_imports))]
 mod routes;
-#[cfg_attr(debug_assertions, allow(dead_code))]
+#[cfg_attr(feature = "mock", allow(dead_code))]
 mod schedule;
 mod server_config;
 mod settings;
-#[cfg_attr(debug_assertions, allow(dead_code))]
+#[cfg_attr(feature = "mock", allow(dead_code))]
 mod system;
 mod tuning;
 mod update;
@@ -95,10 +95,10 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "mock")]
 async fn build_app() -> Router {
     let mock = mock::MockState::new();
-    tracing::info!("🔶 Running in MOCK mode (debug build)");
+    tracing::info!("🔶 Running in MOCK mode (mock feature)");
 
     let auth_state = auth::AuthState::load().await;
     let health_state = routes::HealthState(std::sync::Arc::new(vec![]));
@@ -124,7 +124,7 @@ async fn build_app() -> Router {
         .layer(TraceLayer::new_for_http())
 }
 
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "mock"))]
 async fn build_app() -> Router {
     tokio::spawn(manage_setup_ap());
 
@@ -186,7 +186,7 @@ async fn build_app() -> Router {
 
 /// Start the setup AP only if no network interface is configured, and close it
 /// again once the device has real connectivity.
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "mock"))]
 async fn manage_setup_ap() {
     // Ensure ethernet has a network config (write DHCP default if missing)
     if tokio::fs::metadata(network::ETH_NETWORK_PATH)
@@ -251,7 +251,7 @@ async fn manage_setup_ap() {
 /// One-time startup migrations and the services of a healthy device. Returns
 /// `false` when a reboot was accepted, so the caller serves nothing while the
 /// process stops.
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "mock"))]
 async fn start_device_services() -> bool {
     // Migrate devices flashed before the HAT-EEPROM fix. OTA can't rewrite the
     // shared /boot partition, so a stale config.txt may still carry
@@ -301,7 +301,7 @@ async fn start_device_services() -> bool {
 /// Controller restarts do not stop the separate RAUC service. One-time startup
 /// migrations must therefore defer their reboot if a recovered install is still
 /// writing, or if that state cannot be checked authoritatively.
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "mock"))]
 async fn request_safe_startup_reboot(reason: &str) -> bool {
     match system::rauc_operation().await {
         Ok(operation) if operation == "idle" => match system::reboot().await {

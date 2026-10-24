@@ -196,9 +196,14 @@ the Advanced TOML view.
 
 ```bash
 cd snapdog-ctrl
-SNAPDOG_SETUP_PORT=8080 cargo run
-# → http://localhost:80 (mock mode, all APIs functional)
+SNAPDOG_SETUP_PORT=8080 cargo run --features mock
+# → http://localhost:8080 (mock mode, all APIs functional)
 ```
+
+The `mock` feature serves canned data instead of touching the network,
+RAUC, systemd and D-Bus, so the web UI runs on any machine. Without it,
+`cargo run` starts the device code, which expects SnapDog OS. CI lints and
+tests both variants.
 
 ## DAC Support
 

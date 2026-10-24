@@ -302,7 +302,7 @@ pub fn captive_portal_routes() -> Router {
         .route("/ncsi.txt", get(redirect_to_setup)) // Windows NCSI
 }
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "mock")]
 mod mock_handlers {
     use axum::{
         Extension, Json,
@@ -644,7 +644,7 @@ mod mock_handlers {
     }
 }
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "mock")]
 pub fn api_mock(state: crate::mock::MockState) -> Router {
     use mock_handlers as h;
 
@@ -1760,7 +1760,7 @@ async fn post_settings_import(body: axum::body::Bytes) -> impl IntoResponse {
 
 // ── Now Playing ───────────────────────────────────────────────
 
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "mock"))]
 async fn get_now_playing(
     Extension(state): Extension<crate::mpris_client::SharedNowPlaying>,
 ) -> impl IntoResponse {
@@ -1768,7 +1768,7 @@ async fn get_now_playing(
     Json(serde_json::to_value(&*np).unwrap_or_default())
 }
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "mock")]
 async fn get_now_playing() -> impl IntoResponse {
     Json(serde_json::json!({
         "playing": false,
@@ -1786,7 +1786,7 @@ async fn get_now_playing() -> impl IntoResponse {
     }))
 }
 
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "mock"))]
 async fn post_now_playing_command(Json(body): Json<serde_json::Value>) -> StatusCode {
     let cmd = body.get("command").and_then(|v| v.as_str()).unwrap_or("");
     match crate::mpris_client::send_command(cmd).await {
@@ -1798,12 +1798,12 @@ async fn post_now_playing_command(Json(body): Json<serde_json::Value>) -> Status
     }
 }
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "mock")]
 async fn post_now_playing_command() -> StatusCode {
     StatusCode::OK
 }
 
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "mock"))]
 async fn put_now_playing_volume(Json(body): Json<serde_json::Value>) -> StatusCode {
     let vol = body
         .get("volume")
@@ -1818,12 +1818,12 @@ async fn put_now_playing_volume(Json(body): Json<serde_json::Value>) -> StatusCo
     }
 }
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "mock")]
 async fn put_now_playing_volume() -> StatusCode {
     StatusCode::OK
 }
 
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "mock"))]
 async fn post_now_playing_seek(Json(body): Json<serde_json::Value>) -> StatusCode {
     let offset_ms = body
         .get("offset_ms")
@@ -1838,7 +1838,7 @@ async fn post_now_playing_seek(Json(body): Json<serde_json::Value>) -> StatusCod
     }
 }
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "mock")]
 async fn post_now_playing_seek() -> StatusCode {
     StatusCode::OK
 }

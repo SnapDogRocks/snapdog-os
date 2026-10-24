@@ -42,4 +42,11 @@ require_line Makefile "tag $buildroot_version"
 require_line dev/docker-compose.yml "--branch $buildroot_version"
 require_line dev/docker-compose.yml "tag $buildroot_version"
 
-echo "Version pins consistent: Node $node_version, pnpm $pnpm_version, Rust $rust_version, Buildroot $buildroot_version"
+# The dev image reproduces the host that builds the release images, so both use
+# the same Ubuntu release. Jobs that only publish may run on ubuntu-latest.
+ubuntu_release=$(sed -n 's/^    runs-on: ubuntu-\([0-9][0-9]\.[0-9][0-9]\)$/\1/p' .github/workflows/release.yml | sort -u)
+[ -n "$ubuntu_release" ] || fail "could not read a pinned Ubuntu runner from release workflow"
+[ "$(printf '%s\n' "$ubuntu_release" | grep -c .)" = 1 ] || fail "release workflow pins more than one Ubuntu release: $(printf '%s' "$ubuntu_release" | tr '\n' ' ')"
+require_line dev/Dockerfile "FROM ubuntu:$ubuntu_release"
+
+echo "Version pins consistent: Node $node_version, pnpm $pnpm_version, Rust $rust_version, Buildroot $buildroot_version, Ubuntu $ubuntu_release"

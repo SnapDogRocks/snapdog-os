@@ -108,3 +108,9 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - dependencies
+    # The dev image reproduces the release build host, so its Ubuntu release
+    # follows the release runners (runs-on: ubuntu-24.04), not the newest image.
+    # scripts/check-version-pins.sh enforces the match.
+    ignore:
+      - dependency-name: "ubuntu"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]

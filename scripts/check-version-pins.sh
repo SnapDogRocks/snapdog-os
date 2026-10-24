@@ -17,6 +17,12 @@ require_line dev/Dockerfile "ARG NODE_VERSION=$node_version"
 require_line .github/workflows/ci.yml "NODE_VERSION: \"$node_version\""
 require_line .github/workflows/release.yml "NODE_VERSION: \"$node_version\""
 
+# packageManager in the WebUI's package.json is the only source of the pnpm
+# version: pnpm/action-setup reads it in CI and the release, the dev image pins it.
+pnpm_version=$(sed -n 's/^  "packageManager": "pnpm@\([^"]*\)",$/\1/p' snapdog-ctrl/webui/package.json)
+[ -n "$pnpm_version" ] || fail "could not read packageManager from snapdog-ctrl/webui/package.json"
+require_line dev/Dockerfile "ARG PNPM_VERSION=$pnpm_version"
+
 # rust-toolchain.toml is the only source of the Rust version: CI and the release
 # builds install it, the dev image pins the same one, and nothing else names one.
 rust_version=$(sed -n 's/^channel = "\([^"]*\)"$/\1/p' rust-toolchain.toml)
@@ -36,4 +42,4 @@ require_line Makefile "tag $buildroot_version"
 require_line dev/docker-compose.yml "--branch $buildroot_version"
 require_line dev/docker-compose.yml "tag $buildroot_version"
 
-echo "Version pins consistent: Node $node_version, Rust $rust_version, Buildroot $buildroot_version"
+echo "Version pins consistent: Node $node_version, pnpm $pnpm_version, Rust $rust_version, Buildroot $buildroot_version"

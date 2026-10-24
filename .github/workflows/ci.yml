@@ -52,23 +52,27 @@ jobs:
         # Version, components and profile come from rust-toolchain.toml.
         run: rustup toolchain install
 
+      # pnpm/action-setup reads the pnpm version from packageManager.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: snapdog-ctrl/webui/package.json
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: snapdog-ctrl/webui/package-lock.json
+          cache: pnpm
+          cache-dependency-path: snapdog-ctrl/webui/pnpm-lock.yaml
 
       - name: Install webui deps
-        run: cd snapdog-ctrl/webui && npm ci --prefer-offline
+        run: cd snapdog-ctrl/webui && pnpm install --frozen-lockfile --prefer-offline
 
       - name: Verify committed dependency files are unchanged
-        run: git diff --exit-code -- snapdog-ctrl/webui/package.json snapdog-ctrl/webui/package-lock.json
+        run: git diff --exit-code -- snapdog-ctrl/webui/package.json snapdog-ctrl/webui/pnpm-lock.yaml snapdog-ctrl/webui/pnpm-workspace.yaml
 
       - name: WebUI i18n completeness
-        run: cd snapdog-ctrl/webui && npm run i18n:check
+        run: cd snapdog-ctrl/webui && pnpm run i18n:check
 
       - name: Lint webui
-        run: cd snapdog-ctrl/webui && npm run lint
+        run: cd snapdog-ctrl/webui && pnpm run lint
 
       - name: Format (snapdog-ctrl)
         run: cd snapdog-ctrl && cargo fmt --check
@@ -117,19 +121,24 @@ jobs:
         if: ${{ !cancelled() }}
         run: cargo audit --file snapdog-update/Cargo.lock --deny warnings
 
+      # pnpm/action-setup reads the pnpm version from packageManager.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: ${{ !cancelled() }}
+        with:
+          package_json_file: snapdog-ctrl/webui/package.json
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: ${{ !cancelled() }}
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: snapdog-ctrl/webui/package-lock.json
+          cache: pnpm
+          cache-dependency-path: snapdog-ctrl/webui/pnpm-lock.yaml
 
       - name: Audit webui dependencies
         if: ${{ !cancelled() }}
         working-directory: snapdog-ctrl/webui
         run: |
-          npm audit --omit=dev --audit-level=high
-          npm audit --audit-level=high
+          pnpm audit --prod --audit-level high
+          pnpm audit --audit-level high
 
   cross-compile:
     name: Cross-compile (aarch64)
@@ -146,11 +155,15 @@ jobs:
           rustup toolchain install
           rustup target add aarch64-unknown-linux-gnu
 
+      # pnpm/action-setup reads the pnpm version from packageManager.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: snapdog-ctrl/webui/package.json
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: snapdog-ctrl/webui/package-lock.json
+          cache: pnpm
+          cache-dependency-path: snapdog-ctrl/webui/pnpm-lock.yaml
 
       - name: Install linker
         run: |
@@ -170,7 +183,7 @@ jobs:
           PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
           PKG_CONFIG_SYSROOT_DIR: /usr/aarch64-linux-gnu
         run: |
-          cd snapdog-ctrl/webui && npm ci --prefer-offline && npm run build && cd ../..
+          cd snapdog-ctrl/webui && pnpm install --frozen-lockfile --prefer-offline && pnpm run build && cd ../..
           cd snapdog-ctrl && cargo build --locked --release --target aarch64-unknown-linux-gnu
 
       - name: Verify binary

@@ -1,0 +1,14 @@
+# Install scripts that may run; any other package with one fails the install
+# instead of being skipped with a warning. npm ran these three too, and
+# snapdog's web UI allows the same ones.
+strictDepBuilds: true
+allowBuilds:
+  '@parcel/watcher': true
+  '@swc/core': true
+  unrs-resolver: true
+
+# pnpm reads overrides from here; an npm-style "overrides" block in
+# package.json is ignored.
+overrides:
+  postcss: ^8.5.18
+  sharp: ^0.35.4

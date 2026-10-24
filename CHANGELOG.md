@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.11](https://github.com/SnapDogRocks/snapdog-os/compare/v0.16.10...v0.16.11) (2026-10-24)
+
+
+### Bug Fixes
+
+* **buildroot:** install D-Bus policies for the SnapDog MPRIS2 names ([#218](https://github.com/SnapDogRocks/snapdog-os/issues/218)) ([c0300a3](https://github.com/SnapDogRocks/snapdog-os/commit/c0300a3dbb3443fe0aeb6a23ceb7542536e519e2))
+
 ## [0.16.10](https://github.com/SnapDogRocks/snapdog-os/compare/v0.16.9...v0.16.10) (2026-10-24)
 
 

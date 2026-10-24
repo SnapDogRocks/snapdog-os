@@ -42,19 +42,19 @@ fn main() {
 
     // Install deps if needed
     if !webui_dir.join("node_modules").exists() {
-        let status = Command::new("npm")
-            .args(["ci", "--prefer-offline"])
+        let status = Command::new("pnpm")
+            .args(["install", "--frozen-lockfile", "--prefer-offline"])
             .current_dir(webui_dir)
             .status()
-            .expect("failed to run npm ci — is Node.js installed?");
-        assert!(status.success(), "npm ci failed");
+            .expect("failed to run pnpm install — are Node.js and pnpm installed?");
+        assert!(status.success(), "pnpm install failed");
     }
 
     // Build static export
-    let status = Command::new("npm")
+    let status = Command::new("pnpm")
         .args(["run", "build"])
         .current_dir(webui_dir)
         .status()
-        .expect("failed to run npm run build");
+        .expect("failed to run pnpm run build");
     assert!(status.success(), "webui build failed");
 }

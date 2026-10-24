@@ -8,5 +8,5 @@ fi
 
 # TypeScript: build check
 if git diff --name-only @{push}.. 2>/dev/null | grep -q 'snapdog-ctrl/webui/'; then
-  cd snapdog-ctrl/webui && npm run build && cd ../..
+  cd snapdog-ctrl/webui && pnpm run build && cd ../..
 fi

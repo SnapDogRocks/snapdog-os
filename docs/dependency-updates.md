@@ -9,21 +9,27 @@ Do not bypass a failing audit to merge a Dependabot update.
 From `snapdog-ctrl/webui`:
 
 ```sh
-npm ci --prefer-offline
-npm audit --omit=dev --audit-level=high
-npm audit --audit-level=high
-npm run lint
-npm run build
-npm run typecheck
-git diff --exit-code -- package.json package-lock.json
+pnpm install --frozen-lockfile --prefer-offline
+pnpm audit --prod --audit-level high
+pnpm audit --audit-level high
+pnpm run lint
+pnpm run build
+pnpm run typecheck
+git diff --exit-code -- package.json pnpm-lock.yaml pnpm-workspace.yaml
 ```
 
-CI uses the Node version pinned in `.github/workflows/ci.yml`. Both CI and release
-builds use `npm ci`, so an inconsistent lockfile fails instead of being silently
-repaired by `npm install`. When intentionally updating dependencies, regenerate
-the lockfile, inspect all changed package versions and integrity values, then
-repeat the checks above. Platform-specific optional packages must remain in the
-lockfile for Linux ARM64 and the other build hosts.
+CI uses the Node version pinned in `.github/workflows/ci.yml` and the pnpm version
+from `packageManager` in `package.json`. Both CI and release builds install with
+`--frozen-lockfile`, so an inconsistent lockfile fails instead of being silently
+repaired. When intentionally updating dependencies, regenerate the lockfile,
+inspect all changed package versions and integrity values, then repeat the checks
+above. Platform-specific optional packages must remain in the lockfile for Linux
+ARM64 and the other build hosts.
+
+Dependency overrides and the packages allowed to run install scripts live in
+`pnpm-workspace.yaml`. pnpm ignores an npm-style `overrides` block in
+`package.json`, and it refuses to install while a package with an unapproved
+install script is present.
 
 The WebUI is a static export embedded in Rust, with Next image optimization
 disabled. Server-only advisories do not by themselves establish a deployed

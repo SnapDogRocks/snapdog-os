@@ -25,7 +25,7 @@ services:
         /build/snapdog-os/buildroot/scripts/patch-buildroot /build/buildroot
 
         echo '── Build snapdog-ctrl ──'
-        cd /build/snapdog-os/snapdog-ctrl/webui && npm ci --prefer-offline && npm run build
+        cd /build/snapdog-os/snapdog-ctrl/webui && pnpm install --frozen-lockfile --prefer-offline && pnpm run build
         cd /build/snapdog-os/snapdog-ctrl && cargo build --locked --release --target aarch64-unknown-linux-gnu
         cp target/aarch64-unknown-linux-gnu/release/snapdog-ctrl /build/snapdog-os/snapdog-ctrl-binary
 

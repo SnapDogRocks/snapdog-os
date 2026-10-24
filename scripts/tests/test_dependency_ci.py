@@ -11,12 +11,14 @@ ROOT = Path(__file__).resolve().parents[2]
 class DependencyCiTests(unittest.TestCase):
     def test_ci_installs_the_committed_webui_lockfile(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
-        self.assertNotRegex(workflow, r"\bnpm install\b")
+        self.assertNotRegex(workflow, r"\b(npm|npx)\b")
         # Lint & Test and the aarch64 cross-compile build the embedded WebUI.
-        self.assertEqual(workflow.count("npm ci --prefer-offline"), 2)
+        self.assertEqual(
+            workflow.count("pnpm install --frozen-lockfile --prefer-offline"), 2
+        )
         self.assertIn(
             "git diff --exit-code -- snapdog-ctrl/webui/package.json "
-            "snapdog-ctrl/webui/package-lock.json",
+            "snapdog-ctrl/webui/pnpm-lock.yaml snapdog-ctrl/webui/pnpm-workspace.yaml",
             workflow,
         )
 
@@ -32,8 +34,8 @@ class DependencyCiTests(unittest.TestCase):
         self.assertRegex(audit, r"cargo install cargo-audit --version \d+\.\d+\.\d+ --locked")
         for crate in ("snapdog-ctrl", "snapdog-update"):
             self.assertIn(f"cargo audit --file {crate}/Cargo.lock --deny warnings", audit)
-        self.assertIn("npm audit --omit=dev --audit-level=high", audit)
-        self.assertIn("npm audit --audit-level=high", audit)
+        self.assertIn("pnpm audit --prod --audit-level high", audit)
+        self.assertIn("pnpm audit --audit-level high", audit)
 
     def test_ci_actions_are_immutable(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()

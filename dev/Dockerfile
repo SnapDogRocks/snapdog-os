@@ -20,6 +20,12 @@ RUN arch="$(dpkg --print-architecture | sed 's/amd64/x64/;s/arm64/arm64/')" \
     && tar -xJf "${archive}" -C /usr/local --strip-components=1 \
     && rm -f "${archive}" SHASUMS256.txt
 
+# pnpm — the version from snapdog-ctrl/webui/package.json's packageManager (kept in
+# lockstep by scripts/check-version-pins.sh). Installed with npm, not corepack,
+# which Node 25 and later no longer ship.
+ARG PNPM_VERSION=11.28.8
+RUN npm install -g "pnpm@${PNPM_VERSION}"
+
 # Rust — the version from rust-toolchain.toml, checksum-verified (kept in lockstep
 # with that file by scripts/check-version-pins.sh).
 ARG RUST_VERSION=1.99.1

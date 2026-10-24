@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Require successful managed CodeQL analysis for every configured language.
+"""Require successful CodeQL analysis for every configured language.
 
 Only read APIs are used. Missing, neutral, skipped and stale results never pass.
-The managed workflow ID is repository-specific and intentionally explicit.
+The analysis comes from the repository's own workflow (.github/workflows/codeql.yml),
+named explicitly so that no other workflow's jobs can stand in for it.
 """
 
 import argparse
@@ -16,6 +17,13 @@ from urllib.parse import urlsplit
 
 
 LANGUAGES = ("actions", "c-cpp", "javascript-typescript", "python", "rust")
+
+
+def workflow_name(value):
+    """A workflow file name or numeric ID; nothing that could leave the API path."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]+\.ya?ml|[0-9]+", value):
+        raise argparse.ArgumentTypeError(f"not a workflow file name or ID: {value!r}")
+    return value
 
 
 def next_page(link):
@@ -82,12 +90,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", required=True)
     parser.add_argument("--sha", required=True)
-    parser.add_argument("--workflow-id", required=True, type=int)
+    parser.add_argument("--workflow", required=True, type=workflow_name)
     parser.add_argument("--timeout", default=1200, type=int)
     args = parser.parse_args()
     deadline = time.monotonic() + args.timeout
     while True:
-        pages = api(f"repos/{args.repo}/actions/workflows/{args.workflow_id}/runs"
+        pages = api(f"repos/{args.repo}/actions/workflows/{args.workflow}/runs"
                     f"?head_sha={args.sha}&per_page=100")
         runs = [run for page in pages for run in page["workflow_runs"]]
         run = max(runs, key=lambda item: item["id"], default=None)

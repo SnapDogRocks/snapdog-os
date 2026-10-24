@@ -1,0 +1,53 @@
+name: CodeQL
+
+# Advanced setup in place of GitHub's managed default setup. The managed
+# workflow never ran for pushes by dependabot[bot], so "CodeQL Coverage" in
+# ci.yml could not qualify a single Dependabot pull request. Languages, build
+# mode, query suite and categories match the former default setup, so existing
+# alerts continue under the same configurations.
+#
+# GitHub rejects these uploads while default setup is enabled; it must stay off.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, as the default setup did, so new queries also reach unchanged code.
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: codeql-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  analyze:
+    # scripts/check_codeql_coverage.py matches these job names and the language
+    # list; change both together.
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+      # Upload. Runs triggered by Dependabot start read-only but honour this key.
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions, c-cpp, javascript-typescript, python, rust]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: /language:${{ matrix.language }}

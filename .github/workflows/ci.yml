@@ -35,7 +35,7 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           python3 scripts/check_codeql_coverage.py --repo "$GITHUB_REPOSITORY" \
-            --sha "$PR_HEAD_SHA" --workflow-id 308299760 --timeout 1200
+            --sha "$PR_HEAD_SHA" --workflow codeql.yml --timeout 1200
 
   check:
     name: Lint & Test

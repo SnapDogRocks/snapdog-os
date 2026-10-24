@@ -444,7 +444,7 @@ mod tests {
         assert_eq!(ready.phase_progress, None);
         assert_eq!(ready.bytes_done, None);
         assert_eq!(ready.bytes_total, None);
-        assert!(ready.last_error.is_empty());
+        assert_eq!(ready.last_error, "");
         assert!(ready.signature_verified);
         assert_eq!(
             serde_json::to_value(ready).expect("mock terminal status should serialize"),

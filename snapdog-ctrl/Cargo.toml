@@ -2,7 +2,6 @@
 name = "snapdog-ctrl"
 version = "0.14.5"
 edition = "2024"
-rust-version = "1.88"
 license = "GPL-3.0-only"
 repository = "https://github.com/SnapDogRocks/snapdog-os"
 authors = ["Fabian Schmieder"]
@@ -66,7 +65,7 @@ tar = "0.4"
 flate2 = "1"
 
 # D-Bus (RAUC OTA)
-zbus = "5.16.0"
+zbus = { version = "6.1.0", default-features = false, features = ["tokio", "proxy", "tracing"] }
 
 [lints.rust]
 unsafe_code = "forbid"

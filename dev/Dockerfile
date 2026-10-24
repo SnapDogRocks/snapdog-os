@@ -20,9 +20,9 @@ RUN arch="$(dpkg --print-architecture | sed 's/amd64/x64/;s/arm64/arm64/')" \
     && tar -xJf "${archive}" -C /usr/local --strip-components=1 \
     && rm -f "${archive}" SHASUMS256.txt
 
-# Rust — pinned to the project MSRV + checksum-verified (kept in lockstep with
-# CI RUST_MSRV / Cargo.toml rust-version by scripts/check-version-pins.sh).
-ARG RUST_VERSION=1.88.0
+# Rust — the version from rust-toolchain.toml, checksum-verified (kept in lockstep
+# with that file by scripts/check-version-pins.sh).
+ARG RUST_VERSION=1.99.1
 RUN case "$(dpkg --print-architecture)" in \
       amd64) rust_target=x86_64-unknown-linux-gnu ;; \
       arm64) rust_target=aarch64-unknown-linux-gnu ;; \

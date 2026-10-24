@@ -65,7 +65,9 @@ class ReleaseRoutingContractTests(unittest.TestCase):
         self.assertNotIn("workflow_dispatch:", updater_release)
         self.assertIn('if [ "$SOURCE_SHA" != "$GITHUB_SHA" ]', updater_release)
         self.assertIn('ref: ${{ needs.meta.outputs.source_sha }}', updater_release)
-        self.assertIn('RUST_TOOLCHAIN: "1.88.0"', updater_release)
+        # The toolchain comes from rust-toolchain.toml, not from the workflow.
+        self.assertNotIn("RUST_TOOLCHAIN", updater_release)
+        self.assertIn("rustup toolchain install\n", updater_release)
         self.assertIn("scripts/package_updater_release.py", updater_release)
         self.assertIn("--latest=false", updater_release)
         self.assertNotIn("--clobber", updater_release)

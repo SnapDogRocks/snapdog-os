@@ -19,12 +19,10 @@ trait RaucInstaller {
     fn install_bundle(
         &self,
         source: &str,
-        args: HashMap<String, zbus::zvariant::Value<'_>>,
+        args: HashMap<String, zbus::Variant<'_>>,
     ) -> zbus::Result<()>;
     fn mark(&self, state: &str, slot_identifier: &str) -> zbus::Result<(String, String)>;
-    fn get_slot_status(
-        &self,
-    ) -> zbus::Result<Vec<(String, HashMap<String, zbus::zvariant::OwnedValue>)>>;
+    fn get_slot_status(&self) -> zbus::Result<Vec<(String, HashMap<String, zbus::OwnedVariant>)>>;
     fn get_primary(&self) -> zbus::Result<String>;
 
     #[zbus(property)]

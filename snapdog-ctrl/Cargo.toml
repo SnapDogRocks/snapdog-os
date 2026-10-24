@@ -1,6 +1,6 @@
 [package]
 name = "snapdog-ctrl"
-version = "0.14.5"
+version = "0.14.6"
 edition = "2024"
 license = "GPL-3.0-only"
 repository = "https://github.com/SnapDogRocks/snapdog-os"

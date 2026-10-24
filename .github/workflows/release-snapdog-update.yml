@@ -13,7 +13,6 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_TOOLCHAIN: "1.88.0"
 
 jobs:
   meta:
@@ -150,8 +149,9 @@ jobs:
       - name: Install Rust toolchain
         shell: bash
         run: |
-          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target "${{ matrix.target }}"
-          rustup default "$RUST_TOOLCHAIN"
+          # Version, components and profile come from rust-toolchain.toml.
+          rustup toolchain install
+          rustup target add "${{ matrix.target }}"
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:

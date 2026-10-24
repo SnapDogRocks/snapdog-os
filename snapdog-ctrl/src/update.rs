@@ -29,9 +29,9 @@ const ONLINE_UPDATE_BUNDLE_PATH: &str = "/data/online-update.raucb";
 const ONLINE_UPDATE_BUNDLE_PART_PATH: &str = "/data/online-update.raucb.part";
 pub const MAX_BUNDLE_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_BUNDLE_BYTES_ARG: &str = "1073741824";
-const DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+const DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(30);
 const DOWNLOAD_TIMEOUT_ARG: &str = "1800";
-const INSTALL_WARNING_AFTER: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+const INSTALL_WARNING_AFTER: std::time::Duration = std::time::Duration::from_mins(30);
 const RECOVERY_MARKER_PATH: &str = "/run/snapdog-ctrl-firmware-update.json";
 const RECOVERY_MARKER_PART_PATH: &str = "/run/snapdog-ctrl-firmware-update.json.part";
 
@@ -872,7 +872,7 @@ mod tests {
 
         let interrupted = terminal_recovery_progress(&marker, "stale error", Some(false));
         assert_eq!(interrupted.phase, UpdatePhase::Failed);
-        assert!(!interrupted.last_error.is_empty());
+        assert_ne!(interrupted.last_error, "");
 
         let staged = terminal_recovery_progress(&marker, "stale error", Some(true));
         assert_eq!(staged.phase, UpdatePhase::ReadyToReboot);
@@ -880,7 +880,7 @@ mod tests {
 
         let unavailable = terminal_recovery_progress(&marker, "stale error", None);
         assert_eq!(unavailable.phase, UpdatePhase::Finalizing);
-        assert!(unavailable.last_error.is_empty());
+        assert_eq!(unavailable.last_error, "");
     }
 
     #[test]

@@ -238,7 +238,7 @@ impl UpdateClient {
         let url = format!("{}/api/system/update/upload", self.base_url);
 
         let upload_client = Client::builder()
-            .timeout(std::time::Duration::from_secs(900))
+            .timeout(std::time::Duration::from_mins(15))
             .build()?;
 
         let res = upload_client

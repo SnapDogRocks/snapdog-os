@@ -12,7 +12,8 @@ class DependencyCiTests(unittest.TestCase):
     def test_ci_installs_the_committed_webui_lockfile(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         self.assertNotRegex(workflow, r"\bnpm install\b")
-        self.assertEqual(workflow.count("npm ci --prefer-offline"), 3)
+        # Lint & Test and the aarch64 cross-compile build the embedded WebUI.
+        self.assertEqual(workflow.count("npm ci --prefer-offline"), 2)
         self.assertIn(
             "git diff --exit-code -- snapdog-ctrl/webui/package.json "
             "snapdog-ctrl/webui/package-lock.json",

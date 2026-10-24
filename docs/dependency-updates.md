@@ -42,9 +42,13 @@ actionlint
 
 Rust audits intentionally fail on unsound, unmaintained, and yanked warnings as
 well as vulnerabilities. They run directly without a token or Check API writes,
-including on Dependabot and fork PRs. Dependency fixes must also pass the Rust
-MSRV job and the Linux ARM64 cross-build; local metadata resolution is not a
-substitute for those builds.
+including on Dependabot and fork PRs. Dependency fixes must also pass the Linux
+ARM64 cross-build; local metadata resolution is not a substitute for that build.
+
+The Rust version lives in `rust-toolchain.toml` only. CI, the release builds and
+the dev image use it, and Dependabot proposes new versions in a pull request of
+their own. No crate is published to crates.io, so there is no separate minimum
+version and no `rust-version` in the manifests.
 
 ## Overlapping Dependabot PRs
 
@@ -74,7 +78,7 @@ necessary, verify its checks, then close the superseded bot PRs. See
 [GitHub's CodeQL/Dependabot guidance](https://docs.github.com/en/code-security/reference/code-scanning/troubleshoot-analysis-errors/resource-not-accessible).
 
 The default-branch ruleset requires `Lint & Test`, `Security Audit`,
-`Cross-compile (aarch64)`, `Release Sanity`, `Rust MSRV`, `CodeQL Coverage`, and
+`Cross-compile (aarch64)`, `Release Sanity`, `CodeQL Coverage`, and
 the final `CodeQL` check. This also applies to Release Please auto-merges.
 The new checks are bound to their GitHub integration IDs, not merely their names.
 

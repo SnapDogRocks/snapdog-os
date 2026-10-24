@@ -13,7 +13,6 @@ permissions:
 env:
   R2_BUCKET: snapdog-updates
   BUILDROOT_VERSION: "2025.02.16"
-  RUST_TOOLCHAIN: "1.88.0"
   NODE_VERSION: "26.5.0"
   BOTO3_VERSION: "1.43.54"
 
@@ -154,8 +153,9 @@ jobs:
 
       - name: Install Rust toolchain
         run: |
-          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target aarch64-unknown-linux-gnu
-          rustup default "$RUST_TOOLCHAIN"
+          # Version, components and profile come from rust-toolchain.toml.
+          rustup toolchain install
+          rustup target add aarch64-unknown-linux-gnu
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:

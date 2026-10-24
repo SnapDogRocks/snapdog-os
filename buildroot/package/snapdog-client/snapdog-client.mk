@@ -14,6 +14,8 @@ define SNAPDOG_CLIENT_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/usr/bin/snapdog-client
 	$(INSTALL) -D -m 0644 $(BR2_EXTERNAL_SNAPDOG_PATH)/package/snapdog-client/snapdog-client.default \
 		$(TARGET_DIR)/etc/default/snapdog-client.default
+	$(INSTALL) -D -m 0644 $(BR2_EXTERNAL_SNAPDOG_PATH)/package/snapdog-client/snapdog-client.dbus.conf \
+		$(TARGET_DIR)/usr/share/dbus-1/system.d/snapdog-client.conf
 endef
 
 define SNAPDOG_CLIENT_INSTALL_INIT_SYSTEMD

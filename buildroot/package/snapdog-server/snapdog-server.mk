@@ -18,6 +18,8 @@ define SNAPDOG_SERVER_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/etc/snapdog/snapdog.toml.default
 	$(INSTALL) -D -m 0755 $(BR2_EXTERNAL_SNAPDOG_PATH)/package/snapdog-server/snapdog-data-init \
 		$(TARGET_DIR)/usr/bin/snapdog-data-init
+	$(INSTALL) -D -m 0644 $(BR2_EXTERNAL_SNAPDOG_PATH)/package/snapdog-server/snapdog.dbus.conf \
+		$(TARGET_DIR)/usr/share/dbus-1/system.d/snapdog.conf
 endef
 
 define SNAPDOG_SERVER_INSTALL_INIT_SYSTEMD

@@ -35,7 +35,9 @@ updates:
     schedule:
       interval: daily
     target-branch: main
-    versioning-strategy: increase
+    # Cargo accepts only auto and lockfile-only; auto raises the requirement in
+    # Cargo.toml when a new version falls outside it.
+    versioning-strategy: auto
     open-pull-requests-limit: 5
     labels:
       - dependencies
@@ -56,7 +58,9 @@ updates:
     schedule:
       interval: daily
     target-branch: main
-    versioning-strategy: increase
+    # Cargo accepts only auto and lockfile-only; auto raises the requirement in
+    # Cargo.toml when a new version falls outside it.
+    versioning-strategy: auto
     open-pull-requests-limit: 5
     labels:
       - dependencies

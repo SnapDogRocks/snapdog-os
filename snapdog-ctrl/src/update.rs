@@ -239,7 +239,7 @@ pub async fn start_local(path: &'static str) -> Result<()> {
 
 /// Download and install synchronously. Used by the automatic updater, which must
 /// wait for successful installation before it records a trial version and reboots.
-#[cfg_attr(debug_assertions, allow(dead_code))]
+#[cfg_attr(feature = "mock", allow(dead_code))]
 pub async fn install_online(url: &str) -> Result<BusyGuard> {
     let guard = BusyGuard::acquire(true)?;
     publish(UpdateProgress {

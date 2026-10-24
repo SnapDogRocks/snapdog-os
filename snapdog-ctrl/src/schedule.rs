@@ -1,9 +1,9 @@
 //! Pure scheduling logic for the auto-updater.
 //!
-//! Kept in its own always-compiled module (the `auto_update` module itself is
-//! release-only, `#[cfg(not(debug_assertions))]`, so its logic would otherwise never
-//! be unit-tested in CI, which runs the debug test profile). These functions are pure
-//! — no clock, no I/O — so they are deterministically testable.
+//! Kept in its own always-compiled module (the `auto_update` module itself is left
+//! out of `mock` builds, `#[cfg(not(feature = "mock"))]`, so this logic stays
+//! tested in both variants). These functions are pure — no clock, no I/O — so they
+//! are deterministically testable.
 
 use chrono::NaiveDate;
 

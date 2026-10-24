@@ -2,26 +2,26 @@
 // Copyright (C) 2026 Fabian Schmieder
 
 mod auth;
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "mock"))]
 mod auto_update;
-#[cfg_attr(debug_assertions, allow(dead_code))]
+#[cfg_attr(feature = "mock", allow(dead_code))]
 mod captive_dns;
 mod config_txt;
 mod mdns;
-#[cfg(debug_assertions)]
+#[cfg(feature = "mock")]
 mod mock;
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "mock"))]
 mod mpris_client;
-#[cfg_attr(debug_assertions, allow(dead_code))]
+#[cfg_attr(feature = "mock", allow(dead_code))]
 mod network;
 mod rauc;
-#[cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
+#[cfg_attr(feature = "mock", allow(dead_code, unused_imports))]
 mod routes;
-#[cfg_attr(debug_assertions, allow(dead_code))]
+#[cfg_attr(feature = "mock", allow(dead_code))]
 mod schedule;
 mod server_config;
 mod settings;
-#[cfg_attr(debug_assertions, allow(dead_code))]
+#[cfg_attr(feature = "mock", allow(dead_code))]
 mod system;
 mod tuning;
 mod update;
@@ -95,10 +95,10 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "mock")]
 async fn build_app() -> Router {
     let mock = mock::MockState::new();
-    tracing::info!("🔶 Running in MOCK mode (debug build)");
+    tracing::info!("🔶 Running in MOCK mode (mock feature)");
 
     let auth_state = auth::AuthState::load().await;
     let health_state = routes::HealthState(std::sync::Arc::new(vec![]));
@@ -124,69 +124,9 @@ async fn build_app() -> Router {
         .layer(TraceLayer::new_for_http())
 }
 
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "mock"))]
 async fn build_app() -> Router {
-    // Start setup AP only if no network interface is configured
-    tokio::spawn(async {
-        // Ensure ethernet has a network config (write DHCP default if missing)
-        if tokio::fs::metadata(network::ETH_NETWORK_PATH)
-            .await
-            .is_err()
-        {
-            let _ = network::configure_ethernet(None).await;
-        }
-        let _ = network::configure_resolved().await;
-
-        let softap = system::get_softap_config().await;
-
-        // WiFi already configured: nothing has started the supplicant on this
-        // path yet, so bring the client up and we're done (no AP).
-        if network::is_wifi_configured().await {
-            if let Err(e) = network::start_wifi_client().await {
-                tracing::error!("Failed to start WiFi client: {e}");
-            }
-            return;
-        }
-
-        if !softap.enabled {
-            return;
-        }
-
-        // No WiFi configured. Give a wired link a chance to obtain a REAL IP
-        // before deciding — carrier-up-but-no-DHCP must NOT suppress the setup AP,
-        // or the device is unreachable with no way in.
-        let wait_for_ip_secs: u64 = 30;
-        for _ in 0..(wait_for_ip_secs / 3) {
-            if system::has_connectivity().await {
-                tracing::info!("Functional network present — not starting setup AP");
-                return;
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-        }
-
-        tracing::info!("No functional network after {wait_for_ip_secs}s — starting setup AP");
-        if let Err(e) = network::start_ap(&softap.password, &softap.country).await {
-            tracing::error!("Failed to start AP: {e}");
-            return;
-        }
-        // Log the passphrase to the console so a first-join is possible out-of-band
-        // (the AP password is never exposed on the LAN, see get_softap_view).
-        tracing::warn!(
-            "Setup AP '{}' is up — join with passphrase: {}",
-            network::ap_ssid().await,
-            softap.password
-        );
-        // Auto-close the AP once real connectivity appears (idempotent stop_ap;
-        // connect_wifi's deferred teardown may beat us to it).
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            if system::has_connectivity().await {
-                tracing::info!("Network connected — stopping setup AP");
-                let _ = network::stop_ap().await;
-                break;
-            }
-        }
-    });
+    tokio::spawn(manage_setup_ap());
 
     // Reconcile the previous auto-update: confirm the pending bundle booted, or
     // mark it bad if the bootloader rolled us back, so a broken bundle is never
@@ -200,49 +140,8 @@ async fn build_app() -> Router {
 
     if has_critical {
         tracing::error!("Critical health issue detected — running in degraded mode (no services)");
-    } else {
-        // Migrate devices flashed before the HAT-EEPROM fix. OTA can't rewrite the
-        // shared /boot partition, so a stale config.txt may still carry
-        // force_eeprom_read=0, which blocks the firmware's HAT EEPROM read. Strip it
-        // here (a persistent fix) and reboot to apply it. Note: during a RAUC tryboot
-        // trial the firmware boots from tryboot.txt, not this just-cleaned config.txt,
-        // so the EEPROM read (and the DAC auto-detect below) lands on the first
-        // committed boot after the trial rather than on this reboot; on a normal boot
-        // it takes effect immediately.
-        match config_txt::reconcile_eeprom_settings().await {
-            Ok(true) => {
-                tracing::info!(
-                    "config.txt: removed EEPROM-disabling lines — rebooting so the firmware reads the HAT EEPROM"
-                );
-                if request_safe_startup_reboot("EEPROM settings").await {
-                    return Router::new();
-                }
-            }
-            Ok(false) => {}
-            Err(e) => tracing::warn!("config.txt EEPROM reconcile failed: {e}"),
-        }
-
-        // Auto-detect DAC on first boot: if EEPROM detected and no overlay set → apply + reboot
-        if system::auto_apply_dac_overlay().await {
-            tracing::info!("DAC detected and configured — rebooting to activate");
-            // Use the tryboot-aware reboot so a DAC-detect reboot during an OTA
-            // trial re-enters the trial (rather than reverting a good update).
-            if request_safe_startup_reboot("DAC detection").await {
-                return Router::new(); // process stops after the accepted reboot
-            }
-        }
-
-        // Apply service config (start/stop ssh, client, server based on ctrl.toml)
-        tokio::spawn(async {
-            system::apply_service_config().await;
-        });
-
-        // Consolidate the legacy /data/snapdog-os.channel mirror into ctrl.toml
-        // before the scheduler reads its canonical channel configuration.
-        system::migrate_legacy_update_channel().await;
-
-        // Start auto-update scheduler
-        auto_update::spawn();
+    } else if !start_device_services().await {
+        return Router::new(); // process stops after the accepted reboot
     }
 
     let auth_state = auth::AuthState::load().await;
@@ -285,10 +184,124 @@ async fn build_app() -> Router {
         .layer(TraceLayer::new_for_http())
 }
 
+/// Start the setup AP only if no network interface is configured, and close it
+/// again once the device has real connectivity.
+#[cfg(not(feature = "mock"))]
+async fn manage_setup_ap() {
+    // Ensure ethernet has a network config (write DHCP default if missing)
+    if tokio::fs::metadata(network::ETH_NETWORK_PATH)
+        .await
+        .is_err()
+    {
+        let _ = network::configure_ethernet(None).await;
+    }
+    let _ = network::configure_resolved().await;
+
+    let softap = system::get_softap_config().await;
+
+    // WiFi already configured: nothing has started the supplicant on this
+    // path yet, so bring the client up and we're done (no AP).
+    if network::is_wifi_configured().await {
+        if let Err(e) = network::start_wifi_client().await {
+            tracing::error!("Failed to start WiFi client: {e}");
+        }
+        return;
+    }
+
+    if !softap.enabled {
+        return;
+    }
+
+    // No WiFi configured. Give a wired link a chance to obtain a REAL IP
+    // before deciding — carrier-up-but-no-DHCP must NOT suppress the setup AP,
+    // or the device is unreachable with no way in.
+    let wait_for_ip_secs: u64 = 30;
+    for _ in 0..(wait_for_ip_secs / 3) {
+        if system::has_connectivity().await {
+            tracing::info!("Functional network present — not starting setup AP");
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    }
+
+    tracing::info!("No functional network after {wait_for_ip_secs}s — starting setup AP");
+    if let Err(e) = network::start_ap(&softap.password, &softap.country).await {
+        tracing::error!("Failed to start AP: {e}");
+        return;
+    }
+    // Log the passphrase to the console so a first-join is possible out-of-band
+    // (the AP password is never exposed on the LAN, see get_softap_view).
+    tracing::warn!(
+        "Setup AP '{}' is up — join with passphrase: {}",
+        network::ap_ssid().await,
+        softap.password
+    );
+    // Auto-close the AP once real connectivity appears (idempotent stop_ap;
+    // connect_wifi's deferred teardown may beat us to it).
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        if system::has_connectivity().await {
+            tracing::info!("Network connected — stopping setup AP");
+            let _ = network::stop_ap().await;
+            break;
+        }
+    }
+}
+
+/// One-time startup migrations and the services of a healthy device. Returns
+/// `false` when a reboot was accepted, so the caller serves nothing while the
+/// process stops.
+#[cfg(not(feature = "mock"))]
+async fn start_device_services() -> bool {
+    // Migrate devices flashed before the HAT-EEPROM fix. OTA can't rewrite the
+    // shared /boot partition, so a stale config.txt may still carry
+    // force_eeprom_read=0, which blocks the firmware's HAT EEPROM read. Strip it
+    // here (a persistent fix) and reboot to apply it. Note: during a RAUC tryboot
+    // trial the firmware boots from tryboot.txt, not this just-cleaned config.txt,
+    // so the EEPROM read (and the DAC auto-detect below) lands on the first
+    // committed boot after the trial rather than on this reboot; on a normal boot
+    // it takes effect immediately.
+    match config_txt::reconcile_eeprom_settings().await {
+        Ok(true) => {
+            tracing::info!(
+                "config.txt: removed EEPROM-disabling lines — rebooting so the firmware reads the HAT EEPROM"
+            );
+            if request_safe_startup_reboot("EEPROM settings").await {
+                return false;
+            }
+        }
+        Ok(false) => {}
+        Err(e) => tracing::warn!("config.txt EEPROM reconcile failed: {e}"),
+    }
+
+    // Auto-detect DAC on first boot: if EEPROM detected and no overlay set → apply + reboot
+    if system::auto_apply_dac_overlay().await {
+        tracing::info!("DAC detected and configured — rebooting to activate");
+        // Use the tryboot-aware reboot so a DAC-detect reboot during an OTA
+        // trial re-enters the trial (rather than reverting a good update).
+        if request_safe_startup_reboot("DAC detection").await {
+            return false; // process stops after the accepted reboot
+        }
+    }
+
+    // Apply service config (start/stop ssh, client, server based on ctrl.toml)
+    tokio::spawn(async {
+        system::apply_service_config().await;
+    });
+
+    // Consolidate the legacy /data/snapdog-os.channel mirror into ctrl.toml
+    // before the scheduler reads its canonical channel configuration.
+    system::migrate_legacy_update_channel().await;
+
+    // Start auto-update scheduler
+    auto_update::spawn();
+    true
+}
+
 /// Controller restarts do not stop the separate RAUC service. One-time startup
 /// migrations must therefore defer their reboot if a recovered install is still
 /// writing, or if that state cannot be checked authoritatively.
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "mock"))]
 async fn request_safe_startup_reboot(reason: &str) -> bool {
     match system::rauc_operation().await {
         Ok(operation) if operation == "idle" => match system::reboot().await {

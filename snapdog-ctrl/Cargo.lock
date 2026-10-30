@@ -49,9 +49,9 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "astro-dnssd"
-version = "0.3.6"
+version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c247a5549f186c77fe07ee4420d52c7766da36de4560504b5ccde98a4f208f1"
+checksum = "039c0e3995a05de7279ca3f798a143c3b5fb1aeda2ce66872337c09e88771c2c"
 dependencies = [
  "libc",
  "log",

@@ -71,11 +71,21 @@ during dependency maintenance.
 
 ## CodeQL and merge policy
 
-Default CodeQL setup can omit scans for Dependabot-triggered events. A maintainer
-push can trigger the missing analyses; verify all five language configurations
-(`actions`, `c-cpp`, `javascript-typescript`, `python`, `rust`) and the final CodeQL
-result for the exact head before merging. Do not count a neutral result while a
-language analysis is missing as qualification.
+CodeQL runs from `.github/workflows/codeql.yml` (advanced setup), not from
+GitHub's managed default setup. The managed workflow never ran for pushes by
+`dependabot[bot]`, so no Dependabot PR could pass `CodeQL Coverage` without a
+maintainer push. The workflow analyses the same five languages (`actions`,
+`c-cpp`, `javascript-typescript`, `python`, `rust`) with `build-mode: none`, the
+default query suite and the categories `/language:<language>`, so alerts from the
+former default setup continue. It runs on pull requests, on pushes to `main`,
+weekly and on demand.
+
+GitHub rejects uploads from this workflow while default setup is enabled.
+Default setup must stay off (Settings, Code security, CodeQL analysis). Runs that
+Dependabot triggers start with a read-only token. The job requests
+`security-events: write`, which GitHub honours for these runs, and code scanning
+accepts uploads from `pull_request` runs in any case. Do not count a neutral
+result while a language analysis is missing as qualification.
 
 The repository currently requires linear history and squash merges. GitHub warns
 that a Dependabot-authored squash commit can make default-branch CodeQL uploads
@@ -88,13 +98,13 @@ The default-branch ruleset requires `Lint & Test`, `Security Audit`,
 the final `CodeQL` check. This also applies to Release Please auto-merges.
 The new checks are bound to their GitHub integration IDs, not merely their names.
 
-`CodeQL Coverage` reads the managed CodeQL workflow (repository-specific ID
-`308299760`) for the exact PR head. It requires the latest run attempt and all
-five language jobs to finish successfully, followed by a successful CodeQL
-result from integration `57789`. Missing, skipped, neutral, stale, and failed
-results fail closed after a bounded wait. Code Quality's similarly named jobs
-cannot substitute for security analysis. If the managed workflow is recreated,
-verify its new ID and update the CI invocation together.
+`CodeQL Coverage` reads the `codeql.yml` workflow for the exact PR head. It
+requires the latest run attempt and all five language jobs to finish
+successfully, followed by a successful CodeQL result from integration `57789`.
+Missing, skipped, neutral, stale, and failed results fail closed after a bounded
+wait. Code Quality's similarly named jobs cannot substitute for security
+analysis. `scripts/tests/test_codeql_coverage.py` checks that the workflow's
+language matrix, job names and categories match the gate. Change both together.
 
 Automatic Dependabot merges remain disabled. Do not set the repository variable
 `DEPENDABOT_AUTOMERGE_ENABLED=true` until the squash-author limitation and full

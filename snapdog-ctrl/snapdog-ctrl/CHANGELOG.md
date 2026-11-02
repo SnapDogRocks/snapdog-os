@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.7](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.14.6...snapdog-ctrl-v0.14.7) (2026-11-02)
+
+
+### Bug Fixes
+
+* **ctrl:** keep a list-valued [http].bind when saving the configuration ([#236](https://github.com/SnapDogRocks/snapdog-os/issues/236)) ([f985985](https://github.com/SnapDogRocks/snapdog-os/commit/f985985ccabc0a7b298747b9e17ed68e79e687d6))
+
 ## [0.14.6](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.14.5...snapdog-ctrl-v0.14.6) (2026-10-24)
 
 

@@ -388,7 +388,13 @@
     "loadFailed": "De serverconfiguratie kon niet worden geladen. Wijzigingen kunnen pas worden opgeslagen zodra deze weer beschikbaar is.",
     "reload": "Opnieuw proberen",
     "save": "Opslaan",
-    "saved": "Opgeslagen!"
+    "saved": "Opgeslagen!",
+    "streamingBind": "Streamingadres",
+    "streamingBindHint": "Eén adres voor de audiostreamingpoort, bijvoorbeeld de LAN-kaart. Leeg: de lijst met netwerkadressen hieronder, anders alle interfaces.",
+    "networkBind": "Luisteradressen (alle diensten)",
+    "bindHint": "Adressen, interfacenamen (eth0) of loopback, gescheiden door komma's. Leeg: elke dienst luistert zoals voorheen.",
+    "httpBind": "Luisteradressen van de webinterface en API",
+    "httpBindHint": "Leeg: de lijst hierboven. Adressen, interfacenamen of loopback, gescheiden door komma's."
   },
   "about": {
     "title": "Over",

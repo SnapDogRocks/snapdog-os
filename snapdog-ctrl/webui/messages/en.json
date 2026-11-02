@@ -388,7 +388,13 @@
     "apiKeysDescription": "Keys required to access the SnapDog server HTTP API.",
     "removeKey": "Remove key",
     "addKey": "Add key",
-    "originalRaw": "Original (raw)"
+    "originalRaw": "Original (raw)",
+    "streamingBind": "Streaming address",
+    "streamingBindHint": "One address for the audio streaming port, for example the LAN card. Empty: the network address list below, then all interfaces.",
+    "networkBind": "Listen addresses (all services)",
+    "bindHint": "Addresses, interface names (eth0) or loopback, separated by commas. Empty: every service listens as before.",
+    "httpBind": "Listen addresses of the web interface and API",
+    "httpBindHint": "Empty: the list above. Addresses, interface names or loopback, separated by commas."
   },
   "about": {
     "title": "About",

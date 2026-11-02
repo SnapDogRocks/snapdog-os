@@ -216,10 +216,13 @@ export interface AutoUpdateRuntimeStatus {
 
 export interface ZoneKnxGos {
   play?: string | null;
+  play_pause?: string | null;
   pause?: string | null;
   stop?: string | null;
   track_next?: string | null;
   track_previous?: string | null;
+  track_step?: string | null;
+  track_step_updown?: string | null;
   control_status?: string | null;
   volume?: string | null;
   volume_status?: string | null;
@@ -231,6 +234,8 @@ export interface ZoneKnxGos {
   track_artist_status?: string | null;
   track_album_status?: string | null;
   track_progress_status?: string | null;
+  track_number?: string | null;
+  track_number_status?: string | null;
   track_playing_status?: string | null;
   track_repeat?: string | null;
   track_repeat_status?: string | null;
@@ -239,6 +244,9 @@ export interface ZoneKnxGos {
   playlist_status?: string | null;
   playlist_next?: string | null;
   playlist_previous?: string | null;
+  playlist_step?: string | null;
+  playlist_step_updown?: string | null;
+  playlist_name_status?: string | null;
   shuffle?: string | null;
   shuffle_status?: string | null;
   shuffle_toggle?: string | null;
@@ -270,9 +278,10 @@ export interface ServerConfig {
   raw_toml: string;
   raw_toml_changed?: boolean;
   name: string;
+  network: { bind: string[] };
   http: { port: number; bind: string[]; base_url: string; tls_cert: string | null; tls_key: string | null; api_keys: string[]; api_docs: boolean };
   audio: { sample_rate: number; bit_depth: number; channels: number; source_conflict: string; zone_switch_fade_ms: number; source_switch_fade_ms: number };
-  snapcast: { address: string; jsonrpc_tcp_port: number; streaming_port: number; managed: boolean; verbose: boolean; codec: string; encryption_psk: string | null; group_volume_mode: string; unknown_clients: string; default_zone: string | null };
+  snapcast: { address: string; jsonrpc_tcp_port: number; streaming_port: number; streaming_bind: string | null; managed: boolean; verbose: boolean; codec: string; encryption_psk: string | null; group_volume_mode: string; unknown_clients: string; default_zone: string | null };
   mdns: { enabled: boolean; advertise_snapcast: boolean };
   dbus: { enabled: boolean };
   subsonic: { url: string; username: string; password: string; format: string; tls_skip_verify: boolean; cache: { path: string; max_size_mb: number } } | null;

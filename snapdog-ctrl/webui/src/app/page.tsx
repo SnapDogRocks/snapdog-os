@@ -86,7 +86,7 @@ function Card({ children, title, id }: { children: React.ReactNode; title: strin
   );
 }
 
-function Field({ label, htmlFor, children }: { label: string; htmlFor?: string; children: React.ReactNode }) {
+function Field({ label, htmlFor, hint, children }: { label: string; htmlFor?: string; hint?: string; children: React.ReactNode }) {
   const generatedId = useId();
   const id = htmlFor ?? generatedId;
   return (
@@ -95,6 +95,7 @@ function Field({ label, htmlFor, children }: { label: string; htmlFor?: string; 
         {label}
       </label>
       {children}
+      {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
     </div>
   );
 }
@@ -111,10 +112,13 @@ type KnxField<Key extends string = string> = {
 
 const ZONE_KNX_FIELDS = [
   { key: "play", label: "Play", dpt: "1.001", direction: "→ KNX" },
+  { key: "play_pause", label: "Play / Pause", dpt: "1.001", direction: "← KNX" },
   { key: "pause", label: "Pause", dpt: "1.001", direction: "→ KNX" },
   { key: "stop", label: "Stop", dpt: "1.001", direction: "→ KNX" },
-  { key: "track_next", label: "Next Track", dpt: "1.001", direction: "→ KNX" },
-  { key: "track_previous", label: "Previous Track", dpt: "1.001", direction: "→ KNX" },
+  { key: "track_next", label: "Next Track", dpt: "1.017", direction: "→ KNX" },
+  { key: "track_previous", label: "Previous Track", dpt: "1.017", direction: "→ KNX" },
+  { key: "track_step", label: "Track Step", dpt: "1.007", direction: "← KNX" },
+  { key: "track_step_updown", label: "Track Step Up/Down", dpt: "1.008", direction: "← KNX" },
   { key: "control_status", label: "Playback Status", dpt: "1.001", direction: "← KNX" },
   { key: "volume", label: "Volume", dpt: "5.001", direction: "↔ KNX" },
   { key: "volume_status", label: "Volume Status", dpt: "5.001", direction: "→ KNX" },
@@ -126,21 +130,26 @@ const ZONE_KNX_FIELDS = [
   { key: "track_artist_status", label: "Track Artist", dpt: "16.001", direction: "→ KNX" },
   { key: "track_album_status", label: "Track Album", dpt: "16.001", direction: "→ KNX" },
   { key: "track_progress_status", label: "Track Progress", dpt: "5.001", direction: "→ KNX" },
+  { key: "track_number", label: "Track Number", dpt: "5.010", direction: "← KNX" },
+  { key: "track_number_status", label: "Track Number Status", dpt: "5.010", direction: "→ KNX" },
   { key: "track_playing_status", label: "Track Playing", dpt: "1.001", direction: "→ KNX" },
   { key: "track_repeat", label: "Track Repeat", dpt: "1.001", direction: "← KNX" },
   { key: "track_repeat_status", label: "Track Repeat Status", dpt: "1.001", direction: "→ KNX" },
   { key: "track_repeat_toggle", label: "Track Repeat Toggle", dpt: "1.001", direction: "← KNX" },
   { key: "playlist", label: "Playlist", dpt: "5.010", direction: "← KNX" },
   { key: "playlist_status", label: "Playlist Status", dpt: "5.010", direction: "→ KNX" },
-  { key: "playlist_next", label: "Playlist Next", dpt: "1.001", direction: "← KNX" },
-  { key: "playlist_previous", label: "Playlist Previous", dpt: "1.001", direction: "← KNX" },
+  { key: "playlist_next", label: "Playlist Next", dpt: "1.017", direction: "← KNX" },
+  { key: "playlist_previous", label: "Playlist Previous", dpt: "1.017", direction: "← KNX" },
+  { key: "playlist_step", label: "Playlist Step", dpt: "1.007", direction: "← KNX" },
+  { key: "playlist_step_updown", label: "Playlist Step Up/Down", dpt: "1.008", direction: "← KNX" },
+  { key: "playlist_name_status", label: "Playlist Name", dpt: "16.001", direction: "→ KNX" },
   { key: "shuffle", label: "Shuffle", dpt: "1.001", direction: "← KNX" },
   { key: "shuffle_status", label: "Shuffle Status", dpt: "1.001", direction: "→ KNX" },
   { key: "shuffle_toggle", label: "Shuffle Toggle", dpt: "1.001", direction: "← KNX" },
   { key: "repeat", label: "Playlist Repeat", dpt: "1.001", direction: "← KNX" },
   { key: "repeat_status", label: "Playlist Repeat Status", dpt: "1.001", direction: "→ KNX" },
   { key: "repeat_toggle", label: "Playlist Repeat Toggle", dpt: "1.001", direction: "← KNX" },
-  { key: "presence", label: "Presence", dpt: "1.001", direction: "← KNX" },
+  { key: "presence", label: "Presence", dpt: "1.018", direction: "← KNX" },
   { key: "presence_enable", label: "Presence Enable", dpt: "1.001", direction: "← KNX" },
   { key: "presence_enable_status", label: "Presence Enable Status", dpt: "1.001", direction: "→ KNX" },
   { key: "presence_timer_status", label: "Presence Timer", dpt: "1.001", direction: "→ KNX" },
@@ -3556,9 +3565,28 @@ function ServerAdvancedSubTab({ config, setConfig }: { config: ServerConfig; set
   );
 }
 
+/** A list of addresses or interface names typed as comma-separated text. */
+function BindListInput({ id, value, onChange, placeholder }: { id: string; value: string[]; onChange: (v: string[]) => void; placeholder?: string }) {
+  const [text, setText] = useState(value.join(", "));
+  return (
+    <Input
+      id={id}
+      value={text}
+      placeholder={placeholder}
+      onChange={(e) => {
+        setText(e.target.value);
+        onChange(e.target.value.split(",").map((v) => v.trim()).filter((v) => v !== ""));
+      }}
+    />
+  );
+}
+
 function ServerAudioSubTab({ config, setConfig }: { config: ServerConfig; setConfig: (c: ServerConfig) => void }) {
   const t = useTranslations("server");
   const portId = useId();
+  const streamingBindId = useId();
+  const networkBindId = useId();
+  const httpBindId = useId();
   const codecId = useId();
   const pskId = useId();
   const sampleRateId = useId();
@@ -3583,6 +3611,15 @@ function ServerAudioSubTab({ config, setConfig }: { config: ServerConfig; setCon
     <div className="space-y-3">
       <Field label={t("port")} htmlFor={portId}>
         <Input id={portId} type="number" value={config.snapcast.streaming_port} onChange={(e) => update("snapcast.streaming_port", Number(e.target.value))} />
+      </Field>
+      <Field label={t("streamingBind")} htmlFor={streamingBindId} hint={t("streamingBindHint")}>
+        <Input id={streamingBindId} value={config.snapcast.streaming_bind ?? ""} placeholder="192.168.10.5" onChange={(e) => update("snapcast.streaming_bind", e.target.value.trim() || null)} />
+      </Field>
+      <Field label={t("networkBind")} htmlFor={networkBindId} hint={t("bindHint")}>
+        <BindListInput id={networkBindId} value={config.network.bind} placeholder="eth0" onChange={(v) => update("network.bind", v)} />
+      </Field>
+      <Field label={t("httpBind")} htmlFor={httpBindId} hint={t("httpBindHint")}>
+        <BindListInput id={httpBindId} value={config.http.bind} placeholder="loopback" onChange={(v) => update("http.bind", v)} />
       </Field>
       <Field label={t("codec")} htmlFor={codecId}>
         <Select id={codecId} value={config.snapcast.codec} onChange={(e) => {

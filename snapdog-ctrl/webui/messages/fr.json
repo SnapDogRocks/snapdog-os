@@ -388,7 +388,13 @@
     "loadFailed": "Impossible de charger la configuration du serveur. Aucune modification ne peut être enregistrée tant qu’elle n’est pas à nouveau disponible.",
     "reload": "Réessayer",
     "save": "Enregistrer",
-    "saved": "Enregistré !"
+    "saved": "Enregistré !",
+    "streamingBind": "Adresse de streaming",
+    "streamingBindHint": "Une adresse pour le port de streaming audio, par exemple la carte LAN. Vide : la liste d'adresses réseau ci-dessous, sinon toutes les interfaces.",
+    "networkBind": "Adresses d'écoute (tous les services)",
+    "bindHint": "Adresses, noms d'interface (eth0) ou loopback, séparés par des virgules. Vide : chaque service écoute comme avant.",
+    "httpBind": "Adresses d'écoute de l'interface web et de l'API",
+    "httpBindHint": "Vide : la liste ci-dessus. Adresses, noms d'interface ou loopback, séparés par des virgules."
   },
   "about": {
     "title": "À propos",

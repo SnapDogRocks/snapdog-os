@@ -234,7 +234,7 @@ installs, strict security audits, and Dependabot/CodeQL merge requirements.
 |--------|---------|
 | Web UI | Optional password (protects UI + console login) |
 | SSH | Disabled, key-only when enabled via UI |
-| Root password | `snapdog` (changeable via Web UI) |
+| Root password | `snapdog` on the physical console (USB serial and HDMI with keyboard), not usable over the network. A password set in the Web UI replaces it, and switching the Web UI password off restores `snapdog`. Set a password if the device is reachable by others. |
 | OTA bundles | X.509 signed RAUC verity bundles, auto-rollback |
 | SoftAP | WPA2; device-specific `SnapDog-XXXX` SSID; generated per-device password, configurable in the web UI |
 | Filesystem | Read-only rootfs; mutable config on `/data` partition |

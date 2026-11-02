@@ -3,6 +3,7 @@ name: CI
 on:
   pull_request:
     branches: [main]
+  merge_group:
 
 permissions:
   contents: read
@@ -19,6 +20,9 @@ env:
 jobs:
   codeql-coverage:
     name: CodeQL Coverage
+    # CodeQL's default setup analyses pull requests and pushes, not merge-queue commits.
+    # The job is skipped there and reports as such, which a required check accepts.
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:

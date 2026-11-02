@@ -3572,6 +3572,8 @@ function ServerAudioSubTab({ config, setConfig }: { config: ServerConfig; setCon
   const update = (path: string, value: unknown) => {
     const c = structuredClone(config);
     const parts = path.split(".");
+    // Keep a path from reaching the prototype chain.
+    if (parts.some((p) => p === "__proto__" || p === "constructor" || p === "prototype")) return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let obj: any = c;
     for (let i = 0; i < parts.length - 1; i++) obj = obj[parts[i]];

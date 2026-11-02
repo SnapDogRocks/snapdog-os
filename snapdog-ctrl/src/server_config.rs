@@ -47,7 +47,9 @@ pub struct ServerConfig {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct HttpConfig {
     pub port: u16,
-    pub bind: String,
+    /// Address, interface name or a list of them. Older clients send a single string.
+    #[serde(deserialize_with = "string_or_list")]
+    pub bind: Vec<String>,
     pub base_url: String,
     pub tls_cert: Option<String>,
     pub tls_key: Option<String>,
@@ -59,7 +61,7 @@ impl Default for HttpConfig {
     fn default() -> Self {
         Self {
             port: 5555,
-            bind: "::".into(),
+            bind: vec!["::".into()],
             base_url: "http://localhost:5555".into(),
             tls_cert: None,
             tls_key: None,
@@ -760,7 +762,7 @@ fn parse_document(doc: &DocumentMut) -> ServerConfig {
 
     if let Some(http) = doc.get("http").and_then(Item::as_table) {
         config.http.port = get_u16(http, "port", 5555);
-        config.http.bind = get_str(http, "bind", "::");
+        config.http.bind = get_bind(http, "bind", "::");
         config.http.base_url = get_str(http, "base_url", "http://localhost:5555");
         config.http.tls_cert = get_optional_str(http, "tls_cert");
         config.http.tls_key = get_optional_str(http, "tls_key");
@@ -944,7 +946,7 @@ fn apply_config_sections(doc: &mut DocumentMut, config: &ServerConfig) {
 
     // HTTP
     set_table_u32(doc, "http", "port", u32::from(config.http.port));
-    set_table_str(doc, "http", "bind", &config.http.bind);
+    set_bind(doc, "http", "bind", &config.http.bind);
     set_table_str(doc, "http", "base_url", &config.http.base_url);
     set_optional_table_str(doc, "http", "tls_cert", config.http.tls_cert.as_deref());
     set_optional_table_str(doc, "http", "tls_key", config.http.tls_key.as_deref());
@@ -1400,6 +1402,49 @@ fn get_string_array(table: &Table, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Reads a value that is either one string or a list of strings.
+fn get_bind(table: &Table, key: &str, default: &str) -> Vec<String> {
+    match table.get(key) {
+        Some(item) if item.is_array() => get_string_array(table, key),
+        Some(item) => item
+            .as_str()
+            .map_or_else(|| vec![default.to_string()], |v| vec![v.to_string()]),
+        None => vec![default.to_string()],
+    }
+}
+
+/// Writes one entry as a plain string (the form `SnapDog` documents first) and several as a list.
+fn set_bind(doc: &mut DocumentMut, section: &str, key: &str, value: &[String]) {
+    match value {
+        [] => set_table_str(doc, section, key, "::"),
+        [one] => set_table_str(doc, section, key, one),
+        many => {
+            if let Some(t) = doc
+                .as_table_mut()
+                .entry(section)
+                .or_insert(Item::Table(Table::new()))
+                .as_table_mut()
+            {
+                let array: toml_edit::Array = many.iter().map(String::as_str).collect();
+                set_item_preserving_decor(t, key, toml_edit::value(array));
+            }
+        }
+    }
+}
+
+fn string_or_list<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        One(String),
+        Many(Vec<String>),
+    }
+    Ok(match OneOrMany::deserialize(d)? {
+        OneOrMany::One(s) => vec![s],
+        OneOrMany::Many(v) => v,
+    })
+}
+
 fn set_table_str(doc: &mut DocumentMut, section: &str, key: &str, value: &str) {
     if let Some(t) = doc
         .as_table_mut()
@@ -1764,6 +1809,21 @@ fn parse_group_address_part(label: &str, part_name: &str, value: &str, max: u16)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `SnapDog` 0.30 takes `[http].bind` as an address, an interface name or a list of them. A
+    /// save from the form must not turn a list into the default "all interfaces".
+    #[test]
+    fn a_list_valued_http_bind_survives_a_save() {
+        let mut doc: DocumentMut = "[http]\nbind = [\"eth0\", \"lo\"]\n".parse().unwrap();
+        let config = parse_document(&doc);
+        apply_config(&mut doc, &config);
+        let output = doc.to_string();
+        let reparsed: DocumentMut = output.parse().unwrap();
+        let bind = reparsed["http"]["bind"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>());
+        assert_eq!(bind, Some(vec!["eth0", "lo"]), "{output}");
+    }
 
     #[test]
     fn parses_and_writes_all_zone_knx_group_addresses() {

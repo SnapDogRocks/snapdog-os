@@ -270,7 +270,7 @@ export interface ServerConfig {
   raw_toml: string;
   raw_toml_changed?: boolean;
   name: string;
-  http: { port: number; bind: string; base_url: string; tls_cert: string | null; tls_key: string | null; api_keys: string[]; api_docs: boolean };
+  http: { port: number; bind: string[]; base_url: string; tls_cert: string | null; tls_key: string | null; api_keys: string[]; api_docs: boolean };
   audio: { sample_rate: number; bit_depth: number; channels: number; source_conflict: string; zone_switch_fade_ms: number; source_switch_fade_ms: number };
   snapcast: { address: string; jsonrpc_tcp_port: number; streaming_port: number; managed: boolean; verbose: boolean; codec: string; encryption_psk: string | null; group_volume_mode: string; unknown_clients: string; default_zone: string | null };
   mdns: { enabled: boolean; advertise_snapcast: boolean };

@@ -15,7 +15,7 @@ import time
 from urllib.parse import urlsplit
 
 
-LANGUAGES = ("actions", "c-cpp", "javascript-typescript", "python", "rust")
+LANGUAGES = ("actions", "javascript-typescript", "rust")
 
 
 def next_page(link):

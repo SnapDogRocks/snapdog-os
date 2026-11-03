@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.15.0](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.14.7...snapdog-ctrl-v0.15.0) (2026-11-03)
+
+
+### Features
+
+* **ctrl:** configure the SnapDog 0.30 listen addresses and group objects ([#240](https://github.com/SnapDogRocks/snapdog-os/issues/240)) ([3aad226](https://github.com/SnapDogRocks/snapdog-os/commit/3aad226add138ffd2f171816c6efc91c0829bd56))
+
+
+### Bug Fixes
+
+* **ctrl:** validate hostname, timezone and system password input ([#241](https://github.com/SnapDogRocks/snapdog-os/issues/241)) ([06e6d6e](https://github.com/SnapDogRocks/snapdog-os/commit/06e6d6e1b80f6a53b0546cd8ac6af8f8dfd5f8b9))
+* **webui:** keep server config paths off the prototype chain ([#243](https://github.com/SnapDogRocks/snapdog-os/issues/243)) ([3e788ac](https://github.com/SnapDogRocks/snapdog-os/commit/3e788acf71f7935be903ad00ddc0a5c726ca2a5c))
+
 ## [0.14.7](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.14.6...snapdog-ctrl-v0.14.7) (2026-11-02)
 
 

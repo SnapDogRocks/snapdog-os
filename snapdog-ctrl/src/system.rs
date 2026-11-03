@@ -143,7 +143,8 @@ pub async fn detect_board_model() -> String {
 
 pub async fn set_system(hostname: Option<String>, channel: Option<String>) -> Result<()> {
     if let Some(h) = hostname {
-        run_cmd("hostnamectl", &["set-hostname", &h]).await?;
+        validate_hostname(&h)?;
+        run_cmd("hostnamectl", &["set-hostname", "--", &h]).await?;
     }
     if let Some(c) = channel {
         let mut config = get_auto_update().await;
@@ -853,7 +854,11 @@ pub async fn set_client(config: ClientConfig) -> Result<()> {
 
     // Sync hostname with host_id
     if !config.host_id.is_empty() {
-        let _ = run_cmd("hostnamectl", &["set-hostname", &config.host_id]).await;
+        if validate_hostname(&config.host_id).is_ok() {
+            let _ = run_cmd("hostnamectl", &["set-hostname", "--", &config.host_id]).await;
+        } else {
+            tracing::warn!("host_id is not a valid hostname, system hostname left unchanged");
+        }
     }
 
     Ok(())
@@ -1507,6 +1512,7 @@ pub async fn get_timezone() -> TimezoneInfo {
 }
 
 pub async fn set_timezone(tz: &str) -> Result<()> {
+    validate_timezone(tz)?;
     let path = std::path::Path::new("/data/localtime");
     if path.exists() || path.is_symlink() {
         tokio::fs::remove_file(path).await.ok();
@@ -1524,7 +1530,7 @@ pub async fn set_timezone(tz: &str) -> Result<()> {
         tokio::fs::symlink("/data/localtime", etc).await.ok();
         Ok(())
     } else {
-        run_cmd("timedatectl", &["set-timezone", tz]).await
+        run_cmd("timedatectl", &["set-timezone", "--", tz]).await
     }
 }
 
@@ -2062,6 +2068,36 @@ fn parse_client_args(defaults_file: &str) -> ParsedClientArgs {
     result
 }
 
+/// Accept what `hostnamectl` takes as a static hostname: ASCII letters, digits, `-` and `.`,
+/// starting with a letter or digit. Rejects anything that could be read as an option.
+fn validate_hostname(name: &str) -> Result<()> {
+    anyhow::ensure!(
+        (1..=64).contains(&name.len())
+            && name.starts_with(|c: char| c.is_ascii_alphanumeric())
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.')),
+        "invalid hostname"
+    );
+    Ok(())
+}
+
+/// Accept an IANA zone name such as `Europe/Berlin`: no empty or `..` components, no
+/// leading `/` or `-`, so the name stays below `/usr/share/zoneinfo` and cannot be an option.
+fn validate_timezone(tz: &str) -> Result<()> {
+    anyhow::ensure!(
+        !tz.is_empty()
+            && tz.len() <= 64
+            && !tz.starts_with('-')
+            && tz
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '+' | '-' | '/'))
+            && tz.split('/').all(|part| !part.is_empty()),
+        "invalid timezone"
+    );
+    Ok(())
+}
+
 fn validate_client_arg(field: &str, value: &str) -> Result<()> {
     anyhow::ensure!(
         value
@@ -2075,6 +2111,50 @@ fn validate_client_arg(field: &str, value: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hostname_validation_accepts_hostnames_and_rejects_options() {
+        for ok in ["snapdog", "kitchen-1", "a.b", "Z9"] {
+            assert!(validate_hostname(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "",
+            "-h",
+            "--help",
+            ".x",
+            "a b",
+            "a;b",
+            "a\nb",
+            "ü",
+            &"x".repeat(65),
+        ] {
+            assert!(validate_hostname(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn timezone_validation_keeps_the_name_below_zoneinfo() {
+        for ok in [
+            "UTC",
+            "Europe/Berlin",
+            "America/Argentina/Buenos_Aires",
+            "Etc/GMT+1",
+        ] {
+            assert!(validate_timezone(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "",
+            "-x",
+            "/etc/passwd",
+            "../../etc/passwd",
+            "Europe/../x",
+            "a//b",
+            "a b",
+            "Europe/Berlin/",
+        ] {
+            assert!(validate_timezone(bad).is_err(), "{bad:?}");
+        }
+    }
 
     fn update_manifest(channel: &str, version: &str, bundle_url: Option<&str>) -> String {
         let mut pi4 = serde_json::json!({});

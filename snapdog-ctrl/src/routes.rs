@@ -238,6 +238,15 @@ async fn put_auth_password(
         }
     }
 
+    // chpasswd reads one `user:password` pair per line, so a line break would add a second one.
+    if body
+        .new
+        .as_deref()
+        .is_some_and(|pw| pw.contains(['\n', '\r', '\0']))
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
     match body.new.as_deref() {
         Some(pw) if !pw.is_empty() => {
             auth.set_password(pw).await.map_err(|e| {

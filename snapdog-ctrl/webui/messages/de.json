@@ -388,7 +388,13 @@
     "loadFailed": "Die Serverkonfiguration konnte nicht geladen werden. Änderungen sind erst wieder möglich, wenn sie verfügbar ist.",
     "reload": "Erneut versuchen",
     "save": "Speichern",
-    "saved": "Gespeichert!"
+    "saved": "Gespeichert!",
+    "streamingBind": "Streaming-Adresse",
+    "streamingBindHint": "Eine Adresse für den Audio-Streaming-Port, zum Beispiel die LAN-Karte. Leer: die Adressliste darunter, sonst alle Schnittstellen.",
+    "networkBind": "Lauschadressen (alle Dienste)",
+    "bindHint": "Adressen, Schnittstellennamen (eth0) oder loopback, durch Komma getrennt. Leer: jeder Dienst lauscht wie bisher.",
+    "httpBind": "Lauschadressen von Weboberfläche und API",
+    "httpBindHint": "Leer: die Liste darüber. Adressen, Schnittstellennamen oder loopback, durch Komma getrennt."
   },
   "about": {
     "title": "Über",

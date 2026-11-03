@@ -388,7 +388,13 @@
     "loadFailed": "No se pudo cargar la configuración del servidor. No se pueden guardar cambios hasta que vuelva a estar disponible.",
     "reload": "Reintentar",
     "save": "Guardar",
-    "saved": "¡Guardado!"
+    "saved": "¡Guardado!",
+    "streamingBind": "Dirección de streaming",
+    "streamingBindHint": "Una dirección para el puerto de streaming de audio, por ejemplo la tarjeta de red local. Vacío: la lista de direcciones de red de abajo y, si no, todas las interfaces.",
+    "networkBind": "Direcciones de escucha (todos los servicios)",
+    "bindHint": "Direcciones, nombres de interfaz (eth0) o loopback, separados por comas. Vacío: cada servicio escucha como hasta ahora.",
+    "httpBind": "Direcciones de escucha de la interfaz web y la API",
+    "httpBindHint": "Vacío: la lista anterior. Direcciones, nombres de interfaz o loopback, separados por comas."
   },
   "about": {
     "title": "Acerca de",

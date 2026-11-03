@@ -28,6 +28,9 @@ pub struct ServerConfig {
     #[serde(default, skip_serializing)]
     pub raw_toml_changed: bool,
     pub name: String,
+    /// Default listen addresses of every service (`[network].bind`, `SnapDog` 0.30).
+    #[serde(default)]
+    pub network: NetworkConfig,
     pub http: HttpConfig,
     pub audio: AudioConfig,
     pub snapcast: SnapcastConfig,
@@ -44,11 +47,20 @@ pub struct ServerConfig {
     pub system: SystemConfig,
 }
 
+/// Where the services listen unless they set their own `bind`. Empty: every service keeps its
+/// own default.
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct NetworkConfig {
+    #[serde(default, deserialize_with = "string_or_list")]
+    pub bind: Vec<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct HttpConfig {
     pub port: u16,
-    /// Address, interface name or a list of them. Older clients send a single string.
-    #[serde(deserialize_with = "string_or_list")]
+    /// Address, interface name or a list of them; empty falls back to `[network].bind`.
+    /// Older clients send a single string.
+    #[serde(default, deserialize_with = "string_or_list")]
     pub bind: Vec<String>,
     pub base_url: String,
     pub tls_cert: Option<String>,
@@ -61,7 +73,7 @@ impl Default for HttpConfig {
     fn default() -> Self {
         Self {
             port: 5555,
-            bind: vec!["::".into()],
+            bind: Vec::new(),
             base_url: "http://localhost:5555".into(),
             tls_cert: None,
             tls_key: None,
@@ -99,6 +111,9 @@ pub struct SnapcastConfig {
     pub address: String,
     pub jsonrpc_tcp_port: u16,
     pub streaming_port: u16,
+    /// Local address of the streaming port, one address. Unset: `[network].bind`, then all.
+    #[serde(default)]
+    pub streaming_bind: Option<String>,
     pub managed: bool,
     pub verbose: bool,
     pub codec: String,
@@ -114,6 +129,7 @@ impl Default for SnapcastConfig {
             address: "127.0.0.1".into(),
             jsonrpc_tcp_port: 1705,
             streaming_port: 1704,
+            streaming_bind: None,
             managed: true,
             verbose: false,
             codec: "f32lz4".into(),
@@ -254,10 +270,13 @@ pub struct ZoneConfig {
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct KnxGroupObjects {
     pub play: Option<String>,
+    pub play_pause: Option<String>,
     pub pause: Option<String>,
     pub stop: Option<String>,
     pub track_next: Option<String>,
     pub track_previous: Option<String>,
+    pub track_step: Option<String>,
+    pub track_step_updown: Option<String>,
     pub control_status: Option<String>,
     pub volume: Option<String>,
     pub volume_status: Option<String>,
@@ -269,6 +288,8 @@ pub struct KnxGroupObjects {
     pub track_artist_status: Option<String>,
     pub track_album_status: Option<String>,
     pub track_progress_status: Option<String>,
+    pub track_number: Option<String>,
+    pub track_number_status: Option<String>,
     pub track_playing_status: Option<String>,
     pub track_repeat: Option<String>,
     pub track_repeat_status: Option<String>,
@@ -277,6 +298,9 @@ pub struct KnxGroupObjects {
     pub playlist_status: Option<String>,
     pub playlist_next: Option<String>,
     pub playlist_previous: Option<String>,
+    pub playlist_step: Option<String>,
+    pub playlist_step_updown: Option<String>,
+    pub playlist_name_status: Option<String>,
     pub shuffle: Option<String>,
     pub shuffle_status: Option<String>,
     pub shuffle_toggle: Option<String>,
@@ -760,9 +784,13 @@ fn parse_document(doc: &DocumentMut) -> ServerConfig {
         config.system.state_dir = get_str(system, "state_dir", "/var/lib/snapdog");
     }
 
+    if let Some(network) = doc.get("network").and_then(Item::as_table) {
+        config.network.bind = get_bind(network, "bind");
+    }
+
     if let Some(http) = doc.get("http").and_then(Item::as_table) {
         config.http.port = get_u16(http, "port", 5555);
-        config.http.bind = get_bind(http, "bind", "::");
+        config.http.bind = get_bind(http, "bind");
         config.http.base_url = get_str(http, "base_url", "http://localhost:5555");
         config.http.tls_cert = get_optional_str(http, "tls_cert");
         config.http.tls_key = get_optional_str(http, "tls_key");
@@ -784,6 +812,7 @@ fn parse_document(doc: &DocumentMut) -> ServerConfig {
         config.snapcast.jsonrpc_tcp_port =
             get_u16_alias(snap, "jsonrpc_tcp_port", "jsonrpc_port", 1705);
         config.snapcast.streaming_port = get_u16(snap, "streaming_port", 1704);
+        config.snapcast.streaming_bind = get_optional_str(snap, "streaming_bind");
         config.snapcast.managed = get_bool(snap, "managed", true);
         config.snapcast.verbose = get_bool(snap, "verbose", false);
         config.snapcast.codec = get_str(snap, "codec", "flac");
@@ -937,7 +966,21 @@ fn parse_document(doc: &DocumentMut) -> ServerConfig {
 
 fn apply_config(doc: &mut DocumentMut, config: &ServerConfig) {
     apply_config_sections(doc, config);
+    apply_bind_settings(doc, config);
     apply_config_arrays(doc, config);
+}
+
+/// The listen addresses of `[network]`, `[http]` and Snapcast streaming. An empty value removes
+/// the key, so the service falls back to `[network].bind` and then to its own default.
+fn apply_bind_settings(doc: &mut DocumentMut, config: &ServerConfig) {
+    set_bind(doc, "network", "bind", &config.network.bind);
+    set_bind(doc, "http", "bind", &config.http.bind);
+    set_optional_table_str(
+        doc,
+        "snapcast",
+        "streaming_bind",
+        config.snapcast.streaming_bind.as_deref(),
+    );
 }
 
 fn apply_config_sections(doc: &mut DocumentMut, config: &ServerConfig) {
@@ -946,7 +989,6 @@ fn apply_config_sections(doc: &mut DocumentMut, config: &ServerConfig) {
 
     // HTTP
     set_table_u32(doc, "http", "port", u32::from(config.http.port));
-    set_bind(doc, "http", "bind", &config.http.bind);
     set_table_str(doc, "http", "base_url", &config.http.base_url);
     set_optional_table_str(doc, "http", "tls_cert", config.http.tls_cert.as_deref());
     set_optional_table_str(doc, "http", "tls_key", config.http.tls_key.as_deref());
@@ -1402,22 +1444,38 @@ fn get_string_array(table: &Table, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Reads a value that is either one string or a list of strings.
-fn get_bind(table: &Table, key: &str, default: &str) -> Vec<String> {
+/// Reads a value that is either one string or a list of strings. Missing means empty.
+fn get_bind(table: &Table, key: &str) -> Vec<String> {
     match table.get(key) {
         Some(item) if item.is_array() => get_string_array(table, key),
         Some(item) => item
             .as_str()
-            .map_or_else(|| vec![default.to_string()], |v| vec![v.to_string()]),
-        None => vec![default.to_string()],
+            .map(|v| vec![v.to_string()])
+            .unwrap_or_default(),
+        None => Vec::new(),
     }
 }
 
-/// Writes one entry as a plain string (the form `SnapDog` documents first) and several as a list.
+/// Writes one entry as a plain string (the form `SnapDog` documents first) unless the file has a
+/// list there already, several as a list and none by removing the key, so the service falls back to `[network].bind`.
 fn set_bind(doc: &mut DocumentMut, section: &str, key: &str, value: &[String]) {
     match value {
-        [] => set_table_str(doc, section, key, "::"),
-        [one] => set_table_str(doc, section, key, one),
+        [] => {
+            if let Some(table) = doc.get_mut(section).and_then(Item::as_table_mut) {
+                table.remove(key);
+                if table.is_empty() && section == "network" {
+                    doc.as_table_mut().remove(section);
+                }
+            }
+        }
+        [one]
+            if !doc
+                .get(section)
+                .and_then(|t| t.get(key))
+                .is_some_and(Item::is_array) =>
+        {
+            set_table_str(doc, section, key, one);
+        }
         many => {
             if let Some(t) = doc
                 .as_table_mut()
@@ -1537,10 +1595,13 @@ fn set_item_preserving_decor(table: &mut Table, key: &str, mut replacement: Item
 
 const ZONE_KNX_KEYS: &[&str] = &[
     "play",
+    "play_pause",
     "pause",
     "stop",
     "track_next",
     "track_previous",
+    "track_step",
+    "track_step_updown",
     "control_status",
     "volume",
     "volume_status",
@@ -1552,6 +1613,8 @@ const ZONE_KNX_KEYS: &[&str] = &[
     "track_artist_status",
     "track_album_status",
     "track_progress_status",
+    "track_number",
+    "track_number_status",
     "track_playing_status",
     "track_repeat",
     "track_repeat_status",
@@ -1560,6 +1623,9 @@ const ZONE_KNX_KEYS: &[&str] = &[
     "playlist_status",
     "playlist_next",
     "playlist_previous",
+    "playlist_step",
+    "playlist_step_updown",
+    "playlist_name_status",
     "shuffle",
     "shuffle_status",
     "shuffle_toggle",
@@ -1589,10 +1655,13 @@ const CLIENT_KNX_KEYS: &[&str] = &[
 fn parse_zone_knx(table: &Table) -> KnxGroupObjects {
     KnxGroupObjects {
         play: get_optional_str(table, "play"),
+        play_pause: get_optional_str(table, "play_pause"),
         pause: get_optional_str(table, "pause"),
         stop: get_optional_str(table, "stop"),
         track_next: get_optional_str(table, "track_next"),
         track_previous: get_optional_str(table, "track_previous"),
+        track_step: get_optional_str(table, "track_step"),
+        track_step_updown: get_optional_str(table, "track_step_updown"),
         control_status: get_optional_str(table, "control_status"),
         volume: get_optional_str(table, "volume"),
         volume_status: get_optional_str(table, "volume_status"),
@@ -1604,6 +1673,8 @@ fn parse_zone_knx(table: &Table) -> KnxGroupObjects {
         track_artist_status: get_optional_str_alias(table, "track_artist_status", "track_artist"),
         track_album_status: get_optional_str(table, "track_album_status"),
         track_progress_status: get_optional_str(table, "track_progress_status"),
+        track_number: get_optional_str(table, "track_number"),
+        track_number_status: get_optional_str(table, "track_number_status"),
         track_playing_status: get_optional_str(table, "track_playing_status"),
         track_repeat: get_optional_str(table, "track_repeat"),
         track_repeat_status: get_optional_str(table, "track_repeat_status"),
@@ -1612,6 +1683,9 @@ fn parse_zone_knx(table: &Table) -> KnxGroupObjects {
         playlist_status: get_optional_str(table, "playlist_status"),
         playlist_next: get_optional_str(table, "playlist_next"),
         playlist_previous: get_optional_str(table, "playlist_previous"),
+        playlist_step: get_optional_str(table, "playlist_step"),
+        playlist_step_updown: get_optional_str(table, "playlist_step_updown"),
+        playlist_name_status: get_optional_str(table, "playlist_name_status"),
         shuffle: get_optional_str(table, "shuffle"),
         shuffle_status: get_optional_str(table, "shuffle_status"),
         shuffle_toggle: get_optional_str(table, "shuffle_toggle"),
@@ -1689,10 +1763,13 @@ fn insert_optional_bool(table: &mut Table, key: &str, value: Option<bool>) {
 fn zone_knx_values(knx: &KnxGroupObjects) -> Vec<(&'static str, Option<&str>)> {
     vec![
         ("play", knx.play.as_deref()),
+        ("play_pause", knx.play_pause.as_deref()),
         ("pause", knx.pause.as_deref()),
         ("stop", knx.stop.as_deref()),
         ("track_next", knx.track_next.as_deref()),
         ("track_previous", knx.track_previous.as_deref()),
+        ("track_step", knx.track_step.as_deref()),
+        ("track_step_updown", knx.track_step_updown.as_deref()),
         ("control_status", knx.control_status.as_deref()),
         ("volume", knx.volume.as_deref()),
         ("volume_status", knx.volume_status.as_deref()),
@@ -1707,6 +1784,8 @@ fn zone_knx_values(knx: &KnxGroupObjects) -> Vec<(&'static str, Option<&str>)> {
             "track_progress_status",
             knx.track_progress_status.as_deref(),
         ),
+        ("track_number", knx.track_number.as_deref()),
+        ("track_number_status", knx.track_number_status.as_deref()),
         ("track_playing_status", knx.track_playing_status.as_deref()),
         ("track_repeat", knx.track_repeat.as_deref()),
         ("track_repeat_status", knx.track_repeat_status.as_deref()),
@@ -1715,6 +1794,9 @@ fn zone_knx_values(knx: &KnxGroupObjects) -> Vec<(&'static str, Option<&str>)> {
         ("playlist_status", knx.playlist_status.as_deref()),
         ("playlist_next", knx.playlist_next.as_deref()),
         ("playlist_previous", knx.playlist_previous.as_deref()),
+        ("playlist_step", knx.playlist_step.as_deref()),
+        ("playlist_step_updown", knx.playlist_step_updown.as_deref()),
+        ("playlist_name_status", knx.playlist_name_status.as_deref()),
         ("shuffle", knx.shuffle.as_deref()),
         ("shuffle_status", knx.shuffle_status.as_deref()),
         ("shuffle_toggle", knx.shuffle_toggle.as_deref()),
@@ -1823,6 +1905,60 @@ mod tests {
             .as_array()
             .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>());
         assert_eq!(bind, Some(vec!["eth0", "lo"]), "{output}");
+    }
+
+    fn saved(source: &str) -> DocumentMut {
+        let mut doc: DocumentMut = source.parse().unwrap();
+        let config = parse_document(&doc);
+        apply_config(&mut doc, &config);
+        doc.to_string().parse().unwrap()
+    }
+
+    #[test]
+    fn an_unset_http_bind_stays_unset_so_network_bind_applies() {
+        let doc = saved("[network]\nbind = [\"eth0\"]\n\n[http]\nport = 5555\n");
+        assert!(doc["http"].get("bind").is_none(), "{doc}");
+        assert_eq!(
+            doc["network"]["bind"]
+                .as_array()
+                .and_then(|a| a.get(0))
+                .and_then(|v| v.as_str()),
+            Some("eth0"),
+            "{doc}"
+        );
+    }
+
+    #[test]
+    fn network_bind_and_streaming_bind_round_trip() {
+        let doc = saved(
+            "[network]\nbind = [\"eth0\", \"nebula1\"]\n\n[snapcast]\nstreaming_bind = \"192.168.10.5\"\n",
+        );
+        let bind: Vec<_> = doc["network"]["bind"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(bind, ["eth0", "nebula1"]);
+        assert_eq!(
+            doc["snapcast"]["streaming_bind"].as_str(),
+            Some("192.168.10.5")
+        );
+    }
+
+    #[test]
+    fn clearing_the_binds_removes_the_keys_and_an_empty_network_table() {
+        let mut doc: DocumentMut = "[network]\nbind = \"eth0\"\n\n[http]\nbind = \"loopback\"\n\n[snapcast]\nstreaming_bind = \"127.0.0.1\"\n"
+            .parse()
+            .unwrap();
+        let mut config = parse_document(&doc);
+        config.network.bind.clear();
+        config.http.bind.clear();
+        config.snapcast.streaming_bind = None;
+        apply_config(&mut doc, &config);
+        assert!(doc.get("network").is_none(), "{doc}");
+        assert!(doc["http"].get("bind").is_none(), "{doc}");
+        assert!(doc["snapcast"].get("streaming_bind").is_none(), "{doc}");
     }
 
     #[test]

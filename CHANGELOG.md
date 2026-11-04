@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.16](https://github.com/SnapDogRocks/snapdog-os/compare/v0.16.15...v0.16.16) (2026-11-04)
+
+
+### Bug Fixes
+
+* **release:** publish the snapdog-ctrl draft once its commit is in the image ([#250](https://github.com/SnapDogRocks/snapdog-os/issues/250)) ([4f2af60](https://github.com/SnapDogRocks/snapdog-os/commit/4f2af601e427ece883fd4fd049134619a1d25cc8))
+
 ## [0.16.15](https://github.com/SnapDogRocks/snapdog-os/compare/v0.16.14...v0.16.15) (2026-11-03)
 
 

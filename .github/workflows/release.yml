@@ -1194,12 +1194,21 @@ jobs:
             encoded_ctrl_tag=$(jq -rn --arg ref "$CTRL_TAG" '$ref | @uri')
             ctrl_sha=$(gh api \
               "repos/${GITHUB_REPOSITORY}/commits/${encoded_ctrl_tag}" --jq '.sha')
-            if [ "$ctrl_sha" = "$SOURCE_SHA" ]; then
-              gh release edit "$CTRL_TAG" --repo "$GITHUB_REPOSITORY" \
-                --draft=false --latest=false
-            else
-              echo "Leaving older snapdog-ctrl draft $CTRL_TAG for its owning run ($ctrl_sha)."
-            fi
+            # The ctrl tag commit need not equal SOURCE_SHA: the ctrl release PR
+            # can merge before or after the OS release PR. It is shipped in this
+            # image when its tag commit is SOURCE_SHA or one of its ancestors.
+            ctrl_relation=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/compare/${ctrl_sha}...${SOURCE_SHA}" \
+              --jq '.status')
+            case "$ctrl_relation" in
+              identical|ahead)
+                gh release edit "$CTRL_TAG" --repo "$GITHUB_REPOSITORY" \
+                  --draft=false --latest=false
+                ;;
+              *)
+                echo "Leaving snapdog-ctrl draft $CTRL_TAG: its commit $ctrl_sha is not in $SOURCE_SHA ($ctrl_relation)."
+                ;;
+            esac
           fi
 
           # Fence the irreversible publication/Latest edit after the potentially

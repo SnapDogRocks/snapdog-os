@@ -1,6 +1,6 @@
 # R2 retention
 
-The stable channel retains the five newest semantic versions. Additional
+The stable channel retains the two newest semantic versions. Additional
 operational rollback versions can be added to `config/r2-retention.json` as
 explicit pins. A missing pin, malformed policy, incomplete retained release, or
 inconsistent catalog makes retention fail closed.

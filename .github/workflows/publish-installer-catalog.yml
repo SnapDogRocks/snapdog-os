@@ -127,10 +127,10 @@ jobs:
           python3 scripts/release_manifest.py validate-catalog --catalog "$CATALOG"
 
           VERSION_MANIFEST="s3://${R2_BUCKET}/os/images/manifests/${CHANNEL}/${VERSION}.json"
-          VERSION_MANIFEST_CACHE="public, max-age=31536000, immutable"
-          if [ "$CHANNEL" = "beta" ]; then
-            VERSION_MANIFEST_CACHE="public, max-age=86400, immutable"
-          fi
+          # One day on both channels. Retention keeps a retired version's payloads
+          # for this lifetime plus the download grace, so it also decides how long
+          # the storage of an old release is kept.
+          VERSION_MANIFEST_CACHE="public, max-age=86400, immutable"
           if r2_get_optional "$VERSION_MANIFEST" version-manifest.json; then
             jq -S . latest.json > latest-canonical.json
             jq -S . version-manifest.json > version-canonical.json

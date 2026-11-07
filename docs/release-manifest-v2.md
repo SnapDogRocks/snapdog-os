@@ -83,11 +83,13 @@ schema-v2 manifests published before `bundle_url` was added, SnapDog Ctrl derive
 the identical versioned URL from the validated channel, board, and version; it
 never falls back to a rolling alias.
 
-Versioned beta manifests are cached for one day. Retention first removes a
+Versioned manifests of both channels are cached for one day. Retention first removes a
 superseded manifest, records its observed `max-age`, and keeps the referenced
 payloads for that entire cache horizon plus a 24-hour download grace. Legacy
 manifests without trustworthy cache metadata are conservatively treated as
-cacheable for one year.
+cacheable for one year. Stable manifests published before the cache was
+shortened carry a one-year `max-age`, and retention honours the lifetime it
+observes on each manifest.
 
 ## Generation and Validation
 

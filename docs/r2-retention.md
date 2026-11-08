@@ -12,6 +12,15 @@ until the manifest's advertised cache lifetime has elapsed, followed by a
 24-hour grace period for active downloads. A later hourly run deletes the image,
 RAUC bundle, and SBOM objects and then removes the marker.
 
+`catalog-beta.json` also advertises stable versions. Its retention (`R2 Retention`)
+therefore drops every version that has a marker below `os/.retention/release/`
+from that catalog before it validates the remaining entries. Without this, the
+catalog would still list a retired release once its payloads are gone, and both
+that job and the `Publish` step of a release would fail with `catalog beta X is
+incomplete`. Objects that were deleted by hand, without a marker, still fail
+closed on purpose. The matching beta version manifests below
+`os/images/manifests/beta/` are left in place.
+
 `R2 Stable Retention` runs hourly under the shared R2 object lease. Scheduled
 runs apply the policy; manual runs are dry by default. Set the manual `apply`
 input only after reviewing its dry-run output. R2 lifecycle rules should remain

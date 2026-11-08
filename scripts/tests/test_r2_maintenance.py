@@ -29,6 +29,7 @@ from r2_maintenance import (  # noqa: E402
     required_channel_artifacts,
     required_version_artifacts,
     retain_beta_pointer,
+    retired_release_version,
     retirement_marker_version,
     semver_tuple,
     validate_committed_manifest,
@@ -233,6 +234,89 @@ class R2MaintenanceCatalogTests(unittest.TestCase):
             ["1.2.4-beta.2", "1.2.3"],
         )
         self.assertEqual(len(catalog["releases"]), 4, "input must not be mutated")
+
+    def test_drops_stable_versions_retired_by_stable_retention(self) -> None:
+        catalog = beta_catalog("1.2.4-beta.2", "1.2.3", "1.2.2", "1.2.1")
+
+        filtered, removed = filter_beta_catalog(
+            catalog, self.release, frozenset({"1.2.2", "1.2.1"})
+        )
+
+        self.assertEqual(removed, ("1.2.2", "1.2.1"))
+        self.assertIsNotNone(filtered)
+        self.assertEqual(
+            [release["version"] for release in filtered["releases"]],
+            ["1.2.4-beta.2", "1.2.3"],
+        )
+
+    def test_retired_versions_that_are_not_listed_change_nothing(self) -> None:
+        catalog = beta_catalog("1.2.4-beta.2", "1.2.3")
+
+        filtered, removed = filter_beta_catalog(
+            catalog, self.release, frozenset({"1.0.0"})
+        )
+
+        self.assertEqual(removed, ())
+        self.assertIs(filtered, catalog)
+
+    def test_retired_stable_versions_without_payloads_no_longer_fail_validation(
+        self,
+    ) -> None:
+        """The bucket after stable retention: markers and manifests, no payloads."""
+        s3 = FakeS3()
+        latest = beta_manifest("1.2.4-beta.2")
+        catalog = beta_catalog("1.2.4-beta.2", "1.2.3", "1.2.2")
+        objects: dict[str, int] = {}
+        for release in catalog["releases"]:
+            key = f"os/images/manifests/beta/{release['version']}.json"
+            s3.get_results[key] = {"Body": FakeBody(json.dumps(release).encode())}
+            if release["version"] != "1.2.2":
+                for artifact in required_version_artifacts("beta", release["version"]):
+                    objects[artifact] = 100
+
+        with self.assertRaisesRegex(ValueError, "1.2.2 is incomplete"):
+            validate_retained_beta_catalog(s3, "bucket", catalog, latest, objects)
+
+        filtered, removed = filter_beta_catalog(
+            catalog, self.release, frozenset({"1.2.2"})
+        )
+        self.assertEqual(removed, ("1.2.2",))
+        validate_retained_beta_catalog(s3, "bucket", filtered, latest, objects)
+
+    def test_a_retired_version_that_is_still_advertised_without_marker_fails(
+        self,
+    ) -> None:
+        """A missing payload without a retirement marker must stay an error."""
+        s3 = FakeS3()
+        latest = beta_manifest("1.2.4-beta.2")
+        catalog = beta_catalog("1.2.4-beta.2", "1.2.3", "1.2.2")
+        objects: dict[str, int] = {}
+        for release in catalog["releases"]:
+            key = f"os/images/manifests/beta/{release['version']}.json"
+            s3.get_results[key] = {"Body": FakeBody(json.dumps(release).encode())}
+            if release["version"] != "1.2.2":
+                for artifact in required_version_artifacts("beta", release["version"]):
+                    objects[artifact] = 100
+
+        filtered, removed = filter_beta_catalog(catalog, self.release, frozenset())
+
+        self.assertEqual(removed, ())
+        with self.assertRaisesRegex(ValueError, "is incomplete"):
+            validate_retained_beta_catalog(s3, "bucket", filtered, latest, objects)
+
+    def test_retired_release_version_reads_only_stable_marker_keys(self) -> None:
+        self.assertEqual(
+            retired_release_version("os/.retention/release/0.16.15.json"), "0.16.15"
+        )
+        for key in (
+            "os/.retention/beta/0.16.7-beta.215.json",
+            "os/.retention/release/0.16.15-beta.1.json",
+            "os/.retention/release/nested/0.16.15.json",
+            "os/.retention/release/0.16.15.txt",
+            "os/images/manifests/release/0.16.15.json",
+        ):
+            with self.subTest(key=key):
+                self.assertIsNone(retired_release_version(key))
 
     def test_returns_no_catalog_when_every_entry_is_obsolete(self) -> None:
         filtered, removed = filter_beta_catalog(

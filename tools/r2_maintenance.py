@@ -11,7 +11,9 @@ longer useful, applying a self-cleaning retention policy:
   * Channel aliases (``…-release`` / ``…-beta``) and channel manifests
     (``latest-*.json``)             -> never touched (they are the pointers).
   * Beta catalog + version manifests -> superseded entries/manifests are removed
-    before their payloads. A durable retirement marker then waits out the
+    before their payloads. The catalog also drops stable versions that
+    r2_stable_retention.py retired (marker under os/.retention/release/), so it
+    never advertises a release whose payloads are gone. A durable retirement marker then waits out the
     manifest's advertised cache lifetime plus the active-download grace.
   * Legacy / non-conforming keys (e.g. board-only ``snapdog-os-pi4.raucb``)
                                      -> removed.
@@ -62,6 +64,8 @@ CATALOG_KEY = "os/images/catalog-beta.json"
 BETA_LATEST_KEY = "os/images/latest-beta.json"
 BETA_MANIFEST_PREFIX = "os/images/manifests/beta/"
 RETIREMENT_PREFIX = "os/.retention/beta/"
+# Markers written by r2_stable_retention.py for stable versions it retired.
+RELEASE_RETIREMENT_PREFIX = "os/.retention/release/"
 # snapdog-os-<board>-<rest>  (board = a single lowercase-alnum token, e.g. pi4,
 # zero2w); <rest> is a version, a "-beta.N" version, or a channel alias.
 STEM_RE = re.compile(r"^snapdog-os-([a-z0-9]+)(?:-(.+))?$")
@@ -151,6 +155,16 @@ def retirement_marker_version(key: str) -> str | None:
         return None
     version = key[len(RETIREMENT_PREFIX) : -len(".json")]
     if "/" in version or BETA_RE.fullmatch(version) is None:
+        return None
+    return version
+
+
+def retired_release_version(key: str) -> str | None:
+    """Return the stable version named by a stable-retention marker key."""
+    if not key.startswith(RELEASE_RETIREMENT_PREFIX) or not key.endswith(".json"):
+        return None
+    version = key[len(RELEASE_RETIREMENT_PREFIX) : -len(".json")]
+    if "/" in version or SEMVER_RE.fullmatch(version) is None:
         return None
     return version
 
@@ -256,9 +270,16 @@ def classify(key: str, release_t: tuple[int, int, int]) -> tuple[str, str]:
 
 
 def filter_beta_catalog(
-    catalog: dict[str, Any], release_t: tuple[int, int, int]
+    catalog: dict[str, Any],
+    release_t: tuple[int, int, int],
+    retired_releases: frozenset[str] = frozenset(),
 ) -> tuple[dict[str, Any] | None, tuple[str, ...]]:
-    """Remove catalog entries for beta payloads that retention will delete.
+    """Remove catalog entries whose payloads retention has deleted or will delete.
+
+    That covers superseded betas and stable versions that
+    ``r2_stable_retention.py`` retired (``retired_releases``). The beta catalog
+    also advertises stable versions, and once stable retention deletes their
+    payloads the catalog must not keep promising them.
 
     ``None`` represents an absent catalog. The public catalog schema requires at
     least one release, so a catalog whose every entry is obsolete must be
@@ -272,6 +293,7 @@ def filter_beta_catalog(
         release["version"]
         for release in catalog["releases"]
         if superseded_beta(release["version"], release_t)
+        or release["version"] in retired_releases
     )
     if not removed:
         return catalog, ()
@@ -705,8 +727,13 @@ def main() -> int:
     filtered_catalog = beta_catalog
     removed_catalog_versions: tuple[str, ...] = ()
     if beta_catalog is not None:
+        retired_releases = frozenset(
+            version
+            for key in objs
+            if (version := retired_release_version(key)) is not None
+        )
         filtered_catalog, removed_catalog_versions = filter_beta_catalog(
-            beta_catalog, rel_t
+            beta_catalog, rel_t, retired_releases
         )
     filtered_catalog = retain_beta_pointer(filtered_catalog, beta_latest)
     validate_retained_beta_catalog(
@@ -756,7 +783,7 @@ def main() -> int:
     if catalog_changed:
         if removed_catalog_versions:
             print(
-                "CATALOG: remove superseded beta versions "
+                "CATALOG: remove superseded or retired versions "
                 + ", ".join(removed_catalog_versions)
             )
         else:

@@ -1644,13 +1644,13 @@ async fn post_server_enable(
     Extension(crate::ws::WsSender(tx)): Extension<crate::ws::WsSender>,
 ) -> StatusCode {
     // Write default config if none exists
-    if tokio::fs::metadata("/etc/snapdog/snapdog.toml")
+    if tokio::fs::metadata(server_config::CONFIG_PATH)
         .await
         .is_err()
     {
         let default = server_config::default_config_toml();
-        let _ = tokio::fs::create_dir_all("/etc/snapdog").await;
-        if let Err(e) = tokio::fs::write("/etc/snapdog/snapdog.toml", default).await {
+        let _ = tokio::fs::create_dir_all("/data/snapdog").await;
+        if let Err(e) = tokio::fs::write(server_config::CONFIG_PATH, default).await {
             tracing::error!("post_server_enable write default: {e}");
             return StatusCode::INTERNAL_SERVER_ERROR;
         }

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.18](https://github.com/SnapDogRocks/snapdog-os/compare/v0.16.17...v0.16.18) (2026-11-08)
+
+
+### Bug Fixes
+
+* **ctrl:** save the server configuration on the data partition, not below /etc ([#262](https://github.com/SnapDogRocks/snapdog-os/issues/262)) ([f56538c](https://github.com/SnapDogRocks/snapdog-os/commit/f56538ca5e9bca1529c07d5eae0e132707f1b711))
+
 ## [0.16.17](https://github.com/SnapDogRocks/snapdog-os/compare/v0.16.16...v0.16.17) (2026-11-05)
 
 

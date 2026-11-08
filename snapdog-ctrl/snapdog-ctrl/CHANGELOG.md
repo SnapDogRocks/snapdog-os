@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.1](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.15.0...snapdog-ctrl-v0.15.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **ctrl:** save the server configuration on the data partition, not below /etc ([#262](https://github.com/SnapDogRocks/snapdog-os/issues/262)) ([f56538c](https://github.com/SnapDogRocks/snapdog-os/commit/f56538ca5e9bca1529c07d5eae0e132707f1b711))
+
 ## [0.15.0](https://github.com/SnapDogRocks/snapdog-os/compare/snapdog-ctrl-v0.14.7...snapdog-ctrl-v0.15.0) (2026-11-03)
 
 

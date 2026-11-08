@@ -8,9 +8,15 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table};
 
-const CONFIG_PATH: &str = "/etc/snapdog/snapdog.toml";
-const CONFIG_BACKUP: &str = "/etc/snapdog/snapdog.toml.bak";
-const CONFIG_CANDIDATE: &str = "/etc/snapdog/.snapdog.toml.candidate";
+// The configuration lives on the persistent data partition. `/etc/snapdog/snapdog.toml` is only a
+// symlink to it (buildroot/board/raspberrypi/post-build.sh): `/` is mounted read-only, and
+// snapdog-ctrl.service has `ProtectSystem=full` without `/etc/snapdog` in `ReadWritePaths`. An
+// atomic write creates its temporary file next to the target and renames it, so the target, the
+// candidate and the backup all have to be below the data partition, never below `/etc`.
+const CONFIG_DIR: &str = "/data/snapdog";
+pub const CONFIG_PATH: &str = "/data/snapdog/snapdog.toml";
+const CONFIG_BACKUP: &str = "/data/snapdog/snapdog.toml.bak";
+const CONFIG_CANDIDATE: &str = "/data/snapdog/.snapdog.toml.candidate";
 const SNAPDOG_BINARY: &str = "/usr/bin/snapdog";
 const SERVICE_NAME: &str = "snapdog";
 static CONFIG_APPLY_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -410,7 +416,7 @@ pub async fn apply_and_restart(config: &ServerConfig) -> Result<()> {
     ensure_current_revision(config, source)?;
 
     let candidate = render_candidate(source, config)?;
-    tokio::fs::create_dir_all("/etc/snapdog").await?;
+    tokio::fs::create_dir_all(CONFIG_DIR).await?;
     durable_atomic_write(CONFIG_CANDIDATE, &candidate)
         .await
         .context("failed to stage server configuration")?;
@@ -509,10 +515,7 @@ async fn rollback(previous: Option<&str>) -> Result<()> {
     } else if tokio::fs::try_exists(CONFIG_PATH).await? {
         tokio::fs::remove_file(CONFIG_PATH).await?;
         #[cfg(unix)]
-        tokio::fs::File::open("/etc/snapdog")
-            .await?
-            .sync_all()
-            .await?;
+        tokio::fs::File::open(CONFIG_DIR).await?.sync_all().await?;
     }
     restart_and_wait_healthy().await
 }

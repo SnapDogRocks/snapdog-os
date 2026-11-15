@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/SnapDogRocks/snapdog-os/compare/v0.16.21...v0.17.0) (2026-11-15)
+
+
+### Features
+
+* **webui:** add svg and ico favicon, apple-touch-icon and web manifest ([#281](https://github.com/SnapDogRocks/snapdog-os/issues/281)) ([fbe5a14](https://github.com/SnapDogRocks/snapdog-os/commit/fbe5a14542ab1adec6e5a5e9ca0b82f611e725ad))
+
 ## [0.16.21](https://github.com/SnapDogRocks/snapdog-os/compare/v0.16.20...v0.16.21) (2026-11-14)
 
 

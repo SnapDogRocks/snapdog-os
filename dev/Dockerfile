@@ -28,7 +28,7 @@ RUN npm install -g "pnpm@${PNPM_VERSION}"
 
 # Rust — the version from rust-toolchain.toml, checksum-verified (kept in lockstep
 # with that file by scripts/check-version-pins.sh).
-ARG RUST_VERSION=1.99.1
+ARG RUST_VERSION=1.100.0
 RUN case "$(dpkg --print-architecture)" in \
       amd64) rust_target=x86_64-unknown-linux-gnu ;; \
       arm64) rust_target=aarch64-unknown-linux-gnu ;; \

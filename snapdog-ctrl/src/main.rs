@@ -76,8 +76,7 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .and_then(|s| s.connect("1.1.1.1:80").ok().map(|()| s))
         .and_then(|s| s.local_addr().ok())
-        .map(|a| vec![format!("http://{}:{port}", a.ip())])
-        .unwrap_or_default();
+        .map_or_default(|a| vec![format!("http://{}:{port}", a.ip())]);
 
     if interfaces.is_empty() {
         tracing::info!("snapdog-ctrl listening on port {port}");

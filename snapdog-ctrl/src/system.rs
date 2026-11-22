@@ -98,22 +98,20 @@ pub async fn get_system_info() -> SystemInfo {
         .output()
         .await
         .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default();
+        .map_or_default(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
 
     let client = tokio::process::Command::new("snapdog-client")
         .arg("--version")
         .output()
         .await
         .ok()
-        .map(|o| {
+        .map_or_default(|o| {
             String::from_utf8_lossy(&o.stdout)
                 .split_whitespace()
                 .last()
                 .unwrap_or("")
                 .to_string()
-        })
-        .unwrap_or_default();
+        });
 
     SystemInfo {
         hostname: hostname.trim().to_string(),
@@ -531,8 +529,7 @@ fn parse_network_mode(content: &str) -> Option<String> {
 async fn wpa_status(iface: &str) -> WpaStatus {
     command_stdout("wpa_cli", &["-i", iface, "status"])
         .await
-        .map(|output| parse_wpa_status(&output))
-        .unwrap_or_default()
+        .map_or_default(|output| parse_wpa_status(&output))
 }
 
 fn parse_wpa_status(output: &str) -> WpaStatus {
@@ -940,8 +937,7 @@ pub async fn check_update() -> UpdateCheckResponse {
     let remote = remote_channel_update(&config.channel).await;
     let bundle_url = remote
         .as_ref()
-        .map(|update| update.bundle_url.clone())
-        .unwrap_or_default();
+        .map_or_default(|update| update.bundle_url.clone());
     let (mut available, mut is_downgrade, latest_version) = match remote {
         Some(update) if version_is_newer(&update.version, &current) => {
             (true, false, update.version)
@@ -1415,14 +1411,12 @@ pub async fn get_logs(service: Option<String>) -> LogsResponse {
         .await
         .ok();
 
-    let lines = output
-        .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .map(String::from)
-                .collect()
-        })
-        .unwrap_or_default();
+    let lines = output.map_or_default(|o| {
+        String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .map(String::from)
+            .collect()
+    });
 
     LogsResponse { lines }
 }
@@ -1497,13 +1491,12 @@ pub async fn get_timezone() -> TimezoneInfo {
         .output()
         .await
         .ok()
-        .map(|o| {
+        .map_or_default(|o| {
             String::from_utf8_lossy(&o.stdout)
                 .lines()
                 .map(String::from)
                 .collect()
-        })
-        .unwrap_or_default();
+        });
 
     TimezoneInfo {
         timezone: current,
@@ -1543,14 +1536,12 @@ pub async fn list_soundcards() -> Vec<Soundcard> {
         .await
         .ok();
 
-    output
-        .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .filter_map(parse_soundcard_line)
-                .collect()
-        })
-        .unwrap_or_default()
+    output.map_or_default(|o| {
+        String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .filter_map(parse_soundcard_line)
+            .collect()
+    })
 }
 
 /// Parse one `aplay -l` line — `card N: id [name], device M: ...` — into the

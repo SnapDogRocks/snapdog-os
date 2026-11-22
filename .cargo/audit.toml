@@ -1,0 +1,8 @@
+# cargo-audit reads this file from the directory it runs in; CI runs it at the
+# repository root for both lock files.
+[advisories]
+ignore = [
+    # chrono is unmaintained and has no safe upgrade. snapdog-ctrl uses it directly.
+    # Remove once it has moved to another date and time crate (for example jiff).
+    "RUSTSEC-2026-0543",
+]

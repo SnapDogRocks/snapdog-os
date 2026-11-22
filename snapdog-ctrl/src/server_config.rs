@@ -1306,8 +1306,7 @@ fn apply_config_arrays(doc: &mut DocumentMut, config: &ServerConfig) {
 fn source_tables(doc: &DocumentMut, key: &str) -> Vec<Table> {
     doc.get(key)
         .and_then(Item::as_array_of_tables)
-        .map(|tables| tables.iter().cloned().collect())
-        .unwrap_or_default()
+        .map_or_default(|tables| tables.iter().cloned().collect())
 }
 
 fn set_optional_item_str(table: &mut Table, key: &str, value: Option<&str>) {
@@ -1438,23 +1437,19 @@ fn get_string_array(table: &Table, key: &str) -> Vec<String> {
     table
         .get(key)
         .and_then(Item::as_array)
-        .map(|array| {
+        .map_or_default(|array| {
             array
                 .iter()
                 .filter_map(|value| value.as_str().map(String::from))
                 .collect()
         })
-        .unwrap_or_default()
 }
 
 /// Reads a value that is either one string or a list of strings. Missing means empty.
 fn get_bind(table: &Table, key: &str) -> Vec<String> {
     match table.get(key) {
         Some(item) if item.is_array() => get_string_array(table, key),
-        Some(item) => item
-            .as_str()
-            .map(|v| vec![v.to_string()])
-            .unwrap_or_default(),
+        Some(item) => item.as_str().map_or_default(|v| vec![v.to_string()]),
         None => Vec::new(),
     }
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.2](https://github.com/SnapDogRocks/snapdog-os/compare/v0.17.1...v0.17.2) (2026-11-22)
+
+
+### Bug Fixes
+
+* **deps:** update url to 2.5.9 and record the chrono advisory exception ([#295](https://github.com/SnapDogRocks/snapdog-os/issues/295)) ([92ba82b](https://github.com/SnapDogRocks/snapdog-os/commit/92ba82b25c36c7e4810428a7211435ae22531d11))
+
 ## [0.17.1](https://github.com/SnapDogRocks/snapdog-os/compare/v0.17.0...v0.17.1) (2026-11-16)
 
 

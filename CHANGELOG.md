@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.4](https://github.com/SnapDogRocks/snapdog-os/compare/v0.17.3...v0.17.4) (2026-11-27)
+
+
+### Bug Fixes
+
+* **release:** drop the release-as pin so release-please cuts 0.17.4 ([#308](https://github.com/SnapDogRocks/snapdog-os/issues/308)) ([7047e54](https://github.com/SnapDogRocks/snapdog-os/commit/7047e547b0fe7f31ee2ea80a1304e60a6ac52fb1))
+
 ## [0.17.3](https://github.com/SnapDogRocks/snapdog-os/compare/v0.17.2...v0.17.3) (2026-11-22)
 
 
